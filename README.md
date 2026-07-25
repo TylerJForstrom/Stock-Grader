@@ -7,7 +7,7 @@ much stronger claim than one from a single hand-picked weight vector.
 
 ```
                                     ┌──────────── weighting method (23) ────────────┐
-SEC EDGAR ──▶ metrics (105) ──▶ normalize (10) ──▶ PILLARS ──▶ weighting method ──▶ GRADE
+SEC EDGAR ──▶ metrics (115) ──▶ normalize (10) ──▶ PILLARS ──▶ weighting method ──▶ GRADE
                                     └──── aggregator (8) ────┘        (again)        + interval
                                                                                      + explanation
 ```
@@ -123,6 +123,29 @@ AAPL and XOM are near-mirror images. Averaging them both to "C+" would destroy t
 thing here, so `clarity` is reported as a first-class number: low clarity means *the answer depends
 entirely on what you're looking for*.
 
+### Financials are graded as financials
+
+A bank has no current ratio and a REIT's P/E is dominated by depreciation — those quantities are
+undefined, not missing, so the sector matrix disables them. But disabling without replacing left
+banks graded on 36 of 65 metrics with an empty efficiency pillar, which makes a grade noisy rather
+than wrong. So banks get their own metrics, from tags they already file:
+
+```
+$ stock-grader grade JPM --explain
+
+  efficiency_ratio               0.529    (JPM's published figure is ~52%)
+  net_interest_income_to_assets  0.020
+  deposits_to_assets             0.546
+  loans_to_deposits              0.552    band 0.60–0.90 — above ~1.0 is the SVB failure mode
+  tangible_common_equity_ratio   0.060
+```
+
+Two limits are stated rather than hidden: this is **not** net interest margin (NIM divides by
+average *earning* assets, which no XBRL tag reports), and tangible common equity is a **proxy** —
+Tier 1 and CET1 are defined by risk-weighting rules and live in the filing's narrative, not its
+XBRL. REIT FFO is likewise *reconstructed*, because `FundsFromOperations` is tagged by none of
+SPG, O, PLD or AMT.
+
 ### It tells you when not to trust it
 
 Every grade carries a 90% confidence interval from resampling both the weights (Dirichlet) and the
@@ -212,9 +235,10 @@ src/stock_grader/
     synthetic.py    labelled generated data for offline tests
   metrics/
     util.py         guarded arithmetic — returns None, never a misleading zero
-    fundamental.py  62 metrics across 7 pillars
-    statistical.py  40 risk / momentum / time-series metrics
-    models.py       Beneish M, Ohlson O, Altman Z'' with published coefficients
+    fundamental.py      62 metrics across 7 pillars
+    statistical.py      40 risk / momentum / time-series metrics
+    models.py           Beneish M, Ohlson O, Altman Z'' with published coefficients
+    sector_specific.py  bank efficiency/funding/credit metrics + REIT FFO
     engine.py       evaluation + three-state coverage
   normalize.py      10 normalizers, cross-sectional and absolute
   aggregate.py      8 aggregators incl. the CES compensation dial
@@ -228,8 +252,13 @@ src/stock_grader/
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q     # 305 tests
+.venv/bin/ruff check src tests scripts
 ```
+
+The suite is **fully offline** — verified by blocking the socket layer and re-running, so CI never
+depends on SEC, FRED or any endpoint being reachable. CI runs lint, types and tests on Python
+3.11, 3.12 and 3.13.
 
 Property-based invariants (weights sum to 1 for every method; improving any metric never lowers the
 grade; missing data renormalises rather than dragging toward zero; permuting metric order changes
