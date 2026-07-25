@@ -372,3 +372,46 @@ class TestSectorConceptOverrides:
         bank = chains_for("bank")
         assert bank["assets"] == CONCEPTS["assets"]
         assert bank["revenue"] != CONCEPTS["revenue"]
+
+
+class TestCurrency:
+    """Foreign private issuers file with the SEC in their own currency.
+
+    Toyota reports revenue in JPY and Alibaba reports receivables in CNY. Falling back to whatever
+    unit happens to be present treated ~48 trillion yen as dollars — a ~150x overstatement that
+    would make Toyota look extraordinarily cheap on every sales multiple — and mixed CNY
+    receivables against USD assets inside a single ratio.
+    """
+
+    def test_foreign_only_facts_are_dropped(self):
+        from stock_grader.data.sec import _usd_records
+
+        assert _usd_records({"units": {"JPY": [{"end": "2025-12-31", "val": 48e12}]}}) == []
+        assert _usd_records({"units": {"CNY": [{"end": "2025-12-31", "val": 1e9}]}}) == []
+
+    def test_usd_is_preferred_when_both_exist(self):
+        from stock_grader.data.sec import _usd_records
+
+        records = _usd_records({
+            "units": {
+                "JPY": [{"end": "2025-12-31", "val": 48e12}],
+                "USD": [{"end": "2025-12-31", "val": 320e9}],
+            }
+        })
+        assert len(records) == 1 and records[0]["val"] == 320e9
+
+    def test_dimensionless_units_still_pass(self):
+        from stock_grader.data.sec import _usd_records
+
+        assert len(_usd_records({"units": {"shares": [{"end": "2025-12-31", "val": 1e9}]}})) == 1
+        assert len(_usd_records({"units": {"pure": [{"end": "2025-12-31", "val": 0.21}]}})) == 1
+
+    def test_currency_detection(self):
+        from stock_grader.data.sec import detect_currencies
+
+        facts = {"facts": {"us-gaap": {
+            "Revenues": {"units": {"JPY": []}},
+            "Assets": {"units": {"USD": []}},
+            "EarningsPerShareDiluted": {"units": {"JPY/shares": []}},
+        }}}
+        assert detect_currencies(facts) == {"JPY", "USD"}

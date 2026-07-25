@@ -192,13 +192,42 @@ def _parse(value: str | None) -> date | None:
         return None
 
 
+# Units that are either dollars or dimensionless. Anything else is another currency and must not
+# be mixed with them.
+_ACCEPTED_UNITS = ("USD", "USD/shares", "shares", "pure")
+
+
 def _usd_records(fact: dict[str, Any]) -> list[dict]:
-    """Pull the USD (or USD-per-share, or plain-share) unit series out of a fact."""
+    """Pull the USD or dimensionless unit series out of a fact.
+
+    Returns **empty** for a fact reported only in a foreign currency, rather than falling back to
+    whatever unit happens to be present. Foreign private issuers file with the SEC in their own
+    currency: Toyota reports revenue in JPY and Alibaba reports receivables in CNY. Silently
+    treating ~48 trillion yen as dollars overstates Toyota's revenue by roughly 150x and makes it
+    look extraordinarily cheap on every sales multiple; mixing CNY receivables against USD assets
+    produces a ratio of two different currencies.
+
+    Dropping the fact means the metric reports MISSING, which is the honest outcome — converting
+    would need a point-in-time FX rate for the fact's own period, which is a larger piece of work
+    than this guard.
+    """
     units = fact.get("units", {})
-    for key in ("USD", "USD/shares", "shares", "pure"):
+    for key in _ACCEPTED_UNITS:
         if key in units:
             return list(units[key])
-    return list(next(iter(units.values()), []))
+    return []
+
+
+def detect_currencies(facts: dict[str, Any]) -> set[str]:
+    """Currency units appearing anywhere in a companyfacts payload."""
+    found: set[str] = set()
+    for taxonomy in facts.get("facts", {}).values():
+        for fact in taxonomy.values():
+            for unit in fact.get("units", {}):
+                base = unit.split("/")[0]
+                if len(base) == 3 and base.isalpha() and base.isupper():
+                    found.add(base)
+    return found
 
 
 def normalize_duration_facts(
@@ -551,6 +580,20 @@ class SECProvider:
         snap.fundamentals = build_fundamentals(
             facts, pit_mode=pit_mode, asof=asof, sector=snap.sector.value
         )
+        currencies = detect_currencies(facts)
+        foreign = currencies - {"USD"}
+        if foreign:
+            snap.meta["currencies"] = sorted(currencies)
+            if "USD" not in currencies:
+                snap.warnings.append(
+                    f"{ticker} reports in {'/'.join(sorted(foreign))}, not USD — those facts are "
+                    f"dropped rather than mixed with dollar figures, so coverage will be low"
+                )
+            else:
+                snap.warnings.append(
+                    f"{ticker} files some facts in {'/'.join(sorted(foreign))}; those are excluded "
+                    f"to avoid mixing currencies, so a few metrics may be missing"
+                )
         snap.meta["pit_mode"] = pit_mode.value
         snap.meta["tags_used"] = snap.fundamentals.tag_used
 
