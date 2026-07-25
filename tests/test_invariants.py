@@ -284,3 +284,49 @@ def test_deterministic_under_a_fixed_seed():
     first = uncertainty_interval(scores, weights, seed=7)
     second = uncertainty_interval(scores, weights, seed=7)
     assert first == second
+
+
+# ---------------------------------------------------------------------------- outcome validation
+
+
+def test_accruals_undefined_for_loss_makers():
+    """Measured defect: this metric scored AUC 0.29 against going-concern companies.
+
+    A large net loss drives ``NI - CFO`` sharply negative, which a lower-is-better metric read as
+    conservative accounting — so it rewarded exactly the companies it should penalise. Biora
+    Therapeutics posted a $122M loss against $46M of cash burn and scored as excellent quality.
+    Sloan estimated the anomaly on profitable firms; it is undefined without profits.
+    """
+    from datetime import date as _date
+
+    import pandas as pd
+
+    from stock_grader.metrics.fundamental import accruals_ratio
+    from stock_grader.types import Fundamentals, SecuritySnapshot
+
+    quarters = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
+
+    def snapshot(net_income: float, cfo: float) -> SecuritySnapshot:
+        frame = pd.DataFrame(
+            {"net_income": [net_income / 4] * 4, "cfo": [cfo / 4] * 4, "assets": [1000.0] * 4},
+            index=quarters,
+        )
+        return SecuritySnapshot(
+            ticker="X", asof=_date(2026, 1, 31),
+            fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
+        )
+
+    # Loss-maker whose cash burn is smaller than its loss: undefined, not "excellent".
+    assert accruals_ratio.fn(snapshot(-122.0, -46.0)) is None
+    # A profitable company still gets a reading.
+    assert accruals_ratio.fn(snapshot(100.0, 60.0)) == pytest.approx(0.04)
+
+
+def test_auc_direction():
+    """AUC is oriented so that a lower score for the positive class reads above 0.5."""
+    from stock_grader.validation import auc
+
+    assert auc([1.0, 2.0, 3.0], [7.0, 8.0, 9.0]) == pytest.approx(1.0)
+    assert auc([7.0, 8.0, 9.0], [1.0, 2.0, 3.0]) == pytest.approx(0.0)
+    assert auc([1.0, 5.0, 9.0], [1.0, 5.0, 9.0]) == pytest.approx(0.5)
+    assert auc([], [1.0]) is None

@@ -576,14 +576,25 @@ def rnd_intensity(s: SecuritySnapshot) -> float | None:
 
 @metric("accruals_ratio", pillar="quality", direction=-1, unit="ratio", winsor=(-2.0, 2.0))
 def accruals_ratio(s: SecuritySnapshot) -> float | None:
-    """(Net income - CFO) / assets — Sloan's accrual anomaly.
+    """(Net income - CFO) / assets — Sloan's accrual anomaly. **Profitable companies only.**
 
-    Earnings far above cash flow are a reliable predictor of future disappointment, because the gap
-    is accounting estimates rather than money.
+    Earnings far above cash flow predict future disappointment, because the gap is accounting
+    estimates rather than money.
+
+    The positive-earnings gate is not fussiness — it was measured. Against 60 companies whose
+    auditors issued going-concern opinions, this metric scored an AUC of **0.29**: worse than a coin
+    flip, actively *rewarding* the distressed companies. The cause is that a large net loss makes
+    ``NI - CFO`` strongly negative, which a lower-is-better metric reads as conservative accounting.
+    Biora Therapeutics posted a $122M loss against $46M of cash burn and scored as having
+    excellent earnings quality.
+
+    Sloan estimated the anomaly on profitable firms, and for a loss-maker the ratio mostly measures
+    the size of the writeoffs rather than the quality of the profits. So it is undefined here, which
+    lets the solvency metrics speak instead.
     """
     income = _ttm(s, "net_income")
     cfo = _ttm(s, "cfo")
-    if income is None or cfo is None:
+    if income is None or cfo is None or income <= 0:
         return None
     return safe_div(income - cfo, _latest(s, "assets"), positive_denominator=True)
 
