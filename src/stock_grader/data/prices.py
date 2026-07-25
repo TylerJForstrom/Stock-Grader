@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import time
 from datetime import date
 from pathlib import Path
 from typing import ClassVar
@@ -47,6 +48,14 @@ _BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+
+def _cache_fresh(path: Path, ttl_hours: float) -> bool:
+    """Whether a cache file is younger than its time to live."""
+    try:
+        return (time.time() - path.stat().st_mtime) / 3600.0 < ttl_hours
+    except OSError:
+        return False
 
 
 def _conform(df: pd.DataFrame) -> pd.DataFrame:
@@ -80,16 +89,18 @@ class PriceProvider:
     def get(self, ticker: str, *, start: date | None = None, end: date | None = None) -> pd.DataFrame | None:
         try:
             df = self._fetch(ticker, start=start, end=end)
+            if df is None or df.empty:
+                return None
+            # _conform sat outside this block, so one unparseable date in one CSV raised straight
+            # through a method documented as never raising — aborting the whole universe run.
+            df = _conform(df)
+            if start is not None:
+                df = df[df.index >= pd.Timestamp(start)]
+            if end is not None:
+                df = df[df.index <= pd.Timestamp(end)]
         except Exception as exc:
             log.warning("%s price fetch failed for %s: %s", self.name, ticker, exc)
             return None
-        if df is None or df.empty:
-            return None
-        df = _conform(df)
-        if start is not None:
-            df = df[df.index >= pd.Timestamp(start)]
-        if end is not None:
-            df = df[df.index <= pd.Timestamp(end)]
         return df if not df.empty else None
 
     def _fetch(self, ticker: str, *, start: date | None, end: date | None) -> pd.DataFrame | None:
@@ -281,16 +292,19 @@ class RiskFreeProvider:
     # 3-month T-bill is the standard short-rate proxy; 10-year for term-structure work.
     SERIES: ClassVar[dict[str, str]] = {"3m": "DTB3", "10y": "DGS10"}
 
-    def __init__(self, cache_dir: str | Path | None = None, timeout: float = 20.0) -> None:
+    def __init__(self, cache_dir: str | Path | None = None, timeout: float = 20.0,
+                 ttl_hours: float = 24.0) -> None:
         self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
+        self.ttl_hours = ttl_hours
 
     def get(self, tenor: str = "3m", *, refresh: bool = False) -> pd.Series | None:
         """Annualised risk-free rate as a decimal (0.0525 for 5.25%), indexed by date."""
         series_id = self.SERIES.get(tenor, tenor)
         cache = self.cache_dir / f"fred_{series_id}.csv"
-        if cache.exists() and not refresh:
+        # A rate cached months ago is not today's rate, and this cache had no expiry at all.
+        if cache.exists() and not refresh and _cache_fresh(cache, self.ttl_hours):
             try:
                 frame = pd.read_csv(cache, index_col=0, parse_dates=True)
                 return frame.iloc[:, 0] / 100.0
@@ -338,17 +352,19 @@ class BenchmarkProvider:
 
     SERIES: ClassVar[dict[str, str]] = {"SP500": "SP500", "NASDAQ": "NASDAQCOM", "DJIA": "DJIA"}
 
-    def __init__(self, cache_dir: str | Path | None = None, timeout: float = 20.0) -> None:
+    def __init__(self, cache_dir: str | Path | None = None, timeout: float = 20.0,
+                 ttl_hours: float = 24.0) -> None:
         self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
+        self.ttl_hours = ttl_hours
 
     def get(self, name: str = "SP500", *, refresh: bool = False) -> pd.DataFrame | None:
         """Index level as an OHLCV-shaped frame so the metric layer needs no special case."""
         series_id = self.SERIES.get(name.upper(), name)
         cache = self.cache_dir / f"bench_{series_id}.csv"
         frame = None
-        if cache.exists() and not refresh:
+        if cache.exists() and not refresh and _cache_fresh(cache, self.ttl_hours):
             try:
                 frame = pd.read_csv(cache, index_col=0, parse_dates=True)
             except (OSError, ValueError, pd.errors.ParserError):

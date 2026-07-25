@@ -44,6 +44,8 @@ _SEC_WWW = "https://www.sec.gov"
 _DEFAULT_CONTACT = "stock-grader (set STOCK_GRADER_CONTACT to your email)"
 # Matches metrics.fundamental.MAX_BALANCE_AGE_DAYS; duplicated to avoid a circular import.
 _MAX_FACT_AGE_DAYS = 400
+# Consecutive whole-request failures before the client stops trying for the rest of the run.
+_CIRCUIT_BREAKER_THRESHOLD = 3
 
 
 class _RateLimiter:
@@ -77,12 +79,18 @@ class SECClient:
         ttl_hours: float = 24.0,
         rate: float = 8.0,
         timeout: float = 45.0,
+        offline: bool = False,
     ) -> None:
         self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.contact = contact or os.environ.get("STOCK_GRADER_CONTACT") or _DEFAULT_CONTACT
         self.ttl = timedelta(hours=ttl_hours)
         self.timeout = timeout
+        # --no-network gated the price providers but never reached here, so a "cache only" run
+        # still fetched from SEC — and a cache one second past its TTL was discarded rather than
+        # served, which is exactly backwards when the user has asked not to use the network.
+        self.offline = offline
+        self._consecutive_failures = 0
         self._limiter = _RateLimiter(rate)
         self._session = requests.Session()
         self._session.headers.update({
@@ -99,11 +107,21 @@ class SECClient:
         path = self._cache_path(key)
         if not refresh and path.exists():
             age = datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)
-            if age < self.ttl:
+            if age < self.ttl or self.offline:
                 try:
                     return json.loads(path.read_text())
                 except (json.JSONDecodeError, OSError):
                     log.warning("corrupt cache entry %s, refetching", path)
+        if self.offline:
+            log.info("offline: no cached copy of %s", key)
+            return None
+
+        # Circuit breaker. Without it, a network outage cost 30 seconds of retry-sleeping per
+        # ticker — over 40 minutes for the default universe — and the command still exited 0.
+        if self._consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            log.warning("SEC unreachable after %d consecutive failures; not retrying",
+                        self._consecutive_failures)
+            return None
 
         backoff = 1.0
         for attempt in range(4):
@@ -125,6 +143,7 @@ class SECClient:
                     path.write_text(json.dumps(payload))
                 except OSError as exc:
                     log.debug("could not cache %s: %s", key, exc)
+                self._consecutive_failures = 0
                 return payload
             if resp.status_code == 404:
                 log.info("SEC 404 for %s", url)
@@ -136,6 +155,7 @@ class SECClient:
                 continue
             log.warning("SEC returned HTTP %s for %s", resp.status_code, url)
             return None
+        self._consecutive_failures += 1
         log.warning("SEC request gave up after retries: %s", url)
         return None
 

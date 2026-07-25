@@ -163,7 +163,11 @@ def _build_snapshots(
     for i, ticker in enumerate(tickers, 1):
         if status:
             status.update(f"[dim]loading {ticker} ({i}/{len(tickers)})…[/dim]")
-        snapshot = provider.fetch(ticker, asof=asof, pit_mode=pit_mode, refresh=args.refresh)
+        try:
+            snapshot = provider.fetch(ticker, asof=asof, pit_mode=pit_mode, refresh=args.refresh)
+        except Exception as exc:
+            status_console.print(f"[yellow]{ticker}: skipped ({type(exc).__name__}: {exc})[/yellow]")
+            continue
         if prices is not None:
             frame = prices.get(ticker, end=asof)
             if frame is not None:
@@ -266,7 +270,8 @@ def _config_from_args(args: argparse.Namespace) -> GradeConfig:
 
 
 def cmd_grade(args: argparse.Namespace) -> int:
-    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact))
+    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
+                                     offline=args.no_network))
     tickers = [t.upper() for t in args.tickers]
     peers = _resolve_peers(args, tickers)
     all_tickers = list(dict.fromkeys(tickers + peers))
@@ -292,7 +297,8 @@ def cmd_grade(args: argparse.Namespace) -> int:
 
 
 def cmd_rank(args: argparse.Namespace) -> int:
-    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact))
+    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
+                                     offline=args.no_network))
     tickers = _load_universe(args.universe)
     if not tickers:
         console.print("[red]universe file is empty[/red]")
@@ -307,7 +313,8 @@ def cmd_rank(args: argparse.Namespace) -> int:
 
 
 def cmd_consensus(args: argparse.Namespace) -> int:
-    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact))
+    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
+                                     offline=args.no_network))
     tickers = [t.upper() for t in args.tickers]
     peers = _resolve_peers(args, tickers)
     snapshots = _build_snapshots(list(dict.fromkeys(tickers + peers)), args, provider=provider)

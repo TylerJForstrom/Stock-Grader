@@ -329,3 +329,68 @@ class TestProfileWeightCoverage:
         config = GradeConfig(pillar_weights={"profitability": 1.0}, pillar_weighting="fixed")
         report = next(iter(grade_universe(_universe(6), config).values()))
         assert any("zero weight" in w for w in report.warnings)
+
+
+class TestOfflineAndFailureHandling:
+    def test_offline_mode_never_reaches_the_network(self):
+        """--no-network gated the price providers but never reached the SEC client, so a
+        cache-only run still fetched — and discarded a cache one second past its TTL rather than
+        serving it, which is exactly backwards when the user asked not to use the network."""
+        from stock_grader.data.sec import SECClient
+
+        client = SECClient(cache_dir="/tmp/sg-offline-test", offline=True)
+
+        def _poisoned(*args, **kwargs):
+            raise AssertionError("network was used in offline mode")
+
+        client._session.get = _poisoned  # type: ignore[method-assign]
+        assert client.company_facts("0000000000") is None  # no cache, no network, no crash
+
+    def test_circuit_breaker_stops_retrying(self):
+        """A network outage cost 30 seconds of retry-sleeping per ticker — over 40 minutes for the
+        default universe — and the command still exited 0."""
+        import requests
+
+        from stock_grader.data.sec import _CIRCUIT_BREAKER_THRESHOLD, SECClient
+
+        client = SECClient(cache_dir="/tmp/sg-breaker-test")
+        client._limiter.acquire = lambda: None  # type: ignore[method-assign]
+        attempts = {"n": 0}
+
+        def _fail(*args, **kwargs):
+            attempts["n"] += 1
+            raise requests.RequestException("down")
+
+        client._session.get = _fail  # type: ignore[method-assign]
+        import time as _time
+
+        real_sleep, _time.sleep = _time.sleep, lambda *_: None
+        try:
+            for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 3):
+                client.get_json("https://example.invalid/x", "k")
+        finally:
+            _time.sleep = real_sleep
+        assert client._consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD
+        # Once tripped, later calls must not attempt any further requests.
+        before = attempts["n"]
+        client.get_json("https://example.invalid/y", "k2")
+        assert attempts["n"] == before
+
+
+class TestPublicAPI:
+    def test_importing_the_package_registers_the_whole_catalogue(self):
+        """The registries fill by decorator side effect, so a consumer who imported only part of
+        the catalogue got a silently truncated one and graded against a different metric set than
+        the CLI, with no error and no way to tell."""
+        import subprocess
+        import sys
+
+        snippet = (
+            "import stock_grader as sg;"
+            "print(len(sg.METRICS), len(sg.WEIGHTINGS), len(sg.NORMALIZERS), len(sg.AGGREGATORS))"
+        )
+        out = subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True,
+                             check=True).stdout.split()
+        metrics, weightings = int(out[0]), int(out[1])
+        assert metrics > 100, f"only {metrics} metrics registered on a plain import"
+        assert weightings >= 23
