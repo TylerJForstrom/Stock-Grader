@@ -82,6 +82,7 @@ class MetricSpec:
     unit: str = ""
     needs_prices: bool = False
     needs_benchmark: bool = False
+    needs_risk_free: bool = False
     min_history: int = 0  # trading days of price history required
     winsor: tuple[float, float] | None = None  # absolute clamp before scoring
     ideal_band: tuple[float, float] | None = None  # for direction == 0
@@ -109,6 +110,7 @@ def metric(
     unit: str = "",
     needs_prices: bool = False,
     needs_benchmark: bool = False,
+    needs_risk_free: bool = False,
     min_history: int = 0,
     winsor: tuple[float, float] | None = None,
     ideal_band: tuple[float, float] | None = None,
@@ -132,6 +134,7 @@ def metric(
             unit=unit,
             needs_prices=needs_prices,
             needs_benchmark=needs_benchmark,
+            needs_risk_free=needs_risk_free,
             min_history=min_history,
             winsor=winsor,
             ideal_band=ideal_band,

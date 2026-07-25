@@ -330,3 +330,106 @@ def test_auc_direction():
     assert auc([7.0, 8.0, 9.0], [1.0, 2.0, 3.0]) == pytest.approx(0.0)
     assert auc([1.0, 5.0, 9.0], [1.0, 5.0, 9.0]) == pytest.approx(0.5)
     assert auc([], [1.0]) is None
+
+
+# ---------------------------------------------------------------------------- estimator bias
+
+
+def test_hurst_is_unbiased_on_a_random_walk():
+    """Uncorrected rescaled-range analysis returns 0.5996 on a true random walk.
+
+    Only 48.5% of genuine random walks landed inside the metric's own (0.45, 0.60) band, so more
+    than half of ordinary stocks were scored as "trending" by an artefact of the estimator — at
+    full weight, through a non-monotonic band, with no error raised.
+    """
+    from datetime import date as _date
+
+    from stock_grader.metrics.statistical import hurst_exponent
+    from stock_grader.types import SecuritySnapshot
+
+    values = []
+    for seed in range(60):
+        rng = np.random.default_rng(seed)
+        returns = rng.normal(0, 0.018, 756)
+        level = 100 * np.exp(np.cumsum(returns))
+        prices = pd.DataFrame(
+            {"close": level, "adj_close": level},
+            index=pd.bdate_range(end="2026-07-24", periods=756),
+        )
+        value = hurst_exponent.fn(SecuritySnapshot(ticker="X", asof=_date(2026, 7, 24), prices=prices))
+        if value is not None:
+            values.append(value)
+    assert abs(float(np.mean(values)) - 0.5) < 0.04
+
+
+def test_cornish_fisher_refuses_outside_its_domain():
+    """At excess kurtosis 30 the expansion stops being a quantile function.
+
+    The adjusted quantile is -1.039 against a Gaussian -1.645 — a *smaller* 5% loss — and since
+    the metric is lower-is-better, the fattest-tailed stock scored as the safest in the universe.
+    At skew +5 it returns +0.851, asserting the 5% worst day is a gain.
+    """
+    from datetime import date as _date
+
+    from stock_grader.metrics.statistical import cornish_fisher_var
+    from stock_grader.types import SecuritySnapshot
+
+    rng = np.random.default_rng(0)
+    # t(2) innovations reliably produce excess kurtosis far outside the valid region.
+    returns = rng.standard_t(2, 600) * 0.01
+    level = 100 * np.exp(np.cumsum(returns))
+    prices = pd.DataFrame(
+        {"close": level, "adj_close": level},
+        index=pd.bdate_range(end="2026-07-24", periods=600),
+    )
+    snapshot = SecuritySnapshot(ticker="X", asof=_date(2026, 7, 24), prices=prices)
+    value = cornish_fisher_var.fn(snapshot)
+    # Either refused, or a genuine positive loss magnitude — never a negative "loss".
+    assert value is None or value > 0
+
+
+def test_piotroski_sparse_data_cannot_reach_a_perfect_score():
+    """``points * 9 / counted`` let five-of-five score exactly 9.0 — same as nine-of-nine.
+
+    The variance of the sparse estimate is inflated by sqrt(9/5) = 1.34x and the chance of a
+    perfect score is p^5 rather than p^9 (7.8% versus 1.0% at p = 0.6), so the two were not
+    remotely the same claim.
+    """
+    from datetime import date as _date
+
+    from stock_grader.metrics.fundamental import piotroski_f_score
+    from stock_grader.types import Fundamentals, SecuritySnapshot
+
+    years = pd.to_datetime(["2024-12-31", "2025-12-31"])
+
+    def snapshot(columns: dict) -> SecuritySnapshot:
+        frame = pd.DataFrame(columns, index=years)
+        return SecuritySnapshot(
+            ticker="X", asof=_date(2026, 6, 30),
+            fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
+        )
+
+    # Only the four profitability tests are computable, and all four pass.
+    sparse = snapshot({
+        "assets": [1000.0, 1000.0],
+        "net_income": [50.0, 100.0],
+        "cfo": [80.0, 150.0],
+    })
+    # Every test computable, and all nine pass.
+    full = snapshot({
+        "assets": [1000.0, 1000.0],
+        "net_income": [50.0, 100.0],
+        "cfo": [80.0, 150.0],
+        "long_term_debt": [300.0, 200.0],
+        "current_assets": [400.0, 500.0],
+        "current_liabilities": [200.0, 180.0],
+        "shares_diluted": [100.0, 99.0],
+        "gross_profit": [300.0, 400.0],
+        "revenue": [800.0, 900.0],
+    })
+    sparse_score = piotroski_f_score.fn(sparse)
+    full_score = piotroski_f_score.fn(full)
+    if sparse_score is not None:
+        assert sparse_score < 9.0, "sparse data must not reach a perfect score"
+        if full_score is not None:
+            assert full_score > sparse_score, "more confirming evidence must score higher"

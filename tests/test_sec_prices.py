@@ -229,9 +229,14 @@ class TestBenchmark:
         from stock_grader.registry import METRICS
         from stock_grader.types import Coverage, SecuritySnapshot
 
+        import pandas as pd
+
         prices, benchmark, _ = generate_panel(["X"], n_days=700, seed=2, synthetic=True)
+        # capm_alpha also declares needs_risk_free: a 0% rate is a different, flattering statistic.
+        risk_free = pd.Series(0.05, index=prices["X"].index)
         snapshot = SecuritySnapshot(
             ticker="X", asof=_date(2026, 7, 24), prices=prices["X"], benchmark=benchmark,
+            risk_free=risk_free,
         )
         for name in ("beta", "capm_alpha", "idiosyncratic_volatility"):
             assert evaluate_one(METRICS.get(name), snapshot).coverage is Coverage.OK, name

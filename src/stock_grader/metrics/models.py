@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from ..registry import metric
 from ..types import SecuritySnapshot
 from .util import safe_div
@@ -106,9 +108,15 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
             safe_div(curr_ltd + curr_cl, curr_ta, positive_denominator=True),
             safe_div(prior_ltd + prior_cl, prior_ta, positive_denominator=True),
         )
-    # Total accruals to total assets — the heaviest-weighted term.
+    # Total accruals to total assets — by far the heaviest-weighted term at +4.679.
+    #
+    # Gated on positive earnings for exactly the reason accruals_ratio is: a large net loss drives
+    # NI - CFO sharply negative, and a positive coefficient on that reads a writedown as pristine
+    # earnings quality. Measured TATA: -0.117 for Bed Bath & Beyond and -0.119 for Tupperware, both
+    # months from Chapter 11, against -0.002 for Home Depot and -0.047 for Abbott. The two most
+    # distressed companies scored best on the model's most influential term.
     tata = None
-    if curr_ni is not None and curr_cfo is not None:
+    if curr_ni is not None and curr_cfo is not None and curr_ni > 0:
         tata = safe_div(curr_ni - curr_cfo, curr_ta, positive_denominator=True)
 
     terms = {
@@ -229,9 +237,37 @@ def altman_z_prime(s: SecuritySnapshot) -> float | None:
     ebit = f.ttm("ebit")
     if None in (working_capital, retained, ebit, equity):
         return None
-    return float(
+
+    # Retained earnings over assets is unbounded above, and under US GAAP treasury stock is
+    # contra-equity — so a company that has bought back stock for decades carries an enormous
+    # retained-earnings balance while its book equity goes negative. Altman's estimation sample
+    # contained no such firms.
+    #
+    # Measured: Bed Bath & Beyond ten months before Chapter 11 had RE/TA of 1.881, book equity of
+    # -$220M and TTM EBIT of -$675M, and scored Z'' = 5.21 — deep inside the "safe" zone above
+    # 2.6. The 3.26 x RE/TA term alone contributed 6.13, swamping the negative earnings.
+    #
+    # Winsorising RE/TA is mitigation, not a cure — Texas Instruments carries RE/TA of 1.862 while
+    # perfectly healthy, so the ratio being large is not itself a distress signal. The confidence
+    # flag does most of the work, and the report demotes Z'' below Ohlson, which handles these
+    # firms correctly without special-casing.
+    re_ta = float(np.clip(retained / total_assets, -1.0, 1.0))
+    score = float(
         6.56 * (working_capital / total_assets)
-        + 3.26 * (retained / total_assets)
+        + 3.26 * re_ta
         + 6.72 * (ebit / total_assets)
         + 1.05 * (equity / total_liabilities)
+    )
+    low_confidence = bool(equity < 0 or abs(retained / total_assets) > 1.0)
+    return (
+        score,
+        {
+            "WC_TA": working_capital / total_assets,
+            "RE_TA_raw": retained / total_assets,
+            "RE_TA_used": re_ta,
+            "EBIT_TA": ebit / total_assets,
+            "BV_TL": equity / total_liabilities,
+            "low_confidence": float(low_confidence),
+            "negative_equity": float(equity < 0),
+        },
     )

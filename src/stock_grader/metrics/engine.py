@@ -69,6 +69,16 @@ def evaluate_one(spec: MetricSpec, snapshot: SecuritySnapshot) -> MetricResult:
         result.note = "no benchmark series available"
         return result
 
+    if spec.needs_risk_free and (snapshot.risk_free is None or snapshot.risk_free.empty):
+        # Substituting 0% is not a conservative default, it is a different and flattering
+        # statistic. The bias is rf/sigma * sqrt(252), so at a 5.3% T-bill a 25%-vol name gains
+        # 0.21 of Sharpe while a 60%-vol name gains 0.09 — vol-dependent, therefore rank-changing
+        # on a cross-section whose Sharpe dispersion is around 0.7.
+        if not snapshot.meta.get("assume_zero_risk_free"):
+            result.coverage = Coverage.MISSING
+            result.note = "no risk-free rate available (set assume_zero_risk_free to override)"
+            return result
+
     if snapshot.fundamentals is None and not spec.needs_prices:
         result.coverage = Coverage.MISSING
         result.note = "no fundamentals available"
