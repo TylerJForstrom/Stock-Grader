@@ -6,6 +6,18 @@ debt needed three. Every concept therefore carries an *ordered* chain — first 
 the winning tag is recorded so a grade can be audited back to the exact line item that produced it.
 
 See docs/design/DATA-GROUND-TRUTH.md §5 for the measured coverage table.
+
+The chains were later audited against SEC's bulk financial statement data sets (3.3M facts from
+6,300 filings). Two findings shaped what was added:
+
+* Most apparent "gaps" are **structural, not tagging**. Ranking candidate tags by lift surfaced
+  ``InterestExpenseDeposits``, ``NoninterestIncome`` and ``InvestmentCompanyExpense…`` — those
+  filings are banks and funds that have no COGS or inventory at all, which the sector applicability
+  matrix already handles. Restricting the audit to non-financial filers removed the confound.
+* Several high-frequency candidates are **flows, not levels**: ``IncreaseDecreaseInAccountsReceivable``
+  is a cash-flow adjustment and ``RepaymentsOfNotesPayable`` a repayment, neither of which is a
+  balance. Substituting one for a balance-sheet concept would have produced a confident wrong
+  number, so they are deliberately excluded.
 """
 
 from __future__ import annotations
@@ -32,6 +44,7 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
         "CostOfRevenue",
         "CostOfGoodsSold",
         "CostOfServices",
+        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
     ),
     "gross_profit": ("GrossProfit",),
     "operating_income": (
@@ -51,11 +64,18 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
     "income_tax": ("IncomeTaxExpenseBenefit",),
     "interest_expense": (
         "InterestExpense",
+        # Used by 1,457 operating-company filings that carry none of the other variants — the
+        # single largest tag gap measured against SEC's bulk financial statement data sets.
+        "InterestExpenseNonoperating",
         "InterestExpenseDebt",
         "InterestExpenseBorrowings",
+        "InterestExpenseOperating",
         "InterestIncomeExpenseNet",
     ),
-    "rnd_expense": ("ResearchAndDevelopmentExpense",),
+    "rnd_expense": (
+        "ResearchAndDevelopmentExpense",
+        "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
+    ),
     "sganda_expense": (
         "SellingGeneralAndAdministrativeExpense",
         "GeneralAndAdministrativeExpense",
@@ -96,6 +116,7 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
     ),
     "payables": (
         "AccountsPayableCurrent",
+        "AccountsPayableTradeCurrent",
         "AccountsPayableAndAccruedLiabilitiesCurrent",
     ),
     "long_term_debt": (
@@ -108,13 +129,19 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
         "LongTermDebtCurrent",
         "DebtCurrent",
         "ShortTermBorrowings",
+        "NotesPayableCurrent",
+        "ConvertibleNotesPayableCurrent",
         "OtherShortTermBorrowings",
     ),
-    "ppe_net": ("PropertyPlantAndEquipmentNet",),
+    "ppe_net": (
+        "PropertyPlantAndEquipmentNet",
+        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
+    ),
     "goodwill": ("Goodwill",),
     "intangibles": (
         "IntangibleAssetsNetExcludingGoodwill",
         "FiniteLivedIntangibleAssetsNet",
+        "OtherIntangibleAssetsNet",
     ),
     "retained_earnings": ("RetainedEarningsAccumulatedDeficit",),
     "preferred_equity": (
