@@ -2,12 +2,12 @@
 
 Grades a stock **A+ … F** from fundamentals, statistics and risk — and, more to the point, lets you
 change *how* it grades. Metrics roll up into pillars, pillars roll up into a grade, and at **both**
-levels you choose from 19 interchangeable weighting methods. A grade that survives all of them is a
+levels you choose from 23 interchangeable weighting methods. A grade that survives all of them is a
 much stronger claim than one from a single hand-picked weight vector.
 
 ```
-                                    ┌──────────── weighting method (19) ────────────┐
-SEC EDGAR ──▶ metrics (102) ──▶ normalize (10) ──▶ PILLARS ──▶ weighting method ──▶ GRADE
+                                    ┌──────────── weighting method (23) ────────────┐
+SEC EDGAR ──▶ metrics (105) ──▶ normalize (10) ──▶ PILLARS ──▶ weighting method ──▶ GRADE
                                     └──── aggregator (8) ────┘        (again)        + interval
                                                                                      + explanation
 ```
@@ -67,11 +67,11 @@ works at both levels.
 
 | family | methods | weights come from |
 |---|---|---|
-| a priori | `equal`, `fixed`, `ahp` | judgement, stated up front |
+| a priori | `equal`, `fixed`, `ahp`, `rank_order_centroid` | judgement, stated up front |
 | dispersion | `entropy`, `critic`, `stddev`, `coefficient_of_variation` | how much a metric *discriminates* |
-| structure | `pca`, `inverse_variance`, `risk_parity`, `min_variance`, `max_diversification`, `hrp`, `decorrelated` | the covariance geometry |
-| supervised | `ic`, `ic_ir`, `regression`, `shapley` | what actually predicted returns |
-| meta | `consensus` | the median across methods |
+| structure | `pca`, `inverse_variance`, `inverse_volatility`, `risk_parity`, `min_variance`, `max_diversification`, `hrp`, `decorrelated` | the covariance geometry |
+| supervised | `ic`, `ic_ir`, `regression`, `shapley`, `mutual_information` | what actually predicted returns |
+| meta | `consensus`, `bagged` | the median across methods; bootstrap-stabilised |
 
 Why so many? Because they disagree, and the disagreement is information. Run the same universe
 through eight of them:
@@ -185,10 +185,11 @@ src/stock_grader/
     util.py         guarded arithmetic — returns None, never a misleading zero
     fundamental.py  62 metrics across 7 pillars
     statistical.py  40 risk / momentum / time-series metrics
+    models.py       Beneish M, Ohlson O, Altman Z'' with published coefficients
     engine.py       evaluation + three-state coverage
   normalize.py      10 normalizers, cross-sectional and absolute
   aggregate.py      8 aggregators incl. the CES compensation dial
-  weighting.py      19 weighting methods
+  weighting.py      23 weighting methods
   scoring.py        grade scale, uncertainty, contribution decomposition
   pipeline.py       orchestration
   profiles.py       11 investment styles + consensus
