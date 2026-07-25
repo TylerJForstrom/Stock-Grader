@@ -155,8 +155,19 @@ Sources are ranked by **freshness, not kind** — a 131-day-old insider price be
 float — and every grade reports the price's age.
 
 These prices are sparse (a few dates per quarter), which is enough for valuation but not for
-volatility, beta or momentum. Those stay disabled rather than computed from twelve points. For the
-full daily statistics, supply your own:
+volatility, beta or momentum.
+
+**For the daily statistics**, `--stockanalysis` fetches split- and dividend-adjusted daily OHLCV
+and brings all 40 risk/momentum/liquidity metrics to life (coverage goes to 100%). It is **opt-in
+by design**: an undocumented internal endpoint of a commercial site, not a licensed feed. Its
+robots.txt disallows nothing for general agents and no access control is circumvented, but read
+their Terms of Service before depending on it.
+
+The adjustment is verified rather than assumed — BRK.B (never paid a dividend) has adjusted and raw
+closes identical on 100% of bars, while AT&T's ten-year price CAGR is −5.5% against +3.1% adjusted.
+Using the raw close would report a decade of AT&T as a loss.
+
+Alternatively supply your own, with no caveat attached:
 
 ```bash
 stock-grader grade AAPL --price AAPL=232        # one number, unlocks every valuation metric

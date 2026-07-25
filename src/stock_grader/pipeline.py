@@ -339,6 +339,20 @@ def grade_universe(
             final_score, letter = hybrid_grade(score, percentile, absolute_weight=config.absolute_weight)
 
         warns = warnings_by_ticker.get(ticker, [])
+        # A pillar that computed fine but carries no weight contributes nothing, silently. That is
+        # sometimes deliberate — the momentum profile omits valuation on purpose — but it is also
+        # how a newly-working pillar goes unnoticed: risk, momentum and liquidity all computed
+        # correctly for months while every profile weighted them at zero, because the profiles were
+        # written back when those pillars could never fire.
+        unweighted = sorted(
+            p for p, obj in objects.items()
+            if np.isfinite(obj.score) and pillar_weights.get(p, 0.0) <= 0.0
+        )
+        if unweighted:
+            warns.append(
+                f"pillar(s) computed but given zero weight by the '{config.name}' profile: "
+                f"{', '.join(unweighted)} — they do not affect this grade"
+            )
         if dropped_na:
             warns.append(
                 f"pillar(s) not defined for a {snapshot.sector.value}: {', '.join(sorted(dropped_na))}"

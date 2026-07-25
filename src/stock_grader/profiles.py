@@ -29,45 +29,47 @@ __all__ = ["PROFILE_SPECS", "get_profile", "profile_names", "consensus_grade", "
 # pillar weights, aggregator rho, thesis
 PROFILE_SPECS: dict[str, dict] = {
     "all_weather": {
-        "weights": {"valuation": 0.18, "profitability": 0.18, "health": 0.16, "growth": 0.14,
-                    "quality": 0.14, "momentum": 0.08, "shareholder": 0.07, "efficiency": 0.05},
+        "weights": {"valuation": 0.17, "profitability": 0.17, "health": 0.15, "growth": 0.13,
+                    "quality": 0.13, "momentum": 0.07, "risk": 0.07, "shareholder": 0.06,
+                    "efficiency": 0.04, "liquidity": 0.01},
         "rho": 0.5,
         "thesis": "Balanced default. No single lens dominates, and partial compensation (rho=0.5) "
                   "means a company must be broadly sound rather than spectacular in one dimension.",
     },
     "value": {
-        "weights": {"valuation": 0.40, "health": 0.18, "quality": 0.14, "profitability": 0.12,
-                    "shareholder": 0.08, "growth": 0.04, "efficiency": 0.04},
+        "weights": {"valuation": 0.38, "health": 0.17, "quality": 0.13, "profitability": 0.11,
+                    "shareholder": 0.07, "risk": 0.06, "growth": 0.04, "efficiency": 0.04},
         "rho": 0.0,
         "thesis": "Price paid dominates, but solvency and earnings quality carry real weight "
                   "because the failure mode of value investing is the value trap. rho=0 "
                   "(geometric) means a cheap company with a broken balance sheet cannot score well.",
     },
     "deep_value": {
-        "weights": {"valuation": 0.55, "health": 0.25, "quality": 0.15, "profitability": 0.05},
+        "weights": {"valuation": 0.52, "health": 0.24, "quality": 0.14, "risk": 0.05,
+                    "profitability": 0.05},
         "rho": -0.5,
         "thesis": "Net-net and asset-based bargains. Valuation is most of the grade, but rho=-0.5 "
                   "makes solvency close to a veto: the whole strategy depends on surviving to "
                   "realise the discount.",
     },
     "growth": {
-        "weights": {"growth": 0.38, "profitability": 0.20, "momentum": 0.16, "quality": 0.12,
-                    "efficiency": 0.08, "health": 0.06},
+        "weights": {"growth": 0.36, "profitability": 0.19, "momentum": 0.15, "quality": 0.11,
+                    "efficiency": 0.07, "health": 0.06, "risk": 0.06},
         "rho": 0.8,
         "thesis": "Compounding revenue and earnings, with quality as a check on growth bought "
                   "through dilution or leverage. High rho — a genuine grower is allowed to look "
                   "expensive.",
     },
     "garp": {
-        "weights": {"growth": 0.26, "valuation": 0.26, "profitability": 0.18, "quality": 0.14,
-                    "health": 0.10, "momentum": 0.06},
+        "weights": {"growth": 0.25, "valuation": 0.25, "profitability": 0.17, "quality": 0.13,
+                    "health": 0.10, "momentum": 0.05, "risk": 0.05},
         "rho": 0.3,
         "thesis": "Growth at a reasonable price. Valuation and growth weighted equally, with low "
                   "rho so a company cannot buy an A on one by failing the other.",
     },
     "quality": {
-        "weights": {"profitability": 0.30, "quality": 0.24, "health": 0.18, "growth": 0.12,
-                    "efficiency": 0.10, "valuation": 0.06},
+        "weights": {"profitability": 0.28, "quality": 0.22, "health": 0.17, "growth": 0.11,
+                    "efficiency": 0.09, "risk": 0.07, "valuation": 0.06},
         "rho": 0.6,
         "thesis": "Durable economic moats: high and stable returns on capital, clean accruals, "
                   "modest leverage. Valuation is deliberately a minor term — this profile answers "
@@ -81,30 +83,30 @@ PROFILE_SPECS: dict[str, dict] = {
                   "signal you cannot trade is not a signal.",
     },
     "low_volatility": {
-        "weights": {"risk": 0.42, "quality": 0.20, "health": 0.18, "profitability": 0.12,
-                    "shareholder": 0.08},
+        "weights": {"risk": 0.40, "quality": 0.19, "health": 0.17, "profitability": 0.11,
+                    "shareholder": 0.08, "liquidity": 0.05},
         "rho": 0.2,
         "thesis": "The low-volatility anomaly: stable, boring, well-capitalised businesses. Low "
                   "rho because the entire premise is the absence of weak spots.",
     },
     "dividend_income": {
-        "weights": {"shareholder": 0.36, "health": 0.22, "quality": 0.16, "profitability": 0.14,
-                    "valuation": 0.12},
+        "weights": {"shareholder": 0.34, "health": 0.21, "quality": 0.15, "profitability": 0.13,
+                    "valuation": 0.11, "risk": 0.06},
         "rho": 0.1,
         "thesis": "Current income that survives. Payout ratios are scored through an ideal band, "
                   "not maximised — the highest yield in a universe is usually the one about to be "
                   "cut. Very low rho: a stretched balance sheet vetoes the income case.",
     },
     "dividend_growth": {
-        "weights": {"shareholder": 0.26, "growth": 0.22, "quality": 0.20, "health": 0.18,
-                    "profitability": 0.14},
+        "weights": {"shareholder": 0.25, "growth": 0.21, "quality": 0.19, "health": 0.17,
+                    "profitability": 0.13, "risk": 0.05},
         "rho": 0.3,
         "thesis": "Rising payouts rather than high ones: moderate current yield, strong coverage, "
                   "and the earnings growth to fund future increases.",
     },
     "turnaround": {
-        "weights": {"valuation": 0.32, "momentum": 0.22, "health": 0.20, "growth": 0.16,
-                    "quality": 0.10},
+        "weights": {"valuation": 0.30, "momentum": 0.21, "health": 0.19, "growth": 0.15,
+                    "quality": 0.09, "risk": 0.06},
         "rho": 0.7,
         "thesis": "Distressed situations where improvement is the thesis. Momentum matters as "
                   "confirmation that the market is starting to agree; high rho tolerates the weak "

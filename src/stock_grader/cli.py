@@ -34,6 +34,7 @@ from .data.prices import (
     YahooPriceProvider,
 )
 from .data.sec import SECClient, SECProvider
+from .data.stockanalysis import StockAnalysisPriceProvider
 from .data.sec_prices import SECInsiderPriceProvider, resolve_price
 from .data.synthetic import generate_prices
 from .pipeline import GradeConfig, grade_universe
@@ -100,6 +101,11 @@ def _build_snapshots(
     price_providers = []
     if args.price_dir:
         price_providers.append(CSVPriceProvider(args.price_dir))
+    if args.stockanalysis and not args.no_network:
+        # Opt-in: an undocumented endpoint of a commercial site. See that module's docstring.
+        price_providers.append(
+            StockAnalysisPriceProvider(cache_dir=args.cache_dir, contact=args.contact)
+        )
     if not args.no_network:
         price_providers.append(YahooPriceProvider())
     prices = ChainedPriceProvider(price_providers) if price_providers else None
@@ -360,6 +366,10 @@ def build_parser() -> argparse.ArgumentParser:
                             "the only keyless price source, sparse but real")
         p.add_argument("--max-price-age", type=int, default=400,
                        help="refuse any SEC-derived price older than this many days (default 400)")
+        p.add_argument("--stockanalysis", action="store_true",
+                       help="fetch daily adjusted OHLCV from stockanalysis.com, enabling the 40 "
+                            "risk/momentum/liquidity metrics. An undocumented endpoint of a "
+                            "commercial site, not a licensed feed — read their ToS first")
         p.add_argument("--benchmark", default="SP500",
                        help="FRED index for beta/alpha (SP500, NASDAQ, DJIA); price-only, so alpha "
                             "is overstated by roughly beta x the index dividend yield")

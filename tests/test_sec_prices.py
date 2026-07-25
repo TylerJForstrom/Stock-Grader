@@ -252,3 +252,76 @@ class TestBenchmark:
         result = evaluate_one(METRICS.get("beta"), snapshot)
         assert result.coverage is Coverage.MISSING
         assert "benchmark" in result.note
+
+
+class TestStockAnalysisProvider:
+    """The adjusted-close column is verified, not assumed.
+
+    BRK.B has never paid a dividend, so its adjusted and raw closes must be identical (measured:
+    100% of bars). AT&T pays a large one, so they must diverge (measured: 2016 close 42.38 against
+    adjusted 17.80; ten-year price CAGR -5.5% versus adjusted +3.1% — the sign flips).
+    """
+
+    def test_payload_missing_the_adjusted_column_is_refused(self):
+        """Guessing which column is the adjusted close would silently drop dividends."""
+        import pandas as pd
+
+        from stock_grader.data.stockanalysis import StockAnalysisPriceProvider
+
+        provider = StockAnalysisPriceProvider(cache_dir="/tmp/sg-sa-test")
+
+        class _Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"data": [{"t": "2026-01-02", "o": 1, "h": 2, "l": 1, "c": 2, "v": 10}]}
+
+        provider._session.get = lambda *a, **k: _Response()  # type: ignore[assignment]
+        assert provider._fetch("X", start=None, end=None) is None
+
+    def test_unknown_symbol_is_refused_not_faked(self):
+        from stock_grader.data.stockanalysis import StockAnalysisPriceProvider
+
+        provider = StockAnalysisPriceProvider(cache_dir="/tmp/sg-sa-test2")
+
+        class _Response:
+            status_code = 404
+
+            @staticmethod
+            def json():
+                return {}
+
+        provider._session.get = lambda *a, **k: _Response()  # type: ignore[assignment]
+        assert provider.get("NOTREAL") is None
+
+
+class TestProfileWeightCoverage:
+    """risk, momentum and liquidity computed correctly while every profile weighted them at zero.
+
+    The pillars were added when no daily price series was reachable, so the profiles were written
+    without them and never revisited once a source appeared.
+    """
+
+    def test_every_profile_weights_risk(self):
+        from stock_grader.profiles import PROFILE_SPECS
+
+        for name, spec in PROFILE_SPECS.items():
+            assert spec["weights"].get("risk", 0.0) > 0.0, f"{name} ignores the risk pillar"
+
+    def test_profile_weights_sum_to_one(self):
+        from stock_grader.profiles import PROFILE_SPECS
+
+        for name, spec in PROFILE_SPECS.items():
+            assert abs(sum(spec["weights"].values()) - 1.0) < 1e-9, name
+
+    def test_zero_weight_pillars_are_reported(self):
+        """A computed pillar with no weight must say so rather than vanish."""
+        from datetime import date as _date
+
+        from stock_grader.pipeline import GradeConfig, grade_universe
+        from tests.test_pipeline import _universe
+
+        config = GradeConfig(pillar_weights={"profitability": 1.0}, pillar_weighting="fixed")
+        report = next(iter(grade_universe(_universe(6), config).values()))
+        assert any("zero weight" in w for w in report.warnings)
