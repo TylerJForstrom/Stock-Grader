@@ -428,3 +428,73 @@ class TestSectorSpecificMetrics:
         spec = METRICS.get("loans_to_deposits")
         assert spec.direction == 0
         assert spec.ideal_band is not None
+
+
+class TestRobustness:
+    """Adversarial inputs must work or fail clearly — never crash, hang, or return a number."""
+
+    def _empty(self, ticker: str) -> SecuritySnapshot:
+        frame = pd.DataFrame()
+        return SecuritySnapshot(
+            ticker=ticker, asof=date(2026, 7, 25),
+            fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
+        )
+
+    def test_empty_universe(self):
+        assert grade_universe([], GradeConfig()) == {}
+
+    def test_security_with_no_data_is_ungraded_not_zero(self):
+        report = grade_universe([self._empty("X")], GradeConfig())["X"]
+        assert report.letter == "N/A"
+
+    def test_duplicate_tickers_warn_rather_than_silently_collapse(self, caplog):
+        """Results are keyed by ticker, so a repeat overwrites its predecessor and shrinks the
+        peer set — which shifts every percentile in the universe."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            reports = grade_universe([self._empty("A"), self._empty("A"), self._empty("B")], GradeConfig())
+        assert len(reports) == 2
+        assert any("duplicate" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.parametrize("rho", [200.0, -200.0, float("inf"), float("nan")])
+    def test_unusable_rho_names_the_parameter(self, rho):
+        """Outside the usable range the power mean overflows and the aggregator fails soft to
+        None, surfacing as an unexplained N/A grade rather than a named bad parameter."""
+        with pytest.raises(ValueError, match="rho"):
+            GradeConfig(aggregator_kwargs={"rho": rho})
+
+    @pytest.mark.parametrize("rho", [1.0, 0.5, 0.0, -1.0, -5.0])
+    def test_usable_rho_accepted(self, rho):
+        assert GradeConfig(aggregator_kwargs={"rho": rho}) is not None
+
+    def test_unknown_names_list_the_valid_options(self):
+        from stock_grader.profiles import get_profile
+
+        with pytest.raises(KeyError, match="all_weather"):
+            get_profile("not_a_profile")
+
+    def test_a_thousand_securities(self):
+        reports = grade_universe([self._empty(f"T{i}") for i in range(1000)], GradeConfig())
+        assert len(reports) == 1000
+
+    def test_bank_and_industrial_in_one_universe(self):
+        bank = self._empty("BK")
+        bank.sector = SectorClass.BANK
+        reports = grade_universe([bank, self._empty("IN")], GradeConfig())
+        assert set(reports) == {"BK", "IN"}
+
+    def test_degenerate_price_frames(self):
+        for frame in (
+            pd.DataFrame(),
+            pd.DataFrame({"close": [1.0], "adj_close": [1.0]}, index=pd.to_datetime(["2026-01-01"])),
+        ):
+            snapshot = SecuritySnapshot(ticker="X", asof=date(2026, 7, 25), prices=frame)
+            assert grade_universe([snapshot], GradeConfig())["X"] is not None
+
+    def test_reports_serialise_even_when_ungraded(self):
+        from stock_grader.report import to_json, to_markdown
+
+        report = grade_universe([self._empty("X")], GradeConfig())["X"]
+        assert to_json(report)
+        assert to_markdown(report)

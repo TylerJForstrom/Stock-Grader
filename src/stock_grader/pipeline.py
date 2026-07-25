@@ -87,6 +87,18 @@ class GradeConfig:
         self.metric_aggregator = metric_aggregator
         self.pillar_aggregator = pillar_aggregator
         self.aggregator_kwargs = aggregator_kwargs or {"rho": 0.5}
+        rho = self.aggregator_kwargs.get("rho")
+        if rho is not None:
+            if not np.isfinite(rho):
+                raise ValueError(f"rho must be finite, got {rho!r}")
+            if not -20.0 <= float(rho) <= 20.0:
+                # Outside this the power mean overflows and the aggregator fails soft to None,
+                # which surfaces as an unexplained N/A grade rather than a named bad parameter.
+                raise ValueError(
+                    f"rho={rho} is outside the usable range [-20, 20]. rho=1 is the arithmetic "
+                    f"mean, 0 the geometric, -1 the harmonic; large magnitudes approach min/max "
+                    f"and overflow before they get there."
+                )
         self.sector_neutral = sector_neutral
         self.curve = curve
         self.absolute_weight = absolute_weight
@@ -214,6 +226,19 @@ def grade_universe(
     config = config or GradeConfig()
     if not snapshots:
         return {}
+
+    seen: dict[str, int] = {}
+    for snapshot in snapshots:
+        seen[snapshot.ticker] = seen.get(snapshot.ticker, 0) + 1
+    duplicates = sorted(t for t, n in seen.items() if n > 1)
+    if duplicates:
+        # Results are keyed by ticker, so a repeat silently overwrites its predecessor and shrinks
+        # the peer set without saying so — which also shifts every percentile in the universe.
+        log.warning(
+            "universe contains duplicate tickers (%s); only the last of each is graded and the "
+            "effective universe is %d, not %d",
+            ", ".join(duplicates[:5]), len(seen), len(snapshots),
+        )
 
     matrix, results = build_metric_matrix(snapshots, names=config.metric_whitelist)
     if matrix.empty:
