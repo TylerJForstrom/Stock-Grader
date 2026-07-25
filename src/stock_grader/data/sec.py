@@ -639,6 +639,12 @@ def _derive(df: pd.DataFrame) -> None:
         return
     if "gross_profit" not in df and {"revenue", "cogs"} <= set(df.columns):
         df["gross_profit"] = df["revenue"] - df["cogs"]
+    if "loan_loss_allowance" not in df and {"loans_gross", "loans"} <= set(df.columns):
+        # Under CECL the allowance is the gap between gross and net loans. Banks tag both sides
+        # but stopped tagging the allowance itself around 2021, so deriving it keeps the credit
+        # metrics alive on current data instead of resolving to a figure four years old.
+        allowance = df["loans_gross"] - df["loans"]
+        df["loan_loss_allowance"] = allowance.where(allowance > 0)
     if "liabilities" not in df and {"assets", "equity"} <= set(df.columns):
         # Walmart, Nike, TJX, McDonald's, Target and AbbVie never tag `Liabilities` at all, so both
         # ohlson_o_score and altman_z_prime returned None for them while the grade was still issued

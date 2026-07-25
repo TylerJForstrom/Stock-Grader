@@ -195,11 +195,51 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
         "ProceedsFromIssuanceOrSaleOfEquity",
     ),
     "share_based_comp": ("ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"),
+
+    # ---- Bank-specific (verified present for JPM, WFC, BAC, C and USB) ----
+    "net_interest_income": (
+        "InterestIncomeExpenseNet",
+        "InterestIncomeExpenseAfterProvisionForLoanLoss",
+    ),
+    "noninterest_income": ("NoninterestIncome",),
+    "noninterest_expense": ("NoninterestExpense",),
+    "deposits": ("Deposits",),
+    # CECL (effective 2020) changed how banks tag loans. The pre-CECL tags stop dead in
+    # 2021-2022 — JPMorgan's last FinancingReceivableAllowanceForCreditLosses is 2021-06-30 —
+    # so the current tags lead and the legacy ones remain only for historical periods.
+    "loans": (
+        "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
+        "LoansAndLeasesReceivableNetReportedAmount",
+        "NotesReceivableNet",
+    ),
+    "loans_gross": (
+        "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+        "LoansAndLeasesReceivableGrossCarryingAmount",
+    ),
+    "loan_loss_allowance": (
+        "FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest",
+        "FinancingReceivableAllowanceForCreditLosses",
+        "AllowanceForLoanAndLeaseLossesRealEstate",
+    ),
+    "loan_loss_provision": (
+        "ProvisionForLoanLeaseAndOtherLosses",
+        "ProvisionForLoanAndLeaseLosses",
+    ),
+
+    # ---- REIT-specific. NOTE: FundsFromOperations is tagged by NO major REIT (checked SPG, O,
+    # PLD, AMT), so FFO is reconstructed from these rather than read directly.
+    "real_estate_impairment": ("ImpairmentOfRealEstate",),
+    "gain_on_property_sale": (
+        "GainLossOnSaleOfProperties",
+        "GainsLossesOnSalesOfInvestmentRealEstate",
+    ),
+    "income_to_common": ("NetIncomeLossAvailableToCommonStockholdersBasic",),
 }
 
 
 # Facts with only an `end` date (a stock, not a flow). Everything else is a duration.
 _INSTANT: frozenset[str] = frozenset({
+    "deposits", "loans", "loans_gross", "loan_loss_allowance",
     "assets", "current_assets", "liabilities", "current_liabilities", "equity", "cash",
     "short_term_investments", "inventory", "receivables", "payables", "long_term_debt",
     "short_term_debt", "ppe_net", "goodwill", "intangibles", "retained_earnings",

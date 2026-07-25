@@ -12,7 +12,7 @@ import pytest
 from stock_grader import aggregate, normalize, weighting  # noqa: F401
 from stock_grader.data.sectors import classify_sic
 from stock_grader.data.synthetic import generate_panel, generate_prices
-from stock_grader.metrics import fundamental, models, statistical  # noqa: F401
+from stock_grader.metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from stock_grader.metrics.engine import evaluate_metrics
 from stock_grader.pipeline import GradeConfig, grade_universe
 from stock_grader.profiles import consensus_grade, get_profile, profile_names
@@ -353,3 +353,78 @@ class TestIntervalAndLetterProbabilities:
         reports = grade_universe(_universe(20), GradeConfig(curve="hybrid"))
         widths = [r.ci[1] - r.ci[0] for r in reports.values() if np.isfinite(r.ci[0])]
         assert np.median(widths) > 3.0, "a hybrid interval must carry the percentile's own spread"
+
+
+class TestSectorSpecificMetrics:
+    """Disabling a metric for a sector without replacing it left financials under-measured.
+
+    Of 65 price-free metrics an industrial got all 65 while a bank got 36, and the entire
+    efficiency pillar was empty for banks. A three-metric pillar carries several times the sampling
+    variance of a twelve-metric one, so bank grades were uninformative rather than wrong.
+    """
+
+    def test_bank_metrics_are_not_applicable_elsewhere(self):
+        """An industrial must be NOT_APPLICABLE for a bank metric, never MISSING.
+
+        MISSING would charge it a coverage penalty for lacking a metric that was never defined
+        for it.
+        """
+        from stock_grader.data.sectors import BANK_ONLY_METRICS, is_applicable
+
+        for name in BANK_ONLY_METRICS:
+            assert not is_applicable(name, "efficiency", SectorClass.GENERAL)
+            assert not is_applicable(name, "efficiency", SectorClass.REIT)
+            assert is_applicable(name, "efficiency", SectorClass.BANK)
+
+    def test_reit_metrics_are_not_applicable_elsewhere(self):
+        from stock_grader.data.sectors import REIT_ONLY_METRICS, is_applicable
+
+        for name in REIT_ONLY_METRICS:
+            assert not is_applicable(name, "valuation", SectorClass.GENERAL)
+            assert not is_applicable(name, "valuation", SectorClass.BANK)
+            assert is_applicable(name, "valuation", SectorClass.REIT)
+
+    def test_banks_regain_the_efficiency_pillar(self):
+        from stock_grader.data.sectors import SECTOR_DISABLED_PILLARS
+
+        assert "efficiency" not in SECTOR_DISABLED_PILLARS[SectorClass.BANK]
+
+    def test_ffo_is_reconstructed_not_read(self):
+        """No major REIT tags FundsFromOperations — checked SPG, O, PLD and AMT.
+
+        An implementation reading it directly would report 100% missing.
+        """
+        from stock_grader.data.concepts import CONCEPTS
+
+        all_tags = {tag for chain in CONCEPTS.values() for tag in chain}
+        assert "FundsFromOperations" not in all_tags
+
+    def test_ffo_rejects_an_implausible_reconstruction(self):
+        from datetime import date as _date
+
+        from stock_grader.metrics.sector_specific import funds_from_operations
+        from stock_grader.types import Fundamentals, SecuritySnapshot
+
+        quarters = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
+        # Depreciation twenty times income: the components did not assemble sensibly.
+        frame = pd.DataFrame(
+            {"net_income": [10.0] * 4, "income_to_common": [10.0] * 4,
+             "depreciation_amortization": [200.0] * 4},
+            index=quarters,
+        )
+        snapshot = SecuritySnapshot(
+            ticker="X", asof=_date(2026, 1, 31),
+            fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
+        )
+        assert funds_from_operations.fn(snapshot) is None
+
+    def test_loans_to_deposits_is_a_band_not_a_direction(self):
+        """Above ~1.0 a bank funds itself wholesale — the vulnerability that closed SVB.
+
+        Far below 0.6 it cannot deploy its deposits. Both ends are worse than the middle.
+        """
+        from stock_grader.registry import METRICS
+
+        spec = METRICS.get("loans_to_deposits")
+        assert spec.direction == 0
+        assert spec.ideal_band is not None

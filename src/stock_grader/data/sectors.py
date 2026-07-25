@@ -61,8 +61,15 @@ def classify_sic(sic: str | int | None) -> SectorClass:
 
 # Metrics that are structurally undefined for a sector class. These resolve to
 # Coverage.NOT_APPLICABLE, are renormalised out of their pillar, and carry no coverage penalty.
+# Metrics that exist only for one business model. Registering them globally and disabling them
+# elsewhere keeps the coverage accounting honest: an industrial company is marked NOT_APPLICABLE
+# for "efficiency_ratio" rather than MISSING, so it takes no penalty for lacking a bank metric.
+BANK_ONLY_METRICS: frozenset[str] = frozenset({"efficiency_ratio", "net_interest_income_to_assets", "fee_income_share", "deposits_to_assets", "loans_to_deposits", "allowance_coverage", "provision_burden", "tangible_common_equity_ratio"})
+REIT_ONLY_METRICS: frozenset[str] = frozenset({"funds_from_operations", "price_to_ffo"})
+
+
 SECTOR_DISABLED_METRICS: dict[SectorClass, frozenset[str]] = {
-    SectorClass.BANK: frozenset({
+    SectorClass.BANK: REIT_ONLY_METRICS | frozenset({
         "current_ratio", "quick_ratio", "cash_ratio", "working_capital_to_assets",
         "inventory_turnover", "days_inventory_outstanding", "cash_conversion_cycle",
         "days_payables_outstanding", "gross_margin", "gross_profit_to_assets",
@@ -73,26 +80,26 @@ SECTOR_DISABLED_METRICS: dict[SectorClass, frozenset[str]] = {
         "altman_z_prime", "beneish_m_score",
         "acquirers_multiple", "croic", "reinvestment_rate",
     }),
-    SectorClass.INSURANCE: frozenset({
+    SectorClass.INSURANCE: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset({
         "current_ratio", "quick_ratio", "cash_ratio", "inventory_turnover",
         "days_inventory_outstanding", "cash_conversion_cycle", "gross_margin",
         "gross_profit_to_assets", "capex_intensity", "altman_z", "ev_to_ebitda",
         "ev_to_ebit", "net_debt_to_ebitda", "interest_coverage", "acquirers_multiple",
         "altman_z_prime",
     }),
-    SectorClass.REIT: frozenset({
+    SectorClass.REIT: BANK_ONLY_METRICS | frozenset({
         "current_ratio", "quick_ratio", "cash_ratio", "inventory_turnover",
         "days_inventory_outstanding", "cash_conversion_cycle", "gross_margin",
         "gross_profit_to_assets", "asset_turnover", "altman_z",
         # Depreciation dominates REIT earnings, so EPS-based valuation is actively misleading.
         "pe_trailing", "pe_forward", "peg_ratio", "earnings_yield", "graham_number",
     }),
-    SectorClass.HOLDING: frozenset({
+    SectorClass.HOLDING: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset({
         "current_ratio", "quick_ratio", "inventory_turnover", "gross_margin",
         "asset_turnover", "capex_intensity", "cash_conversion_cycle", "altman_z",
         "days_inventory_outstanding", "days_sales_outstanding",
     }),
-    SectorClass.UTILITY: frozenset({
+    SectorClass.UTILITY: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset({
         # Leverage is structural and rate-regulated, not a distress signal.
         "debt_to_equity", "net_debt_to_ebitda",
         # Altman Z puts healthy regulated utilities in the distress zone as a matter of course:
@@ -102,17 +109,17 @@ SECTOR_DISABLED_METRICS: dict[SectorClass, frozenset[str]] = {
         # lean on those terms, stays enabled and puts the same company at a 0.4% failure probability.
         "altman_z", "altman_z_prime",
     }),
-    SectorClass.ENERGY: frozenset(),
-    SectorClass.GENERAL: frozenset(),
+    SectorClass.ENERGY: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset(),
+    SectorClass.GENERAL: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset(),
 }
 
 
 # Whole pillars that carry no meaning for a sector class.
 SECTOR_DISABLED_PILLARS: dict[SectorClass, frozenset[str]] = {
-    SectorClass.BANK: frozenset({"efficiency"}),
-    SectorClass.INSURANCE: frozenset({"efficiency"}),
+    SectorClass.BANK: frozenset(),
+    SectorClass.INSURANCE: frozenset(),
     SectorClass.REIT: frozenset(),
-    SectorClass.HOLDING: frozenset({"efficiency"}),
+    SectorClass.HOLDING: frozenset(),
     SectorClass.UTILITY: frozenset(),
     SectorClass.ENERGY: frozenset(),
     SectorClass.GENERAL: frozenset(),

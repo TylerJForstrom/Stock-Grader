@@ -24,7 +24,7 @@ from . import __version__
 
 # Importing these modules is what populates the registries.
 from . import aggregate, normalize, weighting  # noqa: F401
-from .metrics import fundamental, models, statistical  # noqa: F401
+from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 
 from .data.prices import (
     BenchmarkProvider,
