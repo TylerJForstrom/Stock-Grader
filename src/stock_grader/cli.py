@@ -28,6 +28,7 @@ from .metrics import fundamental, models, statistical  # noqa: F401
 
 from .data.prices import ChainedPriceProvider, CSVPriceProvider, RiskFreeProvider, YahooPriceProvider
 from .data.sec import SECClient, SECProvider
+from .data.sec_prices import SECInsiderPriceProvider, resolve_price
 from .data.synthetic import generate_prices
 from .pipeline import GradeConfig, grade_universe
 from .profiles import consensus_grade, get_profile, profile_names
@@ -101,6 +102,16 @@ def _build_snapshots(
     if not args.no_network:
         risk_free = RiskFreeProvider().get("3m")
 
+    # SEC insider-transaction prices: the only price source reachable without an API key.
+    # Sparse (a few dates per quarter), which is enough for valuation but not for the daily
+    # statistics, so it sets `price` and deliberately leaves `prices` unset.
+    insider = None
+    if args.sec_prices and not args.no_network:
+        insider = SECInsiderPriceProvider(cache_dir=args.cache_dir, contact=args.contact)
+        with console.status("[dim]loading SEC insider-transaction prices…[/dim]"):
+            insider.load(asof=date.fromisoformat(args.asof) if args.asof else None)
+        console.print(f"[dim]SEC insider prices: {insider.coverage()} tickers[/dim]")
+
     manual_prices = {}
     for entry in args.price or []:
         if "=" in entry:
@@ -131,8 +142,37 @@ def _build_snapshots(
             snapshot.meta["synthetic_prices"] = True
             if snapshot.price is None:
                 snapshot.price = float(snapshot.prices["adj_close"].iloc[-1])
+        if snapshot.price is None and insider is not None:
+            found = resolve_price(
+                ticker,
+                asof=asof,
+                insider=insider,
+                public_float=snapshot.public_float,
+                float_history=snapshot.meta.get("public_float_history"),
+                shares_outstanding=snapshot.shares_outstanding,
+                max_age_days=args.max_price_age,
+            )
+            if found is not None:
+                snapshot.price = found["price"]
+                snapshot.meta["price_source"] = found["source"]
+                snapshot.meta["price_date"] = found["date"].isoformat()
+                snapshot.meta["price_age_days"] = found["age_days"]
+                fraction = found.get("non_affiliate_fraction")
+                if fraction is not None:
+                    snapshot.meta["non_affiliate_fraction"] = round(fraction, 4)
+                if found["age_days"] > 60:
+                    snapshot.warnings.append(
+                        f"price is {found['age_days']} days old ({found['source']}, "
+                        f"{found['date']}); valuation metrics are stale by that much"
+                    )
+                if found["source"] == "public_float_lower_bound":
+                    snapshot.warnings.append(
+                        "price implied from SEC public float with no affiliate correction — a "
+                        "LOWER bound, so valuation may make this look cheaper than it is"
+                    )
         if ticker in manual_prices:
             snapshot.price = manual_prices[ticker]
+            snapshot.meta["price_source"] = "manual"
         snapshot.risk_free = risk_free
         snapshots.append(snapshot)
     if status:
@@ -300,6 +340,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--synthetic-prices", action="store_true",
                        help="fabricate a price series where none is available; clearly labelled "
                             "in the report and never real market history")
+        p.add_argument("--sec-prices", action=argparse.BooleanOptionalAction, default=True,
+                       help="derive prices from SEC insider-transaction filings (default: on) — "
+                            "the only keyless price source, sparse but real")
+        p.add_argument("--max-price-age", type=int, default=400,
+                       help="refuse any SEC-derived price older than this many days (default 400)")
         p.add_argument("--no-network", action="store_true", help="SEC cache only, no price fetches")
         p.add_argument("--refresh", action="store_true", help="bypass the cache")
         p.add_argument("--cache-dir")

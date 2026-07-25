@@ -499,6 +499,10 @@ class SECProvider:
                 snap.shares_outstanding = float(series.iloc[-1])
             elif concept == "public_float":
                 snap.public_float = float(series.iloc[-1])
+                # The full dated history, not just the latest value: pricing from public float
+                # needs a float and a market price measured on the *same* date to solve the
+                # affiliate share, and only the history offers a choice of dates to match against.
+                snap.meta["public_float_history"] = series
 
         # Diluted share count from the income statement is the better denominator for per-share
         # work when it is available; the dei cover-page count is a fallback.

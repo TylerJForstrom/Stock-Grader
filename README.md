@@ -137,8 +137,26 @@ issue a letter at all, and grading with no peer universe returns `N/A` rather th
 of every fact — so `--pit` gives *genuine* point-in-time backtesting rather than the usual "lag
 everything 45 days" approximation.
 
-**Prices: bring your own.** No free price feed was reachable from where this was built (Yahoo
-returns HTTP 429; Stooq serves a JavaScript bot-check). So prices are optional and pluggable:
+**Prices: derived from SEC filings.** No free price *feed* was reachable (Yahoo 429s, Stooq serves a
+bot-check) — so prices come out of SEC filings instead, and no API key is needed for those either.
+
+Every Form 4 reports the per-share price of an insider's trade. Open-market sales, purchases and
+tax-withholding transactions all execute at the prevailing market price, and SEC publishes them
+quarterly as an ~8 MB bundle covering **~3,000–4,000 tickers**. Measured against known market ranges,
+the median insider price landed inside the real range for every one of eight test companies.
+
+`dei:EntityPublicFloat` is the fallback: a dollar market value with a measurement date on every 10-K
+cover. It *excludes affiliate holdings*, so dividing by all shares understates — by 50% for Walmart
+(the Waltons hold about half) and 37% for Simon Property, always in the direction that makes a stock
+look cheap. So it is only used with the affiliate fraction solved from a **date-matched** insider
+price, which recovers 49.9% for Walmart and 95% for widely-held names.
+
+Sources are ranked by **freshness, not kind** — a 131-day-old insider price beats a 480-day-old
+float — and every grade reports the price's age.
+
+These prices are sparse (a few dates per quarter), which is enough for valuation but not for
+volatility, beta or momentum. Those stay disabled rather than computed from twelve points. For the
+full daily statistics, supply your own:
 
 ```bash
 stock-grader grade AAPL --price AAPL=232        # one number, unlocks every valuation metric
