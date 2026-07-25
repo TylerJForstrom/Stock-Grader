@@ -343,6 +343,58 @@ def normalize_instant_facts(
     return pd.Series(out, dtype="float64").sort_index()
 
 
+def _annualise_instants(series: pd.Series) -> pd.Series:
+    """Reduce a quarterly balance-sheet series to one observation per fiscal year.
+
+    Keeps the **last** observation within each fiscal year, anchored on the month of the most
+    recent observation so that non-calendar fiscal years (Apple's September, Walmart's January) are
+    grouped correctly rather than split across calendar boundaries.
+    """
+    if series.empty:
+        return series
+    index = pd.to_datetime(pd.Series(list(series.index)))
+    anchor_month = int(index.iloc[-1].month)
+    # Shift the year boundary so it falls just after the fiscal year end.
+    shifted = index - pd.DateOffset(months=anchor_month % 12)
+    grouped = pd.Series(series.to_numpy(), index=series.index).groupby(shifted.dt.year.to_numpy())
+    return grouped.last().set_axis(grouped.apply(lambda s: s.index[-1])).sort_index()
+
+
+def _latest_end(fact: dict[str, Any]) -> date | None:
+    """Newest period end across a fact's records."""
+    ends = [_parse(r.get("end")) for r in _usd_records(fact)]
+    ends = [e for e in ends if e is not None]
+    return max(ends) if ends else None
+
+
+def _select_tag(chain: tuple[str, ...], gaap: dict[str, Any], *, stale_days: int = 550) -> str | None:
+    """Pick the preferred tag that still carries current data.
+
+    Taking the first tag that merely *exists* is wrong, because filers abandon tags without
+    removing their history. Lowe's still carries six ``LongTermDebtNoncurrent`` records, but the
+    series stops in **2009** at $4.524B; the company's actual long-term debt sits in
+    ``LongTermDebtAndCapitalLeaseObligations`` at $36.751B through 2026. Preferring chain order
+    alone read Lowe's as 92% debt-free — ``debt_to_assets`` 0.082 against a true ~0.68 — and every
+    solvency metric inherited it.
+
+    So chain order still decides *preference*, but only among tags whose data is roughly as recent
+    as the best available for that concept. ``stale_days`` is deliberately generous: an annual-only
+    filer's balance sheet is legitimately up to 15 months old, and this must reject abandoned tags,
+    not merely infrequent ones.
+    """
+    present = [t for t in chain if t in gaap]
+    if not present:
+        return None
+    ends = {t: _latest_end(gaap[t]) for t in present}
+    dated = {t: e for t, e in ends.items() if e is not None}
+    if not dated:
+        return present[0]
+    newest = max(dated.values())
+    cutoff = newest - timedelta(days=stale_days)
+    current = [t for t in present if dated.get(t) is not None and dated[t] >= cutoff]
+    return current[0] if current else present[0]
+
+
 def build_fundamentals(
     facts: dict[str, Any],
     *,
@@ -357,7 +409,7 @@ def build_fundamentals(
     tag_used: dict[str, str] = {}
 
     for concept, chain in CONCEPTS.items():
-        tag = next((t for t in chain if t in gaap), None)
+        tag = _select_tag(chain, gaap)
         if tag is None:
             continue
         tag_used[concept] = tag
@@ -366,7 +418,11 @@ def build_fundamentals(
             series = normalize_instant_facts(fact, pit_mode=pit_mode, asof=asof)
             if not series.empty:
                 quarterly[concept] = series
-                annual[concept] = series
+                # Assigning the raw instant series to `annual` as well was silently wrong: it is a
+                # quarterly series, so history(concept, 6, annual=True) returned six *quarters*.
+                # book_value_cagr_5y was computing growth over 1.25 years and reporting it as a
+                # five-year CAGR for every company in the universe.
+                annual[concept] = _annualise_instants(series)
         else:
             q, a, f = normalize_duration_facts(
                 fact, pit_mode=pit_mode, asof=asof, averaged=concept in AVERAGED_CONCEPTS

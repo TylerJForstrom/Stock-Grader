@@ -263,3 +263,82 @@ class TestDerived:
         fundamentals = build_fundamentals(facts)
         assert fundamentals.ttm("fcf") == pytest.approx(280.0)
         assert fundamentals.ttm("fcf") <= fundamentals.ttm("cfo")
+
+
+class TestStaleTagRejection:
+    """Filers abandon tags without deleting their history.
+
+    Lowe's still carries six ``LongTermDebtNoncurrent`` records, but the series stops in **2009** at
+    $4.524B while the real figure ($36-40B) lives in a later tag. Preferring chain order alone read
+    Lowe's as 92% debt-free: debt_to_assets 0.082 against a true ~0.72.
+    """
+
+    def test_abandoned_tag_loses_to_a_current_one(self):
+        from stock_grader.data.sec import _select_tag
+
+        gaap = {
+            "LongTermDebtNoncurrent": _fact([_instant("2009-10-30", 4.524e9)]),
+            "LongTermDebt": _fact([_instant("2026-01-30", 39.819e9)]),
+        }
+        assert _select_tag(("LongTermDebtNoncurrent", "LongTermDebt"), gaap) == "LongTermDebt"
+
+    def test_chain_order_still_wins_among_current_tags(self):
+        """Recency breaks ties; it does not override preference for equally-current tags."""
+        from stock_grader.data.sec import _select_tag
+
+        gaap = {
+            "LongTermDebtNoncurrent": _fact([_instant("2026-01-30", 10e9)]),
+            "LongTermDebt": _fact([_instant("2026-04-30", 11e9)]),
+        }
+        assert _select_tag(("LongTermDebtNoncurrent", "LongTermDebt"), gaap) == "LongTermDebtNoncurrent"
+
+    def test_annual_only_filer_is_not_treated_as_stale(self):
+        """A 10-K-only filer's balance sheet is legitimately up to 15 months old."""
+        from stock_grader.data.sec import _select_tag
+
+        gaap = {
+            "LongTermDebtNoncurrent": _fact([_instant("2025-06-30", 10e9)]),
+            "LongTermDebt": _fact([_instant("2025-09-30", 11e9)]),
+        }
+        assert _select_tag(("LongTermDebtNoncurrent", "LongTermDebt"), gaap) == "LongTermDebtNoncurrent"
+
+
+class TestAnnualFrame:
+    """``history(annual=True)`` returned six *quarters* for balance-sheet concepts.
+
+    book_value_cagr_5y was computing growth over a 1.25-year window and labelling it a 5-year CAGR,
+    for every company in the universe.
+    """
+
+    def _quarterly_facts(self, n: int = 24) -> dict:
+        records = []
+        start = pd.Timestamp("2020-03-31")
+        for i in range(n):
+            when = start + pd.DateOffset(months=3 * i)
+            records.append(_instant(when.date().isoformat(), 100.0 + i))
+        return {"facts": {"us-gaap": {"StockholdersEquity": _fact(records)}}}
+
+    def test_annual_frame_has_one_row_per_year(self):
+        fundamentals = build_fundamentals(self._quarterly_facts())
+        annual = fundamentals.annual["equity"].dropna()
+        quarterly = fundamentals.quarterly["equity"].dropna()
+        assert len(quarterly) == 24
+        assert 5 <= len(annual) <= 7  # ~6 fiscal years
+
+    def test_history_spans_the_requested_years(self):
+        fundamentals = build_fundamentals(self._quarterly_facts())
+        window = fundamentals.history("equity", 5, annual=True)
+        assert window is not None
+        elapsed = (pd.Timestamp(window.index[-1]) - pd.Timestamp(window.index[0])).days / 365.25
+        assert 3.0 <= elapsed <= 5.4
+
+    def test_history_refuses_a_window_of_the_wrong_span(self):
+        """Six rows spanning 15 years must not be served as a 5-year history."""
+        records = [_instant(f"{year}-12-31", 100.0 + i) for i, year in enumerate([2010, 2021, 2022, 2023, 2024, 2025])]
+        facts = {"facts": {"us-gaap": {"StockholdersEquity": _fact(records)}}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.history("equity", 6, annual=True) is None
+
+    def test_span_check_can_be_disabled(self):
+        fundamentals = build_fundamentals(self._quarterly_facts())
+        assert fundamentals.history("equity", 3, annual=True, require_span=False) is not None

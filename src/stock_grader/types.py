@@ -177,13 +177,39 @@ class Fundamentals:
         series = frame[concept].dropna()
         return float(series.iloc[-1]) if not series.empty else None
 
-    def history(self, concept: str, n: int, *, annual: bool = True) -> pd.Series | None:
-        """Last ``n`` periods of a concept, oldest first, or ``None`` if insufficient."""
+    def history(
+        self,
+        concept: str,
+        n: int,
+        *,
+        annual: bool = True,
+        require_span: bool = True,
+    ) -> pd.Series | None:
+        """Last ``n`` periods of a concept, oldest first, or ``None`` if insufficient.
+
+        When ``annual`` and ``require_span``, the window must actually cover roughly ``n - 1``
+        years. ``dropna`` collapses gaps, so "the last 6 annual rows" can silently be six quarters
+        (a 1.25-year span reported as a 5-year CAGR) or six rows spanning 2010 to 2025 (a 15-year
+        span reported the same way). Both were happening. Returning ``None`` costs some growth-metric
+        coverage and is worth it: a growth rate over the wrong window is not a conservative
+        estimate, it is a wrong number wearing the right label.
+        """
         frame = self.annual if annual else self.quarterly
         if concept not in frame.columns:
             return None
         series = frame[concept].dropna()
-        return series.iloc[-n:] if len(series) >= n else None
+        if len(series) < n:
+            return None
+        window = series.iloc[-n:]
+        if annual and require_span and n > 1:
+            try:
+                elapsed = (pd.Timestamp(window.index[-1]) - pd.Timestamp(window.index[0])).days / 365.25
+            except (TypeError, ValueError):
+                return window
+            expected = n - 1
+            if not (expected * 0.75) <= elapsed <= (expected * 1.35):
+                return None
+        return window
 
 
 @dataclass(slots=True)
