@@ -155,11 +155,19 @@ def sortino_ratio(s: SecuritySnapshot) -> float | None:
 @metric("max_drawdown", pillar="risk", direction=-1, unit="ratio",
         needs_prices=True, min_history=252)
 def max_drawdown(s: SecuritySnapshot) -> float | None:
-    """Deepest peak-to-trough decline, as a positive fraction."""
+    """Deepest peak-to-trough decline over three years, as a positive fraction.
+
+    Windowed explicitly, like every other price metric here. Measuring over whatever history the
+    provider happened to return meant a company with ten years of data was judged on a ten-year
+    drawdown while its peer with three years was judged on three — and the same pillar's volatility
+    was measured over one year for both. Horizons must be comparable across a cross-section or the
+    ranking measures data availability rather than risk.
+    """
     prices = _prices(s)
     if prices is None or len(prices) < 60:
         return None
-    drawdown = prices / prices.cummax() - 1.0
+    window = prices.iloc[-TRADING_DAYS * 3:]
+    drawdown = window / window.cummax() - 1.0
     return float(-drawdown.min())
 
 
@@ -181,7 +189,8 @@ def ulcer_index(s: SecuritySnapshot) -> float | None:
     prices = _prices(s)
     if prices is None or len(prices) < 60:
         return None
-    drawdown = (prices / prices.cummax() - 1.0) * 100.0
+    window = prices.iloc[-TRADING_DAYS * 3:]
+    drawdown = (window / window.cummax() - 1.0) * 100.0
     return float(np.sqrt((drawdown**2).mean()))
 
 
@@ -762,7 +771,10 @@ def rsi_14(s: SecuritySnapshot) -> float | None:
     gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
     if loss <= 0:
-        return 100.0
+        # A series with no down moves is maximally overbought — unless it has no moves at all, in
+        # which case RSI is 0/0 and returning 100 asserts a frozen or untraded stock is the most
+        # overbought name in the universe.
+        return 100.0 if gain > 0 else None
     rs = float(gain / loss)
     return float(100.0 - 100.0 / (1.0 + rs))
 

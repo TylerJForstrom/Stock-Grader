@@ -50,15 +50,18 @@ _Z_CLIP = 3.0  # z-scores beyond +/-3 sigma map to the ends of the 0..100 scale
 
 
 def _neutral(values: pd.Series) -> pd.Series:
-    """A neutral 50 where the input exists, NaN where it does not.
+    """NaN everywhere: a cross-section too degenerate to rank carries no information.
 
-    Preserving NaN is essential: a metric that is missing for every name in the universe must
-    resolve to NaN so the aggregation layer renormalises its weight away. Returning a flat 50
-    instead would let an entirely absent metric cast a full-weight "perfectly average" vote.
+    This used to return 50 wherever the input existed, which is a *fabricated* score rather than a
+    missing one. It matters most for the lone-financial case: put one bank in a universe of
+    industrials and its bank-only metrics have a cross-section of exactly one member, so every one
+    of them scored a full-weight neutral 50 and the bank was effectively graded blind on the very
+    metrics added to grade it properly.
+
+    NaN instead, so the aggregation layer renormalises the weight away and the coverage figure
+    reports the shortfall. A metric with one observation cannot be ranked against anything.
     """
-    return pd.Series(
-        np.where(values.notna(), NEUTRAL_SCORE, np.nan), index=values.index, dtype="float64"
-    )
+    return pd.Series(np.nan, index=values.index, dtype="float64")
 
 
 def _to_score(z: pd.Series, clip: float = _Z_CLIP) -> pd.Series:
