@@ -34,9 +34,21 @@ def _pair(s: SecuritySnapshot, concept: str) -> tuple[float | None, float | None
     return (float(series.iloc[-2]), float(series.iloc[-1]))
 
 
+# Beneish's indices are year-over-year ratios of ratios, so a real company sits near 1.0 — in the
+# original paper the manipulator mean for DSRI was 1.46 against 1.03 for non-manipulators. Anything
+# far outside that is a tagging artifact rather than a business event, and the model was estimated
+# on nothing like it. Lowe's produced a DSRI of 11.63 when its receivables tag changed, which
+# carried M to +7.65 and flagged one of the largest retailers in the US as an earnings manipulator.
+_INDEX_PLAUSIBLE = (0.2, 5.0)
+
+
 def _index(current: float | None, prior: float | None) -> float | None:
-    """A Beneish-style index: current over prior, guarded."""
-    return safe_div(current, prior, positive_denominator=True, cap=20.0)
+    """A Beneish-style index: current over prior, refused outside the model's estimation range."""
+    value = safe_div(current, prior, positive_denominator=True, cap=20.0)
+    if value is None:
+        return None
+    low, high = _INDEX_PLAUSIBLE
+    return value if low <= value <= high else None
 
 
 @metric("beneish_m_score", pillar="quality", direction=-1, unit="score", winsor=(-8.0, 4.0),
@@ -145,6 +157,7 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
 
     components["flagged"] = float(score > -1.78)
     components["n_components"] = float(available)
+    components["n_substituted"] = float(len(terms) - available)
     return (float(score), components)
 
 

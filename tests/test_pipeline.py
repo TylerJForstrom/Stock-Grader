@@ -506,3 +506,45 @@ class TestRobustness:
         report = grade_universe([self._empty("X")], GradeConfig())["X"]
         assert to_json(report)
         assert to_markdown(report)
+
+
+class TestPercentileBase:
+    """A security we refuse to grade cannot be a peer for a comparison we decline to make."""
+
+    def test_ungradeable_securities_do_not_occupy_rank(self):
+        from stock_grader.types import Fundamentals
+
+        graded = _universe(6)
+        empty = pd.DataFrame()
+        blanks = [
+            SecuritySnapshot(
+                ticker=f"BLANK{i}", asof=date(2026, 1, 31),
+                fundamentals=Fundamentals(empty, empty, pd.Series(dtype="object")),
+            )
+            for i in range(6)
+        ]
+        with_blanks = grade_universe(graded + blanks, GradeConfig())
+        without = grade_universe(graded, GradeConfig())
+        for ticker in [s.ticker for s in graded]:
+            a = with_blanks[ticker].percentile
+            b = without[ticker].percentile
+            if a is not None and b is not None:
+                assert abs(a - b) < 1e-6, f"{ticker} percentile shifted by ungradeable peers"
+
+
+class TestBeneishPlausibility:
+    """Beneish's indices are year-over-year ratios; a real company sits near 1.0.
+
+    Lowe's produced a DSRI of 11.63 when its receivables tag changed, carrying M to +7.65 and
+    flagging one of the largest retailers in the US as an earnings manipulator.
+    """
+
+    def test_implausible_index_is_refused(self):
+        from stock_grader.metrics.models import _INDEX_PLAUSIBLE, _index
+
+        low, high = _INDEX_PLAUSIBLE
+        assert _index(1.0, 1.0) == pytest.approx(1.0)
+        assert _index(1.4, 1.0) == pytest.approx(1.4)     # Beneish's own manipulator mean
+        assert _index(11.63, 1.0) is None                 # the Lowe's artifact
+        assert _index(1.0, 100.0) is None
+        assert low < 1.0 < high

@@ -43,6 +43,9 @@ from .types import PitMode, SecuritySnapshot
 from .weighting import WEIGHT_METHOD_INFO
 
 console = Console()
+# Progress, warnings and errors go to stderr so `--format json` yields a parseable document on
+# stdout. A JSON mode that emits a banner first is not a JSON mode.
+status_console = Console(stderr=True)
 
 
 def _default_universe_path() -> Path | None:
@@ -96,10 +99,10 @@ def _resolve_peers(args: argparse.Namespace, tickers: list[str]) -> list[str]:
             )
     path = _default_universe_path()
     if path is None:
-        console.print("[yellow]no default universe found; grading without peers[/yellow]")
+        status_console.print("[yellow]no default universe found; grading without peers[/yellow]")
         return []
     peers = _load_universe(str(path))
-    console.print(
+    status_console.print(
         f"[dim]comparing against {len(peers)} default peers "
         f"(--universe FILE to choose your own, --no-peers to skip)[/dim]"
     )
@@ -140,7 +143,7 @@ def _build_snapshots(
         insider = SECInsiderPriceProvider(cache_dir=args.cache_dir, contact=args.contact)
         with console.status("[dim]loading SEC insider-transaction prices…[/dim]"):
             insider.load(asof=date.fromisoformat(args.asof) if args.asof else None)
-        console.print(f"[dim]SEC insider prices: {insider.coverage()} tickers[/dim]")
+        status_console.print(f"[dim]SEC insider prices: {insider.coverage()} tickers[/dim]")
 
     manual_prices = {}
     for entry in args.price or []:
@@ -154,7 +157,7 @@ def _build_snapshots(
     pit_mode = PitMode.PIT if args.pit else PitMode.LATEST
 
     snapshots: list[SecuritySnapshot] = []
-    status = console.status("[dim]loading securities…[/dim]") if len(tickers) > 1 else None
+    status = status_console.status("[dim]loading securities…[/dim]") if len(tickers) > 1 else None
     if status:
         status.start()
     for i, ticker in enumerate(tickers, 1):
@@ -233,7 +236,7 @@ def _build_snapshots(
     unresolved = [s.ticker for s in snapshots if s.cik is None]
     if unresolved:
         # One aggregate note rather than N scrolling warnings.
-        console.print(
+        status_console.print(
             f"[yellow]{len(unresolved)}/{len(snapshots)} tickers are absent from SEC's ticker "
             f"map ({', '.join(unresolved[:6])}{'…' if len(unresolved) > 6 else ''}). That map "
             f"lists only currently-listed issuers, so delisted companies are missing and reused "
@@ -308,7 +311,21 @@ def cmd_consensus(args: argparse.Namespace) -> int:
     tickers = [t.upper() for t in args.tickers]
     peers = _resolve_peers(args, tickers)
     snapshots = _build_snapshots(list(dict.fromkeys(tickers + peers)), args, provider=provider)
-    results = consensus_grade(snapshots)
+    # Pass the scoring flags through. Without this, --weighting/--normalizer/--rho/--curve and
+    # --sector-neutral were accepted and silently discarded, so `consensus` answered a different
+    # question than the one asked.
+    overrides = {}
+    if args.weighting:
+        overrides["metric_weighting"] = args.weighting
+        overrides["pillar_weighting"] = args.weighting
+        overrides["pillar_weights"] = {}
+    if args.normalizer:
+        overrides["normalizer"] = args.normalizer
+    if args.sector_neutral:
+        overrides["sector_neutral"] = True
+    if args.curve:
+        overrides["curve"] = args.curve
+    results = consensus_grade(snapshots, **overrides)
     selected = {t: results[t] for t in tickers if t in results}
     render_consensus(selected, console)
     for result in selected.values():

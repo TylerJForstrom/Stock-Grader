@@ -329,7 +329,33 @@ def grade_universe(
         composites[ticker] = float(value) if value is not None else float("nan")
     composite = pd.Series(composites, dtype="float64")
 
-    percentiles = composite.rank(pct=True) * 100.0 if composite.notna().sum() > 1 else None
+    # Percentiles are computed over GRADEABLE securities only. A name we refuse to grade for lack
+    # of data still occupied a rank position, pushing everyone above it up the distribution — worth
+    # as much as a letter and a half when several names in a universe are ungradeable. It cannot
+    # be a peer for a comparison we decline to make.
+    gradeable: dict[str, bool] = {}
+    for snapshot in snapshots:
+        results_for = results.get(snapshot.ticker, {})
+        ok_count = sum(1 for r in results_for.values() if r.coverage is Coverage.OK)
+        missing_count = sum(
+            1 for name, r in results_for.items()
+            if r.coverage is Coverage.MISSING and name in universe_computable
+        )
+        applicable_count = ok_count + missing_count
+        cov = (ok_count / applicable_count) if applicable_count else 0.0
+        gradeable[snapshot.ticker] = (
+            cov >= MIN_COVERAGE_TO_GRADE and np.isfinite(composite.get(snapshot.ticker, np.nan))
+        )
+    ranked_base = composite[[t for t in composite.index if gradeable.get(t)]]
+    if len(ranked_base.dropna()) > 1:
+        ordered = np.sort(ranked_base.dropna().to_numpy())
+        percentiles = pd.Series(
+            {t: float(np.searchsorted(ordered, v, side="right") / len(ordered) * 100.0)
+             for t, v in composite.dropna().items()},
+            dtype="float64",
+        )
+    else:
+        percentiles = None
 
     # ---- Assemble reports.
     reports: dict[str, GradeReport] = {}
