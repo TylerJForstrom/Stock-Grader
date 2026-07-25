@@ -217,6 +217,56 @@ DEI_CONCEPTS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Sector-specific chain overrides. Some concepts are not merely tagged differently by business
+# model — they are *measured differently*, and resolving them by one global preference order ranks
+# companies on quantities that are not comparable.
+#
+# Revenue for financials is the clearest case. Measured across six large banks, the global chain
+# resolved three different bases at once:
+#
+#   AXP  RevenueFromContractWithCustomerExcludingAssessedTax   $43.1B   (fee income only)
+#   BAC  Revenues                                             $115.1B   (gross, before interest expense)
+#   GS   RevenuesNetOfInterestExpense                          $60.4B   (net revenue)
+#
+# Those differ by more than a factor of two for the same kind of business, so price_to_sales and
+# net_margin were ranking banks against each other on incompatible measurements. Banks are compared
+# on **net revenue** in practice, so that basis is preferred for them and gross is the fallback.
+SECTOR_CONCEPT_OVERRIDES: dict[str, dict[str, tuple[str, ...]]] = {
+    "bank": {
+        "revenue": (
+            "RevenuesNetOfInterestExpense",
+            "Revenues",
+            "InterestAndDividendIncomeOperating",
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+        ),
+    },
+    "insurance": {
+        "revenue": (
+            "Revenues",
+            "RevenuesNetOfInterestExpense",
+            "PremiumsEarnedNet",
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+        ),
+    },
+    "holding": {
+        "revenue": (
+            "RevenuesNetOfInterestExpense",
+            "Revenues",
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+        ),
+    },
+}
+
+
+def chains_for(sector: str | None) -> dict[str, tuple[str, ...]]:
+    """Concept chains with any sector-specific overrides applied."""
+    if not sector or sector not in SECTOR_CONCEPT_OVERRIDES:
+        return CONCEPTS
+    merged = dict(CONCEPTS)
+    merged.update(SECTOR_CONCEPT_OVERRIDES[sector])
+    return merged
+
+
 def concept_names() -> list[str]:
     """All canonical concept names, sorted."""
     return sorted(CONCEPTS)

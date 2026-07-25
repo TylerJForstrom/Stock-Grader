@@ -26,7 +26,13 @@ from . import __version__
 from . import aggregate, normalize, weighting  # noqa: F401
 from .metrics import fundamental, models, statistical  # noqa: F401
 
-from .data.prices import ChainedPriceProvider, CSVPriceProvider, RiskFreeProvider, YahooPriceProvider
+from .data.prices import (
+    BenchmarkProvider,
+    ChainedPriceProvider,
+    CSVPriceProvider,
+    RiskFreeProvider,
+    YahooPriceProvider,
+)
 from .data.sec import SECClient, SECProvider
 from .data.sec_prices import SECInsiderPriceProvider, resolve_price
 from .data.synthetic import generate_prices
@@ -99,8 +105,11 @@ def _build_snapshots(
     prices = ChainedPriceProvider(price_providers) if price_providers else None
 
     risk_free = None
+    benchmark = None
     if not args.no_network:
         risk_free = RiskFreeProvider().get("3m")
+        # Without this, beta / capm_alpha / idiosyncratic_volatility can never fire at all.
+        benchmark = BenchmarkProvider(cache_dir=args.cache_dir).get(args.benchmark)
 
     # SEC insider-transaction prices: the only price source reachable without an API key.
     # Sparse (a few dates per quarter), which is enough for valuation but not for the daily
@@ -174,6 +183,12 @@ def _build_snapshots(
             snapshot.price = manual_prices[ticker]
             snapshot.meta["price_source"] = "manual"
         snapshot.risk_free = risk_free
+        if benchmark is not None:
+            snapshot.benchmark = benchmark
+            snapshot.meta["benchmark"] = args.benchmark
+            # A price index excludes dividends, so alpha against it is overstated by roughly
+            # beta x the index dividend yield.
+            snapshot.meta["benchmark_is_price_only"] = True
         snapshots.append(snapshot)
     if status:
         status.stop()
@@ -345,6 +360,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "the only keyless price source, sparse but real")
         p.add_argument("--max-price-age", type=int, default=400,
                        help="refuse any SEC-derived price older than this many days (default 400)")
+        p.add_argument("--benchmark", default="SP500",
+                       help="FRED index for beta/alpha (SP500, NASDAQ, DJIA); price-only, so alpha "
+                            "is overstated by roughly beta x the index dividend yield")
         p.add_argument("--no-network", action="store_true", help="SEC cache only, no price fetches")
         p.add_argument("--refresh", action="store_true", help="bypass the cache")
         p.add_argument("--cache-dir")

@@ -199,3 +199,56 @@ class TestResolvePrice:
             "X", asof=date(2026, 7, 24), insider=_FakeInsider(None), public_float=None,
             float_history=None, shares_outstanding=1e9,
         ) is None
+
+
+class TestBenchmark:
+    """beta, capm_alpha and idiosyncratic_volatility declare needs_benchmark and read
+    ``snapshot.benchmark`` — which nothing outside the test suite ever assigned, so all three were
+    permanently MISSING in every configuration.
+    """
+
+    def test_benchmark_frame_has_the_columns_metrics_read(self):
+        import pandas as pd
+
+        from stock_grader.data.prices import BenchmarkProvider
+
+        provider = BenchmarkProvider(cache_dir="/tmp/sg-test-bench")
+        raw = pd.DataFrame({"close": [100.0, 101.0]},
+                           index=pd.to_datetime(["2026-01-01", "2026-01-02"]))
+        raw.to_csv(provider.cache_dir / "bench_SP500.csv")
+        frame = provider.get("SP500")
+        assert frame is not None
+        assert "adj_close" in frame.columns and "close" in frame.columns
+
+    def test_capm_metrics_fire_once_a_benchmark_exists(self):
+        from datetime import date as _date
+
+        from stock_grader.data.synthetic import generate_panel
+        from stock_grader.metrics import statistical  # noqa: F401
+        from stock_grader.metrics.engine import evaluate_one
+        from stock_grader.registry import METRICS
+        from stock_grader.types import Coverage, SecuritySnapshot
+
+        prices, benchmark, _ = generate_panel(["X"], n_days=700, seed=2, synthetic=True)
+        snapshot = SecuritySnapshot(
+            ticker="X", asof=_date(2026, 7, 24), prices=prices["X"], benchmark=benchmark,
+        )
+        for name in ("beta", "capm_alpha", "idiosyncratic_volatility"):
+            assert evaluate_one(METRICS.get(name), snapshot).coverage is Coverage.OK, name
+
+    def test_capm_metrics_are_missing_without_one(self):
+        from datetime import date as _date
+
+        from stock_grader.data.synthetic import generate_prices
+        from stock_grader.metrics import statistical  # noqa: F401
+        from stock_grader.metrics.engine import evaluate_one
+        from stock_grader.registry import METRICS
+        from stock_grader.types import Coverage, SecuritySnapshot
+
+        snapshot = SecuritySnapshot(
+            ticker="X", asof=_date(2026, 7, 24),
+            prices=generate_prices("X", n_days=700, seed=2, synthetic=True),
+        )
+        result = evaluate_one(METRICS.get("beta"), snapshot)
+        assert result.coverage is Coverage.MISSING
+        assert "benchmark" in result.note

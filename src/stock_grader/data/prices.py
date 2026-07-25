@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "PriceProvider",
+    "BenchmarkProvider",
     "CSVPriceProvider",
     "YahooPriceProvider",
     "StooqPriceProvider",
@@ -312,3 +313,71 @@ class RiskFreeProvider:
         except OSError:
             pass
         return values / 100.0
+
+
+class BenchmarkProvider:
+    """Market index series for the CAPM metrics, from FRED.
+
+    ``beta``, ``capm_alpha`` and ``idiosyncratic_volatility`` all declare ``needs_benchmark`` and
+    read :attr:`SecuritySnapshot.benchmark`. Nothing outside the test suite ever assigned it, so
+    those three metrics could not fire in any configuration — they were permanently MISSING, and
+    additionally dragged every security's coverage down for a reason that had nothing to do with
+    the security.
+
+    FRED serves the indices free and keyless (verified: SP500, NASDAQCOM, DJIA and VIXCLS all
+    return HTTP 200; WILL5000IND is discontinued and 404s).
+
+    **These are price indices, not total-return indices.** They exclude dividends, so alpha measured
+    against them is overstated by roughly beta times the index dividend yield — on the order of
+    1.5-2 percentage points a year for the S&P 500. Snapshots built this way are stamped
+    ``benchmark_is_price_only`` so the report can say so rather than quietly flattering every alpha.
+    """
+
+    name = "fred_benchmark"
+
+    SERIES = {"SP500": "SP500", "NASDAQ": "NASDAQCOM", "DJIA": "DJIA"}
+
+    def __init__(self, cache_dir: str | Path | None = None, timeout: float = 20.0) -> None:
+        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.timeout = timeout
+
+    def get(self, name: str = "SP500", *, refresh: bool = False) -> pd.DataFrame | None:
+        """Index level as an OHLCV-shaped frame so the metric layer needs no special case."""
+        series_id = self.SERIES.get(name.upper(), name)
+        cache = self.cache_dir / f"bench_{series_id}.csv"
+        frame = None
+        if cache.exists() and not refresh:
+            try:
+                frame = pd.read_csv(cache, index_col=0, parse_dates=True)
+            except (OSError, ValueError, pd.errors.ParserError):
+                frame = None
+        if frame is None:
+            try:
+                response = requests.get(
+                    "https://fred.stlouisfed.org/graph/fredgraph.csv",
+                    params={"id": series_id}, timeout=self.timeout,
+                )
+                if response.status_code != 200:
+                    log.warning("FRED benchmark %s returned HTTP %s", series_id, response.status_code)
+                    return None
+                raw = pd.read_csv(io.StringIO(response.text))
+            except Exception as exc:  # noqa: BLE001 - a benchmark must never break a grade
+                log.warning("FRED benchmark %s failed: %s", series_id, exc)
+                return None
+            date_col = raw.columns[0]
+            raw[date_col] = pd.to_datetime(raw[date_col], errors="coerce")
+            raw = raw.dropna(subset=[date_col]).set_index(date_col)
+            # FRED writes "." for market holidays; coercing keeps them out as NaN rather than
+            # poisoning the column's dtype.
+            values = pd.to_numeric(raw.iloc[:, 0], errors="coerce").dropna()
+            frame = values.to_frame("close")
+            try:
+                frame.to_csv(cache)
+            except OSError:
+                pass
+        if frame is None or frame.empty:
+            return None
+        out = frame.rename(columns={frame.columns[0]: "close"})[["close"]].copy()
+        out["adj_close"] = out["close"]
+        return out

@@ -29,7 +29,7 @@ import pandas as pd
 import requests
 
 from ..types import Fundamentals, PitMode, SecuritySnapshot
-from .concepts import AVERAGED_CONCEPTS, CONCEPTS, DEI_CONCEPTS, PERIOD_TYPES
+from .concepts import AVERAGED_CONCEPTS, CONCEPTS, DEI_CONCEPTS, PERIOD_TYPES, chains_for
 from .sectors import classify_sic
 
 log = logging.getLogger(__name__)
@@ -400,15 +400,24 @@ def build_fundamentals(
     *,
     pit_mode: PitMode = PitMode.LATEST,
     asof: date | None = None,
+    sector: str | None = None,
 ) -> Fundamentals:
-    """Assemble normalised quarterly and annual statements from a ``companyfacts`` payload."""
+    """Assemble normalised quarterly and annual statements from a ``companyfacts`` payload.
+
+    Args:
+        sector: business-model class. Some concepts are measured on different bases by business
+            model rather than merely tagged differently — bank revenue resolved to gross, net-of-
+            interest and fee-only bases simultaneously across six large banks — so the chains are
+            specialised where that matters.
+    """
     gaap = facts.get("facts", {}).get("us-gaap", {})
+    concept_chains = chains_for(sector)
     quarterly: dict[str, pd.Series] = {}
     annual: dict[str, pd.Series] = {}
     filings: dict[date, date] = {}
     tag_used: dict[str, str] = {}
 
-    for concept, chain in CONCEPTS.items():
+    for concept, chain in concept_chains.items():
         tag = _select_tag(chain, gaap)
         if tag is None:
             continue
@@ -539,7 +548,9 @@ class SECProvider:
             snap.warnings.append(f"{ticker}: SEC companyfacts unavailable")
             return snap
 
-        snap.fundamentals = build_fundamentals(facts, pit_mode=pit_mode, asof=asof)
+        snap.fundamentals = build_fundamentals(
+            facts, pit_mode=pit_mode, asof=asof, sector=snap.sector.value
+        )
         snap.meta["pit_mode"] = pit_mode.value
         snap.meta["tags_used"] = snap.fundamentals.tag_used
 

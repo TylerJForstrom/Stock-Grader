@@ -342,3 +342,33 @@ class TestAnnualFrame:
     def test_span_check_can_be_disabled(self):
         fundamentals = build_fundamentals(self._quarterly_facts())
         assert fundamentals.history("equity", 3, annual=True, require_span=False) is not None
+
+
+class TestSectorConceptOverrides:
+    """Bank revenue is *measured* differently by filer, not merely tagged differently.
+
+    Measured across six large banks, the global chain resolved three incompatible bases at once:
+    AXP fee-income-only at $43.1B, BAC gross at $115.1B, GS net-of-interest at $60.4B. price_to_sales
+    and net_margin were ranking banks on quantities that are not the same quantity.
+    """
+
+    def test_bank_prefers_net_revenue(self):
+        from stock_grader.data.concepts import chains_for
+
+        chain = chains_for("bank")["revenue"]
+        assert chain[0] == "RevenuesNetOfInterestExpense"
+        # Fee income alone must never be the preferred basis for a bank.
+        assert chain.index("RevenueFromContractWithCustomerExcludingAssessedTax") == len(chain) - 1
+
+    def test_general_sector_is_unchanged(self):
+        from stock_grader.data.concepts import CONCEPTS, chains_for
+
+        assert chains_for("general") is CONCEPTS
+        assert chains_for(None) is CONCEPTS
+
+    def test_override_only_touches_named_concepts(self):
+        from stock_grader.data.concepts import CONCEPTS, chains_for
+
+        bank = chains_for("bank")
+        assert bank["assets"] == CONCEPTS["assets"]
+        assert bank["revenue"] != CONCEPTS["revenue"]
