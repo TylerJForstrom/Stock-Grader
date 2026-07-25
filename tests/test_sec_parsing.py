@@ -1,0 +1,265 @@
+"""Regression tests for SEC XBRL normalisation.
+
+Each test here pins a bug that was found against live filings and that produced a *silently wrong*
+number rather than an error — the worst kind. The fixtures are hand-built so the correct answer is
+known exactly.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import pandas as pd
+import pytest
+
+from stock_grader.data.sec import build_fundamentals, normalize_duration_facts, normalize_instant_facts
+from stock_grader.types import PitMode
+
+
+def _duration(start: str, end: str, val: float, *, form="10-Q", filed="2025-01-01", fy=2025, fp="Q1"):
+    return {"start": start, "end": end, "val": val, "form": form, "filed": filed,
+            "fy": fy, "fp": fp, "accn": f"acc-{start}-{end}"}
+
+
+def _instant(end: str, val: float, *, filed="2025-01-01", form="10-Q"):
+    return {"end": end, "val": val, "form": form, "filed": filed, "fy": 2025, "fp": "Q1",
+            "accn": f"acc-{end}"}
+
+
+def _fact(records: list[dict], unit: str = "USD") -> dict:
+    return {"units": {unit: records}}
+
+
+class TestQ4Derivation:
+    """No US filer publishes a fourth-quarter 10-Q.
+
+    Against Apple's real filings, the three available quarterly revenue records summed to 296.11B
+    against a fiscal-year total of 391.04B — a naive sum understates trailing revenue by 24%.
+    """
+
+    def test_missing_q4_is_derived_from_the_annual_total(self):
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0),
+            _duration("2024-04-01", "2024-06-30", 110.0),
+            _duration("2024-07-01", "2024-09-30", 120.0),
+            _duration("2024-01-01", "2024-12-31", 500.0, form="10-K", fp="FY"),
+        ]
+        quarters, annual, _ = normalize_duration_facts(_fact(records))
+        assert len(quarters) == 4
+        assert quarters.iloc[-1] == pytest.approx(170.0)  # 500 - (100+110+120)
+        assert quarters.sum() == pytest.approx(annual.iloc[-1])
+
+    def test_complete_quarters_are_left_alone(self):
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0),
+            _duration("2024-04-01", "2024-06-30", 110.0),
+            _duration("2024-07-01", "2024-09-30", 120.0),
+            _duration("2024-10-01", "2024-12-31", 130.0),
+            _duration("2024-01-01", "2024-12-31", 460.0, form="10-K", fp="FY"),
+        ]
+        quarters, _, _ = normalize_duration_facts(_fact(records))
+        assert quarters.sum() == pytest.approx(460.0)
+        assert len(quarters) == 4
+
+    def test_year_to_date_records_are_not_counted_as_quarters(self):
+        """10-Qs report cumulative figures alongside discrete ones; summing both double-counts."""
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0),
+            _duration("2024-01-01", "2024-06-30", 210.0),  # YTD, not a quarter
+            _duration("2024-04-01", "2024-06-30", 110.0),
+        ]
+        quarters, _, _ = normalize_duration_facts(_fact(records))
+        assert quarters.sum() == pytest.approx(210.0)
+        assert len(quarters) == 2
+
+
+class TestFiscalLabels:
+    """``fy``/``fp`` describe the filing, not the fact.
+
+    Apple's revenue history carries a fiscal-2022 period stamped ``fy=2024``; keying off these
+    fields mislabels history by up to two years.
+    """
+
+    def test_periods_come_from_dates_not_fiscal_labels(self):
+        records = [
+            _duration("2022-01-01", "2022-03-31", 50.0, fy=2024, fp="FY"),
+            _duration("2024-01-01", "2024-03-31", 100.0, fy=2024, fp="Q2"),
+        ]
+        quarters, _, _ = normalize_duration_facts(_fact(records))
+        assert list(quarters.index) == [date(2022, 3, 31), date(2024, 3, 31)]
+        assert quarters.loc[date(2022, 3, 31)] == pytest.approx(50.0)
+
+
+class TestRestatements:
+    def test_latest_mode_takes_the_most_recent_filing(self):
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0, filed="2024-05-01"),
+            _duration("2024-01-01", "2024-03-31", 95.0, filed="2024-11-01"),  # restated
+        ]
+        quarters, _, _ = normalize_duration_facts(_fact(records), pit_mode=PitMode.LATEST)
+        assert quarters.iloc[0] == pytest.approx(95.0)
+
+    def test_point_in_time_ignores_filings_after_asof(self):
+        """A backtest must not see a restatement that had not happened yet."""
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0, filed="2024-05-01"),
+            _duration("2024-01-01", "2024-03-31", 95.0, filed="2024-11-01"),
+        ]
+        quarters, _, _ = normalize_duration_facts(
+            _fact(records), pit_mode=PitMode.PIT, asof=date(2024, 6, 1)
+        )
+        assert quarters.iloc[0] == pytest.approx(100.0)
+
+    def test_point_in_time_excludes_facts_not_yet_filed(self):
+        records = [_duration("2024-01-01", "2024-03-31", 100.0, filed="2025-01-01")]
+        quarters, _, _ = normalize_duration_facts(
+            _fact(records), pit_mode=PitMode.PIT, asof=date(2024, 6, 1)
+        )
+        assert quarters.empty
+
+
+class TestAveragedConcepts:
+    """Weighted-average share counts are not flows.
+
+    Deriving Q4 by subtraction gave Apple a share count of **negative 30 billion**, which flowed
+    into market cap and corrupted every valuation multiple downstream.
+    """
+
+    def test_share_counts_are_never_derived_by_subtraction(self):
+        records = [
+            _duration("2024-01-01", "2024-03-31", 1000.0),
+            _duration("2024-04-01", "2024-06-30", 990.0),
+            _duration("2024-07-01", "2024-09-30", 980.0),
+            _duration("2024-01-01", "2024-12-31", 985.0, form="10-K", fp="FY"),
+        ]
+        quarters, _, _ = normalize_duration_facts(_fact(records), averaged=True)
+        assert (quarters > 0).all(), "average share counts must never go negative"
+        assert len(quarters) == 3
+
+    def test_flows_still_derive_q4(self):
+        records = [
+            _duration("2024-01-01", "2024-03-31", 1000.0),
+            _duration("2024-04-01", "2024-06-30", 990.0),
+            _duration("2024-07-01", "2024-09-30", 980.0),
+            _duration("2024-01-01", "2024-12-31", 985.0, form="10-K", fp="FY"),
+        ]
+        quarters, _, _ = normalize_duration_facts(_fact(records), averaged=False)
+        assert len(quarters) == 4
+        assert quarters.iloc[-1] == pytest.approx(985.0 - 2970.0)
+
+
+class TestTTM:
+    def _facts(self, revenue: list[dict], shares: list[dict] | None = None) -> dict:
+        facts = {"us-gaap": {"Revenues": _fact(revenue)}}
+        if shares is not None:
+            facts["us-gaap"]["WeightedAverageNumberOfDilutedSharesOutstanding"] = _fact(shares)
+        return {"facts": facts}
+
+    def test_ttm_sums_flows(self):
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0),
+            _duration("2024-04-01", "2024-06-30", 110.0),
+            _duration("2024-07-01", "2024-09-30", 120.0),
+            _duration("2024-10-01", "2024-12-31", 130.0),
+        ]
+        fundamentals = build_fundamentals(self._facts(records))
+        assert fundamentals.ttm("revenue") == pytest.approx(460.0)
+
+    def test_ttm_averages_share_counts(self):
+        """Summing four quarterly average share counts would quadruple the share base."""
+        shares = [
+            _duration("2024-01-01", "2024-03-31", 1000.0),
+            _duration("2024-04-01", "2024-06-30", 1000.0),
+            _duration("2024-07-01", "2024-09-30", 1000.0),
+            _duration("2024-10-01", "2024-12-31", 1000.0),
+        ]
+        fundamentals = build_fundamentals(self._facts([], shares))
+        assert fundamentals.ttm("shares_diluted") == pytest.approx(1000.0)
+
+    def test_ttm_refuses_a_partial_year(self):
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0),
+            _duration("2024-04-01", "2024-06-30", 110.0),
+        ]
+        fundamentals = build_fundamentals(self._facts(records))
+        assert fundamentals.ttm("revenue") is None
+
+    def test_ttm_refuses_non_contiguous_quarters(self):
+        """``dropna`` collapses gaps, so four available values may span several years.
+
+        This produced an EBITDA below its own EBIT for a REIT whose inputs had different
+        missingness patterns.
+        """
+        records = [
+            _duration("2020-01-01", "2020-03-31", 100.0),
+            _duration("2021-01-01", "2021-03-31", 110.0),
+            _duration("2022-01-01", "2022-03-31", 120.0),
+            _duration("2023-01-01", "2023-03-31", 130.0),
+        ]
+        fundamentals = build_fundamentals(self._facts(records))
+        assert fundamentals.ttm("revenue") is None
+
+
+class TestInstants:
+    def test_instant_facts_take_the_latest_observation(self):
+        records = [_instant("2024-03-31", 500.0), _instant("2024-06-30", 550.0)]
+        series = normalize_instant_facts(_fact(records))
+        assert series.iloc[-1] == pytest.approx(550.0)
+
+    def test_duration_records_are_ignored_in_an_instant_concept(self):
+        records = [_instant("2024-03-31", 500.0), _duration("2024-01-01", "2024-03-31", 999.0)]
+        series = normalize_instant_facts(_fact(records))
+        assert len(series) == 1
+        assert series.iloc[0] == pytest.approx(500.0)
+
+
+class TestTagFallback:
+    def test_falls_back_through_the_chain(self):
+        """Only 9 of 20 core concepts resolved to one universal tag across 8 sampled filers."""
+        records = [
+            _duration("2024-01-01", "2024-03-31", 100.0),
+            _duration("2024-04-01", "2024-06-30", 110.0),
+            _duration("2024-07-01", "2024-09-30", 120.0),
+            _duration("2024-10-01", "2024-12-31", 130.0),
+        ]
+        # 'Revenues' is second in the chain; the preferred tag is absent.
+        facts = {"facts": {"us-gaap": {"Revenues": _fact(records)}}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.tag_used["revenue"] == "Revenues"
+        assert fundamentals.ttm("revenue") == pytest.approx(460.0)
+
+    def test_missing_concept_is_absent_not_zero(self):
+        facts = {"facts": {"us-gaap": {}}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.ttm("revenue") is None
+        assert fundamentals.latest("assets") is None
+
+
+class TestDerived:
+    def test_gross_profit_is_derived_when_untagged(self):
+        """5 of 8 sampled filers had no GrossProfit tag, but revenue minus COGS is available."""
+        quarters = [
+            ("2024-01-01", "2024-03-31"), ("2024-04-01", "2024-06-30"),
+            ("2024-07-01", "2024-09-30"), ("2024-10-01", "2024-12-31"),
+        ]
+        facts = {"facts": {"us-gaap": {
+            "Revenues": _fact([_duration(s, e, 100.0) for s, e in quarters]),
+            "CostOfRevenue": _fact([_duration(s, e, 60.0) for s, e in quarters]),
+        }}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.ttm("gross_profit") == pytest.approx(160.0)
+
+    def test_free_cash_flow_subtracts_capex_magnitude(self):
+        quarters = [
+            ("2024-01-01", "2024-03-31"), ("2024-04-01", "2024-06-30"),
+            ("2024-07-01", "2024-09-30"), ("2024-10-01", "2024-12-31"),
+        ]
+        facts = {"facts": {"us-gaap": {
+            "NetCashProvidedByUsedInOperatingActivities": _fact(
+                [_duration(s, e, 100.0) for s, e in quarters]),
+            "PaymentsToAcquirePropertyPlantAndEquipment": _fact(
+                [_duration(s, e, 30.0) for s, e in quarters]),
+        }}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.ttm("fcf") == pytest.approx(280.0)
+        assert fundamentals.ttm("fcf") <= fundamentals.ttm("cfo")
