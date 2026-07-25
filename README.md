@@ -207,6 +207,18 @@ nothing; grades are deterministic under a seed), plus regression tests pinning e
 traps above, plus a planted-signal recovery test — a weighting method that can't find a known signal
 in generated data is broken, and that's only testable against data whose truth you control.
 
+## Design notes
+
+`docs/design/` carries the merged specification (`SPEC.md`, `METRICS.md`, `WEIGHTING.md`,
+`MANIFEST.json`) produced by a multi-agent design pass, plus `DATA-GROUND-TRUTH.md` — the measured
+data-source findings, which override the others wherever they disagree.
+
+Treat the spec documents as a **design backlog, not a description of the code**. They propose 33
+weighting methods against the 23 implemented, and raise open questions (universe bootstrap in the
+confidence interval, sector×size calibration keying, Choquet interaction priors) that are not built.
+Where a spec claim was checkable it was checked; one of its catches was real and is fixed — see
+`short_term_reversal_1m`.
+
 ## Caveats
 
 - **Not investment advice.** A grade is a summary of published numbers, not a recommendation.

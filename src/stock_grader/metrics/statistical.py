@@ -483,10 +483,20 @@ def _total_return(s: SecuritySnapshot, days: int, skip: int = 0) -> float | None
     return float(end / start - 1.0)
 
 
-@metric("momentum_1m", pillar="momentum", direction=1, unit="ratio",
+@metric("short_term_reversal_1m", pillar="momentum", direction=-1, unit="ratio",
         needs_prices=True, min_history=63, winsor=(-1.0, 3.0))
-def momentum_1m(s: SecuritySnapshot) -> float | None:
-    """One-month total return."""
+def short_term_reversal_1m(s: SecuritySnapshot) -> float | None:
+    """One-month total return, scored as **reversal**: a strong last month is a mild negative.
+
+    Direction is -1, not +1, and the reason is stated three metrics down in this same file:
+    :func:`momentum_12_1` deliberately skips the most recent month *because* it reverses
+    (Jegadeesh 1990). Scoring that same month as higher-is-better would put two metrics in one
+    pillar voting opposite ways on the identical phenomenon, with the 12-1 factor's own rationale
+    contradicting its neighbour.
+
+    The effect is weaker and noisier than 12-1 momentum, so this carries little weight in practice —
+    but it should at least point the right way.
+    """
     return _total_return(s, 21)
 
 

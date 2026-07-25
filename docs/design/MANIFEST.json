@@ -1,0 +1,2103 @@
+[
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/aggregate.yaml",
+    "purpose": "level1 weighted_arithmetic_mean; level2 power_mean_ces rho 0.0; zero_floor; trim_t; soft_min_T; owa_pessimism; choquet.gamma; lexicographic_gate.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/calibration/README.md",
+    "purpose": "Per-sector anchor tables for piecewise_linear_absolute, each carrying asof, universe_id, size_bucket and max_age_days.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/grade_scale.yaml",
+    "purpose": "mode hybrid, beta, the DERIVED absolute table, the percentile table, hysteresis (enabled: false), pipeline_fingerprint guard.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/interactions/default.yaml",
+    "purpose": "Frozen versioned metric-metric Spearman matrix for the Choquet prior, with an asof checked strictly prior to the grading asof at load.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/metrics.yaml",
+    "purpose": "Pillar membership, per-metric enable/disable, applicability overrides, redundancy groups.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/normalize.yaml",
+    "purpose": "Default winsor_rank; small-universe fallback chain [historical_percentile, piecewise_linear_absolute]; z_map cdf; per-metric overrides; band specs; the three-stage wrapper contract; loo; staleness_dispersion_warn.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/profiles.yaml",
+    "purpose": "The 11 grader profiles: pillar weights, level-2 rho, normalizer stack, weighting method per level, direction_override, thesis.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/uncertainty.yaml",
+    "purpose": "n_draws, alpha, p_frac, kappa bounds, universe_bootstrap, [F11] gamma and shrinkage_form, and BOTH coverage gates plus c_min_presence \u2014 previously split across two unrelated files.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/config/weighting.yaml",
+    "purpose": "Per-profile per-level method choice, caps and cap exemptions, shrinkage taus, turnover phi, dedup, supervised horizon/spacing/decay/permutation-null, shapley, bagged, bma, reference panel, AHP matrices (keyed by column NAME), ensembles.",
+    "public_api": [
+      "(data file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 120,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/aggregation.md",
+    "purpose": "Prose companion: the compensability argument for geometric at level 2, the worked [90,90,90,5] example, the rho sensitivity table, and the deliberate deviation from the arithmetic industry convention.",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/design/MANIFEST.json",
+    "purpose": "This machine-readable build manifest.",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/design/METRICS.md",
+    "purpose": "The final deduplicated 89-metric catalog.",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/design/SPEC.md",
+    "purpose": "The merged specification (this build's contract).",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/design/WEIGHTING.md",
+    "purpose": "The 33 weighting methods with algorithms, preconditions, fallbacks.",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/normalization.md",
+    "purpose": "Prose companion: which normalizer when, by universe size and metric shape; the band-metric rule; the calibration/survivorship warning.",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/uncertainty.md",
+    "purpose": "Prose companion stating plainly what the interval does and does not cover \u2014 it excludes data error, normalization estimation error and universe definition, so users do not read it as a full 95% CI.",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/docs/weighting.md",
+    "purpose": "Prose companion: the Saaty RI table, the ward-vs-single decision, the dispersion-degeneracy finding, and the full WRONG-IF-NAIVE list.",
+    "public_api": [
+      "(documentation)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 200,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/pyproject.toml",
+    "purpose": "Package metadata, the src/ layout, the stock-grader console entry point, and the pinned dependency set (numpy, pandas, scipy, scikit-learn, statsmodels, pyyaml, requests, rich, pytest \u2014 nothing else).",
+    "public_api": [
+      "(build file)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 45,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+    "purpose": "Frozen scalars shared by every layer: score bounds, the 13-letter ladder, pillar names, estimator consistency constants, the NR sentinel.",
+    "public_api": [
+      "NEUTRAL_SCORE = 50.0",
+      "SCORE_MIN = 0.0",
+      "SCORE_MAX = 100.0",
+      "SCORE_EPS = 1e-6",
+      "NOT_RATED = 'NR'",
+      "LETTERS: list[str]",
+      "PILLARS: list[str]",
+      "MAD_CONSISTENCY = 1.4826",
+      "IQR_CONSISTENCY = 1.34898",
+      "ZERO_FLOOR = 1.0"
+    ],
+    "depends_on": [],
+    "estimated_loc": 60,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/concepts.py",
+    "purpose": "Canonical XBRL concept map and the derived-concept rules (ebit := operating_income with a pretax+interest fallback; ebitda composed at the TTM level, never by summing a per-period derived column).",
+    "public_api": [
+      "CONCEPT_TAGS: dict[str, tuple[str, ...]]",
+      "INSTANT_CONCEPTS: frozenset[str]",
+      "AVERAGED_CONCEPTS: frozenset[str]",
+      "DERIVED_RULES: dict[str, Callable]",
+      "all_concepts() -> list[str]",
+      "derive_missing(df: pd.DataFrame) -> pd.DataFrame"
+    ],
+    "depends_on": [],
+    "estimated_loc": 230,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+    "purpose": "Typed exceptions and warning categories. CovarianceDegenerate exists so every cho_factor/eigh consumer converts an all-constant panel into a fallback instead of an uncaught LinAlgError.",
+    "public_api": [
+      "class LookAheadError(Exception)",
+      "class NotPointInTimeError(Exception)",
+      "class CovarianceDegenerate(Exception)",
+      "class ConfigError(Exception)",
+      "class WeightingError(Exception)",
+      "class StaleCalibrationWarning(UserWarning)",
+      "class RankReversalWarning(UserWarning)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 70,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/util.py",
+    "purpose": "Numeric helpers every metric shares. safe_div's positive_denominator flag is what implements the sign-flip rule: a loss-making company has no P/E, it does not have a low one.",
+    "public_api": [
+      "is_finite_number(v) -> bool",
+      "coalesce(*values) -> float | None",
+      "safe_div(num, den, *, positive_denominator=False, cap=None) -> float | None",
+      "safe_log(v) -> float | None",
+      "cagr(begin, end, years) -> float | None",
+      "growth_rate(begin, end) -> float | None",
+      "winsorize(s, lower=0.01, upper=0.99) -> pd.Series",
+      "clip_finite(s) -> pd.Series",
+      "linear_trend(s) -> tuple[float, float] | None",
+      "r_squared_loglinear(s) -> float | None",
+      "consistency(values) -> float | None",
+      "ols_t_stat(y, x) -> float | None"
+    ],
+    "depends_on": [],
+    "estimated_loc": 250,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+    "purpose": "Decorator registries for all six pluggable layers, extended with register_alias (emits DeprecationWarning) and the new spec fields. Registration asserts shape=='band' iff direction==0.",
+    "public_api": [
+      "class Registry(Generic[T])",
+      "Registry.register(name, obj, *, overwrite=False)",
+      "Registry.register_alias(old: str, new: str) -> None",
+      "Registry.get(name)",
+      "Registry.maybe(name)",
+      "Registry.names() -> list[str]",
+      "@dataclass class MetricSpec(name, pillar, direction, fn, shape, size_neutral_ok, composite, redundancy_group, normalizer_override, x_space, applicability, unit, needs_prices, needs_benchmark, min_history, winsor, ideal_band, tags)",
+      "@dataclass class NormalizerSpec(name, fn, applies_direction, stage, needs_groups, needs_panel, is_absolute)",
+      "@dataclass class AggregatorSpec(name, fn, kind, supports_shapley, supports_signed_weights)",
+      "METRICS",
+      "NORMALIZERS",
+      "AGGREGATORS",
+      "WEIGHTINGS",
+      "GRADERS",
+      "PROVIDERS",
+      "PROFILES",
+      "metric(...) -> Callable",
+      "normalizer",
+      "aggregator",
+      "weighting",
+      "grader",
+      "provider"
+    ],
+    "depends_on": [],
+    "estimated_loc": 260,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py",
+    "purpose": "The single seeding implementation in the codebase. blake2b only: builtin hash() is salted per process and returns negatives that SeedSequence rejects. Also owns pipeline_fingerprint, which is reused by the seed, the grade-scale guard, hysteresis invalidation and the weight cache key.",
+    "public_api": [
+      "stable_hash(s: str) -> int",
+      "make_rng(*, ticker: str, asof, profile: str, universe_id: str, pipeline_fingerprint: str, seed: int) -> np.random.Generator",
+      "child_rng(parent_seed: int, *parts: str) -> np.random.Generator",
+      "pipeline_fingerprint(resolved_config: dict) -> str"
+    ],
+    "depends_on": [],
+    "estimated_loc": 90,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+    "purpose": "Core dataclasses. Amended per SPEC 1.2: MetricResult gains shape/size_neutral_ok/composite/redundancy_group; PillarScore gains score_raw and the three coverage figures; GradeReport gains letter_raw and interval_sources. graded now tests against NOT_RATED, and top_contributors returns the nested Shapley contributions rather than contribution * pillar_weight.",
+    "public_api": [
+      "class Coverage(Enum) OK|MISSING|NOT_APPLICABLE",
+      "class PeriodType(Enum)",
+      "class PitMode(Enum)",
+      "class SectorClass(Enum)",
+      "@dataclass class PriceBar",
+      "@dataclass class Fundamentals",
+      "Fundamentals.ttm(concept) -> float | None",
+      "Fundamentals.latest(concept, *, annual=False)",
+      "Fundamentals.history(concept, n, *, annual=True)",
+      "@dataclass class SecuritySnapshot",
+      "SecuritySnapshot.market_cap -> float | None",
+      "@dataclass class MetricResult",
+      "@dataclass class PillarScore",
+      "@dataclass class GradeReport",
+      "GradeReport.graded -> bool",
+      "GradeReport.top_contributors(n=5, *, positive=True)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 340,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/warnings_sink.py",
+    "purpose": "Mutable append-only warning collector held by reference. Frozen contexts hold a WarningSink rather than declaring a mutable list field, so the frozen declaration is honest.",
+    "public_api": [
+      "class WarningSink",
+      "WarningSink.add(code: str, **fields) -> None",
+      "WarningSink.codes() -> list[str]",
+      "WarningSink.extend(other: WarningSink) -> None",
+      "@dataclass(frozen=True) class Warning(code, detail, layer, group)"
+    ],
+    "depends_on": [],
+    "estimated_loc": 80,
+    "build_order": 0
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/base.py",
+    "purpose": "Aggregator registry split into pointwise and panel protocols, [F1] weight renormalization with its two distinct zero-weight predicates, the uniform zero_floor preprocessing, and AggResult.",
+    "public_api": [
+      "aggregator(name, *, kind='pointwise', supports_shapley=True, supports_signed_weights=False) -> Callable",
+      "@dataclass(frozen=True) class AggConfig(rho, delta, t, T, pessimism, gamma, zero_policy)",
+      "@dataclass class AggResult(score, score_raw, weights_effective, coverage_w, coverage_n, universe_id, universe_size, warnings)",
+      "renormalize_weights(w: pd.Series, observed: pd.Index) -> tuple[pd.Series, float, float]",
+      "prepare(s: pd.Series, w: pd.Series, cfg: AggConfig) -> tuple[np.ndarray, np.ndarray]",
+      "aggregate(name, s: pd.Series, w: pd.Series, cfg: AggConfig) -> AggResult",
+      "aggregate_panel(name, X: pd.DataFrame, w: pd.Series, cfg: AggConfig) -> pd.Series",
+      "get_aggregator(name) -> AggregatorSpec",
+      "list_aggregators() -> list[str]"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/warnings_sink.py"
+    ],
+    "estimated_loc": 300,
+    "build_order": 1
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py",
+    "purpose": "YAML loading, deep-merge of CLI overrides, and the fail-fast validator. The validator owns every rejection the design depends on: band metrics on monotonic normalizers, size_neutral on size_neutral_ok=False metrics, redundant neutralizer stacks, rho outside [-5,2], negative or over-cap configured weights, inconsistent AHP matrices, unknown method names, and on_unconfigured=raise.",
+    "public_api": [
+      "load_config(paths: Sequence[Path], overrides: dict | None = None) -> ResolvedConfig",
+      "@dataclass(frozen=True) class ResolvedConfig(normalize, aggregate, weighting, uncertainty, grade_scale, profiles, metrics, raw)",
+      "ResolvedConfig.fingerprint -> str",
+      "validate_config(cfg: ResolvedConfig) -> list[str]",
+      "class ConfigValidator",
+      "ConfigValidator.check_band_normalizers(cfg) -> None",
+      "ConfigValidator.check_wrapper_stack(cfg) -> None",
+      "ConfigValidator.check_weight_caps(cfg) -> None"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/normalize.yaml",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/aggregate.yaml",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/weighting.yaml",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/uncertainty.yaml",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/grade_scale.yaml",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/profiles.yaml",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/metrics.yaml"
+    ],
+    "estimated_loc": 380,
+    "build_order": 1
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/base.py",
+    "purpose": "Provider registry, the DataProvider protocol, the reporting-lag enforcement that raises LookAheadError at construction, and the point-in-time universe contract (panel_is_pit).",
+    "public_api": [
+      "class DataProvider(Protocol)",
+      "DataProvider.snapshot(ticker, asof) -> SecuritySnapshot",
+      "DataProvider.universe(asof) -> list[str]",
+      "DataProvider.panel_is_pit -> bool",
+      "apply_reporting_lag(fundamentals, asof, *, quarterly_days=45, annual_days=90) -> Fundamentals",
+      "get_provider(name)",
+      "list_providers() -> list[str]"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/concepts.py"
+    ],
+    "estimated_loc": 220,
+    "build_order": 1
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+    "purpose": "Normalizer protocol/registry facade, NormalizeConfig and NormalizeContext, the [F3] direction reflection, the NaN policy, the [F4] z->score map, the degenerate-dispersion fallback, and the [EPS,100-EPS] range invariant that makes the aggregator floor non-binding.",
+    "public_api": [
+      "normalizer(name, *, applies_direction=False, stage='terminal', needs_groups=False, needs_panel=True, is_absolute=False) -> Callable",
+      "@dataclass(frozen=True) class NormalizeConfig(map, a, p_lo, p_hi, alpha, inner, B, tau, loo, z_map)",
+      "@dataclass(frozen=True) class NormalizeContext(asof, reporting_lag_days, sector, industry, market_cap, staleness_days, universe_id, warnings)",
+      "normalize(name, x: pd.Series, *, direction: int, cfg: NormalizeConfig, ctx: NormalizeContext) -> pd.Series",
+      "apply_direction(scores: pd.Series, direction: int) -> pd.Series",
+      "z_to_score(z, map='cdf', a=2.5) -> np.ndarray",
+      "clamp_open(s: pd.Series) -> pd.Series",
+      "get_normalizer(name) -> NormalizerSpec",
+      "list_normalizers() -> list[str]",
+      "DEGENERATE_SCORE = 50.0"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/warnings_sink.py"
+    ],
+    "estimated_loc": 300,
+    "build_order": 1
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/coverage.py",
+    "purpose": "The [F2] coverage arithmetic \u2014 the single most consequential correction in the merge. c_w is computed over the APPLICABLE weight, c_top over the ORIGINAL pillar weights with dropped pillars contributing zero, and NOT_APPLICABLE leaves the denominator so a price-free grade is not forced to NR.",
+    "public_api": [
+      "weight_coverage(w: pd.Series, observed: pd.Index, applicable: pd.Index) -> float",
+      "count_coverage(observed: pd.Index, applicable: pd.Index) -> float",
+      "top_coverage(pillar_weights_orig: pd.Series, c_w: dict[str, float], applicable: set[str]) -> float",
+      "presence_coverage(pillar_weights_orig: pd.Series, observed: set[str], applicable: set[str]) -> float",
+      "shrink_to_neutral(score, coverage, gamma=0.5, neutral=50.0, form='power') -> float",
+      "widen_factor(coverage, cap=3.0) -> float",
+      "coverage_gate(c_top, c_presence, *, c_min_report=0.35, c_min_presence=0.60) -> str | None"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/uncertainty.yaml"
+    ],
+    "estimated_loc": 180,
+    "build_order": 1
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+    "purpose": "WeightingMethod protocol, the frozen(eq=False) WeightingContext with its explicit view cache, WeightResult (which carries the REQUIRED confidence scalar), the pre/post pipelines, and the corrected monotone growing-fixed-set water-filling.",
+    "public_api": [
+      "class WeightingMethod(Protocol)",
+      "@dataclass(frozen=True, eq=False) class WeightingContext",
+      "WeightingContext.unit_panel() -> pd.DataFrame",
+      "WeightingContext.z_panel() -> pd.DataFrame",
+      "WeightingContext.raw_panel() -> pd.DataFrame",
+      "WeightingContext.cov(view='unit') -> np.ndarray",
+      "WeightingContext.corr(view='unit', shrunk=True) -> np.ndarray",
+      "WeightingContext.reference_panel() -> pd.DataFrame | None",
+      "@dataclass(frozen=True) class WeightResult(weights, method_used, method_requested, fallbacks, confidence, fallback_used, dispersion, diagnostics)",
+      "@dataclass(frozen=True) class WeightFallback(requested, used, reason, level, group)",
+      "apply_pre_pipeline(X, ctx) -> tuple[pd.DataFrame, WeightingContext]",
+      "apply_post_pipeline(v: pd.Series, ctx, *, allows_negative: bool, tau: float, apply_shrink: bool) -> pd.Series",
+      "water_fill(v: np.ndarray, wmin: float, wmax: float) -> np.ndarray",
+      "project_box_simplex(u: np.ndarray, wmin: float, wmax: float) -> np.ndarray",
+      "confidence_from(fallback_depth: int, n_used: int, min_n: int, good_n: int, pit: bool) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/warnings_sink.py"
+    ],
+    "estimated_loc": 520,
+    "build_order": 1
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/contributions.py",
+    "purpose": "The universal exact Shapley decomposition [F8], the analytic collapse for the arithmetic mean, the c_w^gamma shrinkage rescaling and the level-2 -> level-1 chain rule that makes contributions telescope to composite - 50 under the geometric default.",
+    "public_api": [
+      "shapley_contributions(f: Callable, s: pd.Series, w: pd.Series, *, neutral=50.0, exact_max_n=12, n_perm=2000, rng) -> pd.Series",
+      "linear_contributions(s, w, neutral=50.0) -> pd.Series",
+      "rescale_for_shrinkage(contribs: pd.Series, coverage: float, gamma: float) -> pd.Series",
+      "chain_contributions(metric_contribs: dict[str, pd.Series], pillar_contribs: pd.Series, pillar_scores_adj: pd.Series) -> pd.Series",
+      "verify_efficiency(contribs, score, neutral=50.0, tol=1e-9) -> bool"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 240,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/means.py",
+    "purpose": "The mean family on the common floored vector: arithmetic, weighted median with the exact-tie midpoint rule, fractional-weight trimmed mean, geometric, harmonic, power_mean_ces in log space, soft_min, and the new lexicographic_gate.",
+    "public_api": [
+      "weighted_arithmetic_mean(s, w, cfg)",
+      "weighted_median(s, w, cfg)",
+      "trimmed_mean(s, w, cfg)",
+      "weighted_geometric_mean(s, w, cfg)",
+      "harmonic_mean(s, w, cfg)",
+      "power_mean_ces(s, w, cfg)",
+      "soft_min(s, w, cfg)",
+      "lexicographic_gate(s, w, cfg)",
+      "power_mean(s: np.ndarray, w: np.ndarray, rho: float, delta: float = 1.0) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 280,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/panel.py",
+    "purpose": "TOPSIS as a PANEL aggregator (it returns a score per security and cannot be dispatched through the pointwise signature). r_ij = x_ij/100, not the L2 column norm, so the configured weights are the weights actually applied.",
+    "public_api": [
+      "topsis(X: pd.DataFrame, w: pd.Series, cfg) -> pd.Series",
+      "topsis_contributions(X, w, ticker) -> pd.Series"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 160,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/fixtures.py",
+    "purpose": "Bundled offline fixture loader: real SEC fundamentals plus synthetic prices, the reference panel and the point-in-time constituent lists including delisted names.",
+    "public_api": [
+      "FixtureProvider",
+      "load_reference_panel(path, *, max_age_days=180) -> pd.DataFrame",
+      "load_pit_universe(asof) -> list[str]"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/concepts.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 330,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/prices.py",
+    "purpose": "Best-effort price providers (yahoo, stooq, tiingo, fmp, alphavantage) plus the prices.csv drop-in and the --price scalar override. All fail SOFT: warn, return None, never raise.",
+    "public_api": [
+      "PriceProvider",
+      "load_prices_csv(path) -> pd.DataFrame",
+      "yahoo_prices(ticker, start, end)",
+      "stooq_prices(ticker, start, end)",
+      "risk_free_series(start, end) -> pd.Series"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/concepts.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 330,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/sec.py",
+    "purpose": "SEC EDGAR XBRL companyfacts/submissions provider \u2014 the PRIMARY fundamentals source (free, official, keyless, carries real filing dates).",
+    "public_api": [
+      "SecProvider",
+      "fetch_companyfacts(cik) -> dict",
+      "normalize_facts(raw) -> Fundamentals",
+      "ticker_to_cik(ticker) -> str | None",
+      "sic_to_sector(sic) -> SectorClass"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/concepts.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 330,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/sectors.py",
+    "purpose": "SIC -> SectorClass mapping and the industry taxonomy used by the group normalizers.",
+    "public_api": [
+      "SIC_TO_SECTOR",
+      "sector_of(sic) -> SectorClass",
+      "industry_of(sic) -> str"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/concepts.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 330,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/synthetic.py",
+    "purpose": "Clearly labelled synthetic price generator for the offline fixtures. Every loader stamps meta['synthetic_prices']=True, which the report prints as a visible warning.",
+    "public_api": [
+      "synthetic_prices(ticker, start, end, seed) -> pd.DataFrame",
+      "SyntheticProvider"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/concepts.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 330,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+    "purpose": "The 13-letter ladder, the three curve modes, [F9] hybrid thresholds in THRESHOLD space with pi_L/100 and method='hazen', the non-decreasing tie nudge, the derived absolute cutoffs and the NR gate.",
+    "public_api": [
+      "LETTERS",
+      "@dataclass(frozen=True) class GradeScale(mode, absolute_cutoffs, percentile_cutoffs, beta, min_universe, pipeline_fingerprint)",
+      "GradeScale.from_yaml(path: Path) -> GradeScale",
+      "GradeScale.thresholds(universe_scores: np.ndarray | None = None) -> dict[str, float]",
+      "GradeScale.letter(score, universe_scores=None, coverage=None) -> str",
+      "GradeScale.percentile(score, universe_scores) -> float",
+      "derive_absolute_cutoffs(universe_scores: np.ndarray, percentile_cutoffs: dict[str, float]) -> dict[str, float]",
+      "NOT_RATED"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/applicability.py",
+    "purpose": "The sector-class applicability matrix: which metrics are NOT_APPLICABLE for which business models, and which are NOT_APPLICABLE because an optional input (prices, benchmark, R&D line) is absent. This is what keeps the corrected c_top from forcing every offline grade to NR.",
+    "public_api": [
+      "applicable(spec: MetricSpec, snapshot: SecuritySnapshot) -> Coverage",
+      "SECTOR_EXCLUSIONS: dict[SectorClass, frozenset[str]]",
+      "INPUT_EXCLUSIONS: dict[str, Callable[[SecuritySnapshot], bool]]",
+      "applicable_pillars(snapshot) -> set[str]"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/metrics.yaml"
+    ],
+    "estimated_loc": 200,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/absolute.py",
+    "purpose": "piecewise_linear_absolute, historical_percentile and historical_z \u2014 the calibration-free self-relative path that makes the offline single-name requirement achievable \u2014 plus anchor-table loading with asof/staleness checks and the winsor_rank-matched calibration builder.",
+    "public_api": [
+      "piecewise_linear_absolute(x, cfg)",
+      "historical_percentile(x_now, history, cfg)",
+      "historical_z(x_now, history, cfg)",
+      "@dataclass(frozen=True) class AnchorTable(values, scores, x_space, extrapolate, asof, universe_id, size_bucket)",
+      "load_calibration(sector: str, path: Path, *, asof) -> AnchorTable",
+      "build_calibration(universe_values, percentiles=DEFAULT_PCTS, normalizer='winsor_rank') -> AnchorTable",
+      "ecdf_match(absolute_scores: pd.Series, universe_scores: pd.Series) -> pd.Series",
+      "DEFAULT_PCTS",
+      "DEFAULT_SCORES"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/calibration/README.md"
+    ],
+    "estimated_loc": 300,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/location_scale.py",
+    "purpose": "zscore, robust_z (with the MANDATORY MAD=0 -> IQR/1.34898 fallback, replacing the current fallback to zscore), count-based winsorized_z, minmax, and estimate_center_scale for the group wrappers.",
+    "public_api": [
+      "zscore(x, cfg)",
+      "robust_z(x, cfg)",
+      "winsorized_z(x, cfg)",
+      "minmax(x, cfg)",
+      "yeo_johnson_z(x, cfg)",
+      "estimate_center_scale(x: pd.Series, estimator: str) -> tuple[float, float]",
+      "winsorize_by_count(x: pd.Series, p: float) -> pd.Series"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 240,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/rank.py",
+    "purpose": "percentile_rank, gaussian_rank (adaptive a_n from this cross-section's own plotting positions), rank_minmax, quantile_bucket with the antisymmetric bucket rule, and the shared plotting positions [F5].",
+    "public_api": [
+      "percentile_rank(x, cfg)",
+      "gaussian_rank(x, cfg)",
+      "rank_minmax(x, cfg)",
+      "quantile_bucket(x, cfg)",
+      "avg_ranks(x: pd.Series) -> np.ndarray",
+      "plotting_position(r: np.ndarray, n: int, kind: str = 'hazen') -> np.ndarray",
+      "bucket_index(p: np.ndarray, B: int) -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 200,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/squash.py",
+    "purpose": "sigmoid, tanh_squash (documented as the same family under tau_l = tau_t/2), and double_sigmoid with grid-bracketed brentq, validated band parameters and normalize_peak defaulting True.",
+    "public_api": [
+      "sigmoid(x, cfg)",
+      "tanh_squash(x, cfg)",
+      "double_sigmoid(x, cfg)",
+      "@dataclass(frozen=True) class BandSpec(lo, hi, w_lo, w_hi, floor, peak, normalize_peak)",
+      "BandSpec.validate() -> None",
+      "band_peak_location(spec: BandSpec) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 220,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+    "purpose": "Shared numerics: the three panel views with the explicit degenerate branch, Ledoit-Wolf with the mu==0 typed raise / scale-relative d2 threshold / positive delta floor / condition-number guard, imputation, and the simplex projections.",
+    "public_api": [
+      "unit_panel(X, lo=0.025, hi=0.975) -> pd.DataFrame",
+      "z_panel(X, lo=0.025, hi=0.975) -> pd.DataFrame",
+      "raw_panel(X_raw, lo=0.025, hi=0.975) -> pd.DataFrame",
+      "ledoit_wolf_cov(Y: np.ndarray) -> tuple[np.ndarray, float]",
+      "corr_from_cov(S: np.ndarray) -> np.ndarray",
+      "impute_panel(X, sectors, min_sector_n=10) -> tuple[pd.DataFrame, pd.Series]",
+      "project_simplex(u: np.ndarray) -> np.ndarray",
+      "nearest_pd(S, eps=1e-10) -> np.ndarray",
+      "drop_zero_variance(X: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 320,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/ic.py",
+    "purpose": "Information-coefficient machinery shared by every supervised method: the per-column IC series with time decay, the bounded Newey-West lag and HAC SE, the 6-block purged forward-chaining splitter whose fold 1 has training data, the pooled design and the corrected empirical-Bayes shrinkage toward zero skill.",
+    "public_api": [
+      "ic_series(panel_history, fwd, columns, *, min_names=20, half_life_years=3.0) -> pd.DataFrame",
+      "newey_west_se(a: np.ndarray, lag: int) -> float",
+      "nw_lag(horizon_days: int, spacing_days: int, T: int) -> tuple[int, bool]",
+      "purged_forward_chaining_splits(dates, n_splits=5, horizon_days=63, min_train=8) -> Iterator[tuple[np.ndarray, np.ndarray]]",
+      "pooled_design(panel_history, fwd, columns) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]",
+      "empirical_bayes_shrink(means: np.ndarray, ses: np.ndarray) -> np.ndarray",
+      "permutation_null_pvalue(fit_fn, X, y, blocks, rng, draws=200) -> float",
+      "decay_weights(dates, half_life_years: float) -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 380,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+    "purpose": "The weighting decorator built on the shared registry, the fallback walker with the composite exemption, and compute_weights \u2014 the layer's only public entry point.",
+    "public_api": [
+      "weighting_method(name, **meta) -> Callable",
+      "get_weighting(name) -> WeightingMethod",
+      "list_weightings() -> list[str]",
+      "compute_weights(name: str, X: pd.DataFrame, ctx: WeightingContext) -> WeightResult",
+      "resolve(name: str, ctx: WeightingContext) -> tuple[WeightingMethod, list[WeightFallback]]",
+      "validate_registry() -> None",
+      "WEIGHTING_SPEC_VERSION: str"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/warnings_sink.py"
+    ],
+    "estimated_loc": 300,
+    "build_order": 2
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/fuzzy.py",
+    "purpose": "Choquet with a 2-additive measure, OWA and WOWA. The interaction prior is built from Spearman over DIRECTION-ADJUSTED NORMALIZED scores with composites excluded, per-pair capped BEFORE the global monotonicity bisection, and restricted to the positive-weight support.",
+    "public_api": [
+      "choquet_2additive(s, w, cfg)",
+      "owa(s, w, cfg)",
+      "wowa(s, w, cfg)",
+      "@dataclass class Interaction2Additive(phi, I)",
+      "interaction_from_correlation(rho_matrix, gamma=0.5, composites=frozenset()) -> Interaction2Additive",
+      "cap_pairwise(inter: Interaction2Additive) -> Interaction2Additive",
+      "restrict_to_support(inter, eps=1e-9) -> Interaction2Additive",
+      "project_to_monotone(inter) -> Interaction2Additive",
+      "check_monotone(inter) -> bool",
+      "owa_weights(n: int, pessimism: float) -> np.ndarray",
+      "load_interaction_prior(path, *, asof) -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/means.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/contributions.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/interactions/default.yaml"
+    ],
+    "estimated_loc": 400,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/__init__.py",
+    "purpose": "Data package facade: imports every provider so registration happens on import.",
+    "public_api": [
+      "get_provider",
+      "list_providers",
+      "DataProvider",
+      "apply_reporting_lag"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/sec.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/prices.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/synthetic.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/sectors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/fixtures.py"
+    ],
+    "estimated_loc": 40,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/ic.py",
+    "purpose": "Rank information coefficient and its HAC-corrected standard error \u2014 the primitive every evaluation question reduces to.",
+    "public_api": [
+      "rank_ic(scores: pd.DataFrame, fwd_returns: pd.DataFrame) -> pd.Series",
+      "rank_ic_summary(ic: pd.Series, horizon_days, spacing_days) -> dict",
+      "information_ratio(ic: pd.Series, horizon_days, spacing_days) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/ic.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 160,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/hysteresis.py",
+    "purpose": "Grade-boundary deadband as a FULL threshold re-evaluation with a directional deadband (handling multi-band jumps, +/-inf at the ladder ends, and NR as a no-op), defaulting OFF, with the state store as a CLI-side helper so the library stays pure.",
+    "public_api": [
+      "@dataclass(frozen=True) class HysteresisConfig(points, frac, confirm_runs, enabled)",
+      "@dataclass class GradeState(letter, score, asof, runs_at_pending, pipeline_fingerprint)",
+      "class GradeStateStore",
+      "GradeStateStore.get(key) -> GradeState | None",
+      "GradeStateStore.put(key, state) -> None",
+      "apply_hysteresis(score, letter_raw, thresholds, prev: GradeState | None, cfg) -> tuple[str, GradeState]"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py"
+    ],
+    "estimated_loc": 240,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/composites.py",
+    "purpose": "The four bundled accounting composites: altman_z, ohlson_o_score, piotroski_f_score, beneish_m_score. All carry composite=True (excluded from every correlation/PCA/Choquet structure, since they are built from ratios that also appear standalone) and a piecewise_linear_absolute override anchored at their published thresholds.",
+    "public_api": [
+      "altman_z",
+      "ohlson_o_score",
+      "piotroski_f_score",
+      "beneish_m_score",
+      "ALTMAN_CUTOFFS = (1.81, 2.99)",
+      "BENEISH_THRESHOLD = -1.78",
+      "OHLSON_CUTOFF = 0.38"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/util.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/applicability.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 420,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/fundamental.py",
+    "purpose": "The 62 fundamentals-only metrics across valuation, profitability, growth, health, efficiency, quality and shareholder. Valuation ratios are registered in YIELD form so a loss-maker does not rank as cheap.",
+    "public_api": [
+      "earnings_yield",
+      "fcf_yield",
+      "ocf_yield",
+      "ebitda_to_ev",
+      "ebit_to_ev",
+      "fcf_to_ev",
+      "gross_profit_to_ev",
+      "ev_to_sales",
+      "price_to_sales",
+      "price_to_book",
+      "price_to_tangible_book",
+      "peg_ratio",
+      "graham_number_ratio",
+      "gross_margin",
+      "operating_margin",
+      "net_margin",
+      "ebitda_margin",
+      "fcf_margin",
+      "roe",
+      "roa",
+      "roic",
+      "croic",
+      "gross_profit_to_assets",
+      "margin_trend",
+      "revenue_cagr_3y",
+      "revenue_cagr_5y",
+      "earnings_cagr_3y",
+      "earnings_cagr_5y",
+      "fcf_cagr_3y",
+      "book_value_cagr_5y",
+      "revenue_growth_consistency",
+      "earnings_growth_consistency",
+      "revenue_growth_acceleration",
+      "current_ratio",
+      "quick_ratio",
+      "cash_ratio",
+      "debt_to_equity",
+      "debt_to_assets",
+      "net_debt_to_ebitda",
+      "interest_coverage",
+      "fcf_to_debt",
+      "asset_turnover",
+      "days_sales_outstanding",
+      "days_inventory_outstanding",
+      "capex_intensity",
+      "rnd_intensity",
+      "accruals_ratio",
+      "cash_conversion",
+      "fcf_to_net_income",
+      "goodwill_to_assets",
+      "share_count_change",
+      "dividend_yield",
+      "payout_ratio",
+      "fcf_payout_ratio",
+      "buyback_yield",
+      "enterprise_value(s) -> float | None",
+      "invested_capital(s) -> float | None"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/util.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/applicability.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 760,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/statistical.py",
+    "purpose": "The 30 price-dependent metrics across risk, momentum and liquidity. All declare needs_prices=True and degrade to NOT_APPLICABLE rather than MISSING when no price series exists.",
+    "public_api": [
+      "annualized_volatility",
+      "downside_deviation",
+      "idiosyncratic_volatility",
+      "volatility_of_volatility",
+      "max_drawdown",
+      "ulcer_index",
+      "cvar_95",
+      "return_skew",
+      "excess_kurtosis",
+      "tail_ratio",
+      "hill_tail_index",
+      "sharpe_ratio",
+      "sortino_ratio",
+      "calmar_ratio",
+      "capm_alpha",
+      "beta",
+      "variance_ratio",
+      "short_term_reversal_1m",
+      "momentum_6m",
+      "momentum_12_1",
+      "risk_adjusted_momentum",
+      "momentum_consistency",
+      "information_discreteness",
+      "distance_from_52w_high",
+      "price_to_sma200",
+      "trend_strength",
+      "rsi_14",
+      "dollar_volume",
+      "amihud_illiquidity",
+      "zero_return_days"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/util.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/applicability.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 760,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/composite.py",
+    "purpose": "winsor_rank \u2014 the recommended default \u2014 and the constant_50 internal fallback.",
+    "public_api": [
+      "winsor_rank(x, cfg)",
+      "constant_50(x, cfg)"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/location_scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/rank.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 120,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/neutralize.py",
+    "purpose": "sector_neutral, industry_neutral and size_neutral, plus the [F6] James-Stein estimator with its guards ORDERED (tau2 tested before any division), a >=2-group gate, ddof=1, the log-variance scale shrinkage, and the composite-inner rule that gives winsor_rank a defined behaviour under a group wrapper.",
+    "public_api": [
+      "sector_neutral(x, cfg, ctx)",
+      "industry_neutral(x, cfg, ctx)",
+      "size_neutral(x, cfg, ctx)",
+      "@dataclass class ShrinkageResult(lambda_by_group, lambda_var_by_group, k_hat, tau2, sigma2, centers, scales)",
+      "js_shrinkage(x, groups, estimator, n_min=5, k_override=None) -> ShrinkageResult",
+      "robust_size_residual(y, log_mcap, sectors, degree=1, min_n=20) -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/location_scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/rank.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 420,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/apriori.py",
+    "purpose": "equal, fixed, prior, ahp and the ordinal family (rank_order_centroid, rank_sum, rank_reciprocal) \u2014 the methods that need no data and therefore keep a single-stock grade alive.",
+    "public_api": [
+      "equal",
+      "fixed",
+      "prior",
+      "ahp",
+      "rank_order_centroid",
+      "rank_sum",
+      "rank_reciprocal",
+      "ahp_weights(A: np.ndarray) -> tuple[np.ndarray, float, float]",
+      "saaty_random_index(n: int) -> float",
+      "repair_ahp(A, max_steps=5) -> np.ndarray",
+      "ahp_submatrix(A_by_name: dict, columns: list[str]) -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 340,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/attribution.py",
+    "purpose": "shapley (exact under 13 columns, antithetic-paired Monte Carlo above, with the standard error computed over PAIR MEANS) and gradient_boosting_importance (per-fold refit, within-date-block permutation), plus the content-addressed on-disk cache with atomic writes.",
+    "public_api": [
+      "shapley",
+      "gradient_boosting_importance",
+      "shapley_exact(v: Callable[[frozenset], float], k: int) -> np.ndarray",
+      "shapley_montecarlo(v, k, rng, n_pairs=1000) -> tuple[np.ndarray, np.ndarray]",
+      "blockwise_permutation_importance(model, X, y, blocks, rng, n_repeats=20) -> np.ndarray",
+      "weight_cache_key(level, group, columns, asof, horizon, universe_hash, panel_hash, cfg) -> str",
+      "cache_get(key) -> pd.Series | None",
+      "cache_put(key, weights) -> None"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/ic.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 480,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/dispersion.py",
+    "purpose": "The MCDM dispersion family. All five declare requires_dispersive_normalizer=True and read raw_panel/unit_panel, because under a rank normalizer every column has an identical marginal distribution and these methods would silently return exactly equal weights.",
+    "public_api": [
+      "entropy_weight",
+      "critic",
+      "stddev",
+      "coefficient_of_variation",
+      "inverse_variance",
+      "inverse_volatility",
+      "dispersion_ratio(X: pd.DataFrame) -> float",
+      "critic_conflict(R: np.ndarray, mode: str = 'signed') -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 300,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/factor.py",
+    "purpose": "pca_loadings and pca_loadings_multi with the deterministic sign convention AND the spectral-gap guard (the sign fix alone does not survive repeated eigenvalues from duplicate columns), plus the M<=3 cap that stops the multi variant converging to uniform weights.",
+    "public_api": [
+      "pca_loadings",
+      "pca_loadings_multi",
+      "eig_corr(R: np.ndarray) -> tuple[np.ndarray, np.ndarray]",
+      "spectral_gap_ok(eigenvalues: np.ndarray, m: int, tol: float = 1e-8) -> bool"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 220,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/hrp.py",
+    "purpose": "Hierarchical Risk Parity: ward linkage by default (single linkage chains degenerately at k=5..15), clustering on the UNSHRUNK correlation while allocation uses the shrunk Sigma, and an explicit finite/zero alpha branch because np.clip(nan, ...) returns nan.",
+    "public_api": [
+      "hrp",
+      "hrp_equal",
+      "correlation_distance(rho: np.ndarray) -> np.ndarray",
+      "quasi_diagonal_order(Z: np.ndarray) -> np.ndarray",
+      "recursive_bisection(Sigma, order, alpha_clip=(0.05, 0.95)) -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 300,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/preprocessing.py",
+    "purpose": "dedup_corr with COMPLETE linkage (single linkage chains A~B~C transitively at 0.98 even when corr(A,C)=0.90, silently underweighting each member of a five-metric chain by 5x) and the always-on n_eff redundancy diagnostic.",
+    "public_api": [
+      "dedup_clusters(X: pd.DataFrame, threshold=0.98) -> list[list[str]]",
+      "with_dedup(method_name: str, X, ctx, threshold: float) -> pd.Series",
+      "effective_n_metrics(R: np.ndarray) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 200,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/risk.py",
+    "purpose": "Covariance-driven allocators, all on the UNIT panel view so the documented mahalanobis == unconstrained-min-variance identity actually holds, all emitting the anti_discriminative warning, and all falling back to inverse_volatility -> stddev -> equal.",
+    "public_api": [
+      "mahalanobis",
+      "risk_parity",
+      "min_variance",
+      "max_diversification",
+      "erc_weights(Sigma, tol=1e-10, max_sweeps=10000) -> np.ndarray",
+      "long_only_min_var(S, wmin, wmax) -> np.ndarray",
+      "max_div_weights(Sigma) -> np.ndarray",
+      "risk_contributions(w, Sigma) -> np.ndarray"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 420,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/supervised.py",
+    "purpose": "Return-predictive weighting. Every function is hard-gated on panel_is_pit AND panel_history_normalized_pit, runs the permutation null, applies time decay, and honours max_seconds.",
+    "public_api": [
+      "ic_weighted",
+      "ic_ir_weighted",
+      "regression",
+      "regression_ridge",
+      "newey_west_tstat",
+      "mutual_information",
+      "fama_macbeth(panel_history, fwd, columns) -> tuple[pd.Series, pd.Series]",
+      "tune_elastic_net(X, y, blocks, horizon_days, seed) -> tuple[float, float]",
+      "kraskov_mi(x: np.ndarray, y: np.ndarray, k: int = 5) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/ic.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 560,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py",
+    "purpose": "Shared pytest fixtures: hand-built SecuritySnapshots, a deterministic synthetic universe panel, a point-in-time fixture provider, and a resolved test config.",
+    "public_api": [
+      "snapshot()",
+      "universe_panel()",
+      "fwd_returns()",
+      "test_config()",
+      "weighting_ctx()",
+      "reference_universe()"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/fixtures.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 3
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/__init__.py",
+    "purpose": "Aggregator package facade: imports every leaf, and exposes the pointwise/panel dispatchers plus the contribution entry points.",
+    "public_api": [
+      "aggregate",
+      "aggregate_panel",
+      "get_aggregator",
+      "list_aggregators",
+      "AggConfig",
+      "AggResult",
+      "shapley_contributions",
+      "chain_contributions",
+      "verify_efficiency"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/means.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/contributions.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/panel.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/fuzzy.py"
+    ],
+    "estimated_loc": 120,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/performance.py",
+    "purpose": "Decile spreads, grade-vs-forward-return monotonicity, hit rate/AUC for the distress metrics, and turnover. This is what settles rho=0 vs 0.5, per-metric vs per-pillar k_hat, calibration keying, the universe_bootstrap default and beta's band encoding with data instead of argument.",
+    "public_api": [
+      "decile_spread(scores: pd.Series, fwd: pd.Series, n_buckets=10) -> pd.DataFrame",
+      "grade_monotonicity(letters: pd.Series, fwd: pd.Series) -> dict",
+      "hit_rate(scores, labels) -> float",
+      "auc(scores, labels) -> float",
+      "turnover(grade_series: pd.DataFrame) -> pd.Series",
+      "weight_turnover(w_now: pd.Series, w_prev: pd.Series) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/ic.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/__init__.py",
+    "purpose": "Grade package facade.",
+    "public_api": [
+      "GradeScale",
+      "LETTERS",
+      "NOT_RATED",
+      "apply_hysteresis",
+      "HysteresisConfig",
+      "GradeState",
+      "GradeStateStore"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/hysteresis.py"
+    ],
+    "estimated_loc": 40,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/base.py",
+    "purpose": "Grader profile dataclass and registry: a profile is a complete pipeline configuration (pillar weights, level-2 rho, normalizer stack, weighting method per level, direction overrides, thesis).",
+    "public_api": [
+      "@dataclass(frozen=True) class Profile(name, pillar_weights, rho, normalizer, weighting_level1, weighting_level2, direction_override, thesis)",
+      "get_profile(name) -> Profile",
+      "profile_names() -> list[str]",
+      "Profile.from_config(cfg, name) -> Profile"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 180,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/engine.py",
+    "purpose": "MetricEngine: resolves the applicable metric set for a snapshot, computes every metric with None-safe evaluation, and returns MetricResult objects carrying the OK/MISSING/NOT_APPLICABLE distinction that drives the whole coverage arithmetic.",
+    "public_api": [
+      "class MetricEngine",
+      "MetricEngine.compute(snapshot: SecuritySnapshot) -> dict[str, MetricResult]",
+      "MetricEngine.applicable_metrics(snapshot) -> list[MetricSpec]",
+      "compute_universe(snapshots: dict[str, SecuritySnapshot]) -> pd.DataFrame",
+      "raw_panel_from_results(results) -> pd.DataFrame"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/util.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/applicability.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/fundamental.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/composites.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/statistical.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/warnings_sink.py"
+    ],
+    "estimated_loc": 240,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/__init__.py",
+    "purpose": "Normalizer package facade: imports every leaf so registration happens on import, and exposes the stage-validated wrapper stack builder.",
+    "public_api": [
+      "normalize",
+      "apply_direction",
+      "get_normalizer",
+      "list_normalizers",
+      "build_stack(cfg, metric_spec) -> list[str]",
+      "NormalizeConfig",
+      "NormalizeContext"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/location_scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/rank.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/squash.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/absolute.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/neutralize.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/composite.py"
+    ],
+    "estimated_loc": 140,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/entropy_pooling.py",
+    "purpose": "STRETCH: Meucci entropy pooling behind weighting.enable_entropy_pooling. The normalization row is excluded from A_eq (it is enforced by the partition function; including it makes the dual Hessian singular), the gradient is supplied analytically, and the ESS gate is mandatory.",
+    "public_api": [
+      "entropy_pooling",
+      "solve_entropy_pooling(p, A_eq, b_eq, F_ineq, g_ineq) -> tuple[np.ndarray, float]",
+      "weighted_moments(X: np.ndarray, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/covariance.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/hrp.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 300,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/meta.py",
+    "purpose": "ensemble, robust_consensus, bagged and bayesian_model_average. All declare is_composite=True with trivial preconditions so the walker cannot refuse a whole ensemble because one supervised member is ungated, and all run members with apply_shrink=False so prior shrinkage is applied exactly once at the outer level.",
+    "public_api": [
+      "ensemble",
+      "robust_consensus",
+      "bagged",
+      "bayesian_model_average",
+      "run_members(members: list[dict], X, ctx) -> tuple[pd.DataFrame, np.ndarray]",
+      "weight_dispersion(W_raw: pd.DataFrame) -> pd.Series",
+      "geometric_median(W_raw: np.ndarray, tol=1e-12, max_iter=200) -> np.ndarray",
+      "bma_asof(asof) -> pd.Timestamp"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/preprocessing.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/errors.py"
+    ],
+    "estimated_loc": 420,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_config_validator.py",
+    "purpose": "The validator's rejections are load-bearing, so each has a test: band metric on a monotonic normalizer, size_neutral on a size proxy, redundant neutralizer stack, rho out of range, over-cap configured weight, unconfigured metric, inconsistent AHP.",
+    "public_api": [
+      "test_band_metric_on_monotonic_normalizer_rejected",
+      "test_size_neutral_on_size_proxy_rejected",
+      "test_redundant_neutralizer_stack_rejected",
+      "test_rho_out_of_range_rejected",
+      "test_configured_weight_over_cap_flagged",
+      "test_unconfigured_metric_raises_in_ci",
+      "test_inconsistent_ahp_fails_at_load"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_data_providers.py",
+    "purpose": "Reporting-lag enforcement, the LookAheadError raise, soft failure of price providers, synthetic-price stamping, and the concept derivation chain (ebit := operating_income).",
+    "public_api": [
+      "test_reporting_lag_applied",
+      "test_look_ahead_raises",
+      "test_price_provider_fails_soft",
+      "test_synthetic_prices_stamped",
+      "test_ebit_derived_from_operating_income",
+      "test_ttm_requires_contiguous_year"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_types_and_registry.py",
+    "purpose": "Contract tests for the amended dataclasses and the registries: shape=='band' iff direction==0, alias resolution emits DeprecationWarning, graded tests NOT_RATED, duplicate registration raises.",
+    "public_api": [
+      "test_band_iff_direction_zero",
+      "test_alias_emits_deprecation",
+      "test_graded_uses_not_rated_sentinel",
+      "test_duplicate_registration_raises",
+      "test_every_metric_has_unique_snake_case_name"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 4
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/scripts/build_calibration.py",
+    "purpose": "Generates config/calibration/<sector>.yaml from the bundled point-in-time fixture panel (including delisted names) by evaluating winsor_rank on the reference universe and reading off the scores at DEFAULT_PCTS, stamping asof and universe_id. Without this the piecewise_linear_absolute fallback has no tables and the offline path does not work.",
+    "public_api": [
+      "main(argv) -> int",
+      "build_all_sectors(panel, asof, universe_id) -> dict"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/fixtures.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/absolute.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py"
+    ],
+    "estimated_loc": 200,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/scripts/build_interactions.py",
+    "purpose": "Generates config/interactions/default.yaml: the frozen Spearman matrix over DIRECTION-ADJUSTED NORMALIZED scores with composite metrics excluded, so the Choquet prior is available offline and is not circular.",
+    "public_api": [
+      "main(argv) -> int",
+      "build_interaction_matrix(panel, exclude: set[str]) -> pd.DataFrame"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/fixtures.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py"
+    ],
+    "estimated_loc": 200,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/__init__.py",
+    "purpose": "Evaluation package facade.",
+    "public_api": [
+      "rank_ic",
+      "rank_ic_summary",
+      "information_ratio",
+      "decile_spread",
+      "grade_monotonicity",
+      "turnover"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/ic.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/performance.py"
+    ],
+    "estimated_loc": 30,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/decompose.py",
+    "purpose": "Assembles the full contribution trace: level-1 Shapley per pillar, the c_w^gamma shrinkage rescaling, level-2 Shapley over pillars, and the multiplicative chain that makes every metric's contribution telescope exactly to composite - 50.",
+    "public_api": [
+      "decompose(pillars: dict[str, PillarScore], pillar_weights: pd.Series, composite: float, cfg) -> dict",
+      "metric_trace(report: GradeReport) -> pd.DataFrame",
+      "assert_telescopes(trace: pd.DataFrame, composite: float, tol=1e-9) -> None"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/contributions.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 240,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/sensitivity.py",
+    "purpose": "The counterfactual outputs Shapley cannot give: local elasticities (analytic for the mean family), distance-to-next-letter, and the tornado ranking by |elasticity x plausible move|.",
+    "public_api": [
+      "elasticities(pillars, pillar_weights, cfg) -> pd.Series",
+      "distance_to_next_letter(score, thresholds, elasticities) -> pd.DataFrame",
+      "tornado(elasticities: pd.Series, plausible_moves: pd.Series, n=10) -> pd.DataFrame"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 200,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/profiles.py",
+    "purpose": "The 11 shipped profiles (all_weather, value, deep_value, growth, garp, quality, momentum, low_volatility, dividend_income, dividend_growth, turnaround), each with its pillar weights, rho and written thesis.",
+    "public_api": [
+      "PROFILE_SPECS: dict[str, dict]",
+      "load_profiles(cfg) -> dict[str, Profile]",
+      "ALL_WEATHER",
+      "register_profiles() -> None"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/profiles.yaml"
+    ],
+    "estimated_loc": 260,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/__init__.py",
+    "purpose": "Metrics package facade: imports the three catalog modules so all 89 metrics register.",
+    "public_api": [
+      "MetricEngine",
+      "compute_universe"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/engine.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/fundamental.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/composites.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/statistical.py"
+    ],
+    "estimated_loc": 30,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/__init__.py",
+    "purpose": "Weighting package facade: imports every method module so the registry is populated, then runs validate_registry() at import \u2014 which walks fallback AND configured-member edges and raises on any cycle or dead end.",
+    "public_api": [
+      "compute_weights",
+      "get_weighting",
+      "list_weightings",
+      "validate_registry",
+      "WeightingContext",
+      "WeightResult",
+      "WeightFallback",
+      "WEIGHTING_SPEC_VERSION"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/apriori.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/dispersion.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/factor.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/risk.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/hrp.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/supervised.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/attribution.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/preprocessing.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/meta.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/entropy_pooling.py"
+    ],
+    "estimated_loc": 90,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_aggregate.py",
+    "purpose": "Bounds, weight renormalization and its two zero-weight predicates, AM-GM-HM on the common floored vector, arithmetic == power_mean(rho=1), Choquet reductions and sparse-weight support, WOWA reductions, soft_min bounds, fractional trimming, and Shapley efficiency including under coverage shrinkage and through the level-2 chain.",
+    "public_api": [
+      "test_power_mean_limits",
+      "test_arithmetic_equals_power_mean_rho1",
+      "test_am_gm_hm_ordering",
+      "test_choquet_zero_interaction_equals_arithmetic",
+      "test_choquet_sparse_weights_alpha_positive",
+      "test_choquet_direction_adjusted_prior",
+      "test_wowa_reduces_to_arithmetic_and_owa",
+      "test_softmin_between_min_and_mean",
+      "test_trimmed_mean_fractional_weights",
+      "test_shapley_efficiency_all_pointwise_aggregators",
+      "test_shapley_efficiency_under_coverage_shrinkage",
+      "test_nested_contributions_sum_to_composite_minus_50",
+      "test_zero_weight_vector_vs_no_observed_weight",
+      "test_topsis_is_panel_aggregator"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_normalize.py",
+    "purpose": "Range containment in [EPS,100-EPS], NaN preservation, tie equality, the negated-input identity, weak LOO monotonicity, the MAD=0 -> IQR fallback, single-group shrinkage without NaN, the band peak, sector_neutral(winsor_rank), and piecewise-vs-winsor_rank agreement at the anchor percentiles.",
+    "public_api": [
+      "test_all_normalizers_in_open_range",
+      "test_nan_preserved",
+      "test_ties_equal_scores",
+      "test_score_of_negated_input_equals_100_minus_score",
+      "test_weak_monotonicity_under_loo_perturbation",
+      "test_mad_zero_falls_back_to_iqr",
+      "test_shrinkage_single_group_no_nan",
+      "test_shrinkage_lambda_limits",
+      "test_band_peak_is_100",
+      "test_sector_neutral_winsor_rank",
+      "test_piecewise_matches_winsor_rank_at_anchors",
+      "test_gaussian_rank_never_emits_zero"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 5
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/scripts/eval_weighting.py",
+    "purpose": "Runs every registered weighting method over the fixture panel and emits the (method, OOS IC, OOS ICIR, turnover, weight_confidence) table. Without it the product is unfalsifiable and nobody can see how many of these methods actually beat equal weighting.",
+    "public_api": [
+      "main(argv) -> int",
+      "evaluate_all(panel_history, fwd, cfg) -> pd.DataFrame"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py"
+    ],
+    "estimated_loc": 220,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/__init__.py",
+    "purpose": "Explain package facade.",
+    "public_api": [
+      "decompose",
+      "metric_trace",
+      "elasticities",
+      "distance_to_next_letter",
+      "tornado"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/decompose.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/sensitivity.py"
+    ],
+    "estimated_loc": 30,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/report.py",
+    "purpose": "Rendering: rich console tables, JSON and Markdown emitters for a GradeReport, including the nested contribution trace, the letter-probability table, the synthetic-prices banner and the explicit interval_sources disclaimer.",
+    "public_api": [
+      "render_console(report: GradeReport) -> None",
+      "render_json(report) -> str",
+      "render_markdown(report) -> str",
+      "render_universe(reports: dict[str, GradeReport]) -> None",
+      "render_explain(report) -> None"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/decompose.py"
+    ],
+    "estimated_loc": 300,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/simulate.py",
+    "purpose": "The uncertainty draw loop: joint leave-p-out and Dirichlet weight perturbation re-running ONLY the cached aggregation stage, coverage shrinkage held at the UNPERTURBED c_w inside the loop, structural CI containment, discarded-draw accounting and the per-letter probability table.",
+    "public_api": [
+      "@dataclass(frozen=True) class UncertaintyConfig(n_draws, alpha, p_frac, kappa_min, kappa_max, gamma, universe_bootstrap, shrinkage_form)",
+      "kappa_from_confidence(conf: float, cfg) -> float",
+      "dirichlet_draw(wt: pd.Series, kappa: float, rng) -> pd.Series",
+      "leave_p_out(index: pd.Index, p: int, rng) -> pd.Index",
+      "simulate(state: PipelineState, cfg: UncertaintyConfig, rng) -> UncertaintyResult",
+      "@dataclass class UncertaintyResult(ci, draws, letter_ci, p_letter, median, n_effective, interval_sources)"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/coverage.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/config/uncertainty.yaml"
+    ],
+    "estimated_loc": 400,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_eval.py",
+    "purpose": "Rank IC, decile spread and monotonicity against synthetic data with a known planted signal.",
+    "public_api": [
+      "test_rank_ic_recovers_planted_signal",
+      "test_decile_spread_monotone",
+      "test_turnover_zero_for_static_weights"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_metrics_catalog.py",
+    "purpose": "Catalog-level invariants: every metric computes or returns None on a hand-built snapshot, NOT_APPLICABLE is never penalised, removed reciprocal pairs are absent, composites carry their absolute normalizer override and are excluded from correlation panels.",
+    "public_api": [
+      "test_every_metric_returns_float_or_none",
+      "test_not_applicable_never_penalised",
+      "test_reciprocal_pairs_absent_from_catalog",
+      "test_altman_and_piotroski_use_absolute_normalizer",
+      "test_composites_excluded_from_correlation_panel",
+      "test_catalog_has_89_metrics_across_10_pillars",
+      "test_no_metric_returns_zero_for_missing_input"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/engine.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_weighting_contracts.py",
+    "purpose": "Registry-wide contract tests every method must pass, including target-independence, column-permutation invariance, composite behaviour under a non-PIT panel, and the single-stock path with panel=None and an empty coverage series.",
+    "public_api": [
+      "test_sums_to_one_exactly",
+      "test_index_equals_ctx_columns",
+      "test_nonnegative_always",
+      "test_deterministic_across_two_runs",
+      "test_respects_caps_and_floors",
+      "test_single_stock_never_raises",
+      "test_fallback_chains_terminate",
+      "test_registry_has_no_cycles_including_members",
+      "test_supervised_refuse_when_not_pit",
+      "test_composite_runs_members_when_not_pit",
+      "test_weights_are_target_independent_up_to_renormalization",
+      "test_weights_invariant_to_column_permutation",
+      "test_dispersion_family_refuses_under_rank_normalizer"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_weighting_math.py",
+    "purpose": "Closed-form and property checks for the individual algorithms, one per corrected defect.",
+    "public_api": [
+      "test_ahp_saaty_textbook_example_cr",
+      "test_ahp_submatrix_recomputes_ri",
+      "test_entropy_uniform_column_gets_zero_weight",
+      "test_critic_nonnegativity_property",
+      "test_critic_flags_mis_signed_column",
+      "test_inverse_variance_differs_on_z_vs_raw_panel",
+      "test_pca_sign_convention_stable",
+      "test_pca_degenerate_spectrum_falls_back",
+      "test_pca_multi_not_uniform_on_one_factor",
+      "test_risk_parity_diagonal_equals_inverse_volatility",
+      "test_min_variance_slsqp_matches_box_projected_gradient",
+      "test_max_div_reformulation_matches_bruteforce_ratio",
+      "test_hrp_constant_column_no_nan",
+      "test_hrp_weights_positive_and_sum_one",
+      "test_water_fill_terminates_and_respects_bounds",
+      "test_water_fill_floor_infeasible",
+      "test_ledoit_wolf_zero_matrix_raises_typed",
+      "test_shapley_efficiency_sums_to_v_of_N",
+      "test_shapley_antithetic_se_uses_pair_means",
+      "test_newey_west_se_matches_statsmodels_use_correction_false",
+      "test_nw_lag_truncation_falls_back",
+      "test_purged_splits_have_no_leakage",
+      "test_purged_fold_one_has_training_data",
+      "test_ic_ir_tau2_positive_under_uniform_skill",
+      "test_regression_ridge_matches_elasticnet_parameterization",
+      "test_dedup_uses_complete_linkage"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 6
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/pipeline.py",
+    "purpose": "The orchestrator: snapshot -> metrics -> normalize -> level-1 weight+aggregate -> level-2 weight+aggregate -> grade -> uncertainty -> explain. Owns PipelineState (the cached normalized scores the draw loop re-uses), the universe_id and pipeline_fingerprint stamps, and the one-fit-per-(level,group,asof) weighting discipline.",
+    "public_api": [
+      "@dataclass(frozen=True) class GradeConfig",
+      "@dataclass class PipelineState",
+      "grade(snapshot: SecuritySnapshot, *, cfg: GradeConfig, universe=None, previous=None) -> GradeReport",
+      "grade_universe(snapshots: dict[str, SecuritySnapshot], *, cfg: GradeConfig) -> dict[str, GradeReport]",
+      "build_pillar_score(pillar, results, scores, weights, cfg) -> PillarScore",
+      "normalize_universe(raw: pd.DataFrame, cfg, ctx) -> pd.DataFrame"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/metrics/engine.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/normalize/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/aggregate/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/hysteresis.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/simulate.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/coverage.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/profiles.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/data/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/rng.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/warnings_sink.py"
+    ],
+    "estimated_loc": 620,
+    "build_order": 7
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/__init__.py",
+    "purpose": "Uncertainty package facade.",
+    "public_api": [
+      "simulate",
+      "UncertaintyConfig",
+      "UncertaintyResult",
+      "weight_coverage",
+      "top_coverage",
+      "shrink_to_neutral",
+      "widen_factor",
+      "coverage_gate"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/coverage.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/simulate.py"
+    ],
+    "estimated_loc": 30,
+    "build_order": 7
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_explain.py",
+    "purpose": "The contribution trace telescopes exactly, the elasticities match finite differences, and distance-to-next-letter is consistent with the threshold table.",
+    "public_api": [
+      "test_trace_telescopes_to_composite_minus_50",
+      "test_elasticity_matches_finite_difference",
+      "test_distance_to_next_letter_consistent_with_thresholds",
+      "test_top_contributors_uses_nested_values"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/explain/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 7
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/scripts/derive_cutoffs.py",
+    "purpose": "Regenerates the absolute cutoff table in config/grade_scale.yaml as the reference universe's composite quantiles at the percentile table's cut points, under the SAME pipeline, and stamps the pipeline_fingerprint the loader checks.",
+    "public_api": [
+      "main(argv) -> int"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/pipeline.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/scale.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py"
+    ],
+    "estimated_loc": 200,
+    "build_order": 8
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/scripts/sweep_aggregators.py",
+    "purpose": "Runs the fixture panel across the rho grid and normalizer choices to settle rho=0 vs 0.5, per-metric vs per-pillar k_hat, calibration keying, the universe_bootstrap default and beta's band encoding \u2014 with data instead of argument.",
+    "public_api": [
+      "main(argv) -> int",
+      "sweep(panel, grid: dict) -> pd.DataFrame"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/pipeline.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py"
+    ],
+    "estimated_loc": 200,
+    "build_order": 8
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/__init__.py",
+    "purpose": "Public API surface.",
+    "public_api": [
+      "grade",
+      "grade_universe",
+      "consensus_grade",
+      "GradeReport",
+      "SecuritySnapshot",
+      "__version__"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/pipeline.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/report.py"
+    ],
+    "estimated_loc": 40,
+    "build_order": 8
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/consensus.py",
+    "purpose": "consensus_grade: runs several profiles and reports their DISAGREEMENT as a first-class output, because a stock grading A on value and F on momentum is a different proposition from one grading C on both. Profile -> final uses level='profile_to_final' and the same weighting registry.",
+    "public_api": [
+      "@dataclass class ConsensusResult(score, letter, per_profile, dispersion, agreement)",
+      "consensus_grade(snapshot, *, profiles: list[str], cfg) -> ConsensusResult",
+      "profile_disagreement(reports: dict[str, GradeReport]) -> float"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/pipeline.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/profiles.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/weighting/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/types.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/constants.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 8
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_grade_and_uncertainty.py",
+    "purpose": "Threshold ordering and the exact hybrid reductions, hysteresis across multi-band jumps and the ladder ends, the coverage corrections (four-of-five-absent gives NR; a price-free grade does not), CI containment, and seed determinism under shuffled input order.",
+    "public_api": [
+      "test_hybrid_reduces_to_pure_modes",
+      "test_thresholds_non_decreasing",
+      "test_hybrid_ties_nudged_not_raised",
+      "test_hysteresis_blocks_small_flip",
+      "test_hysteresis_multi_band_jump",
+      "test_hysteresis_top_and_bottom_letters",
+      "test_hysteresis_disabled_by_default",
+      "test_low_coverage_gives_NR_not_F",
+      "test_dropped_pillar_lowers_c_top",
+      "test_four_of_five_pillars_absent_gives_NR",
+      "test_missing_pillar_is_not_better_than_bad_pillar",
+      "test_price_free_grade_is_not_NR",
+      "test_point_estimate_inside_ci",
+      "test_draw_mean_close_to_point_estimate",
+      "test_same_seed_same_ci",
+      "test_letter_probabilities_sum_to_one",
+      "test_coverage_shrinkage_applied_once",
+      "test_not_applicable_out_of_denominator"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/uncertainty/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 8
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/cli.py",
+    "purpose": "The stock-grader CLI: grade, universe, consensus, explain, methods, metrics, eval, calibrate. Pins OMP_NUM_THREADS=1 before importing sklearn (HistGBR binning ties resolve differently across thread counts), exposes --hysteresis (default off), and maps every YAML key to a flag.",
+    "public_api": [
+      "main(argv: list[str] | None = None) -> int",
+      "build_parser() -> argparse.ArgumentParser",
+      "cmd_grade(args) -> int",
+      "cmd_universe(args) -> int",
+      "cmd_consensus(args) -> int",
+      "cmd_explain(args) -> int",
+      "cmd_methods(args) -> int",
+      "cmd_metrics(args) -> int",
+      "cmd_eval(args) -> int",
+      "cmd_calibrate(args) -> int"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/pipeline.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/consensus.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/report.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/config.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/eval/__init__.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/registry.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/grade/hysteresis.py"
+    ],
+    "estimated_loc": 460,
+    "build_order": 9
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/__init__.py",
+    "purpose": "Graders package facade.",
+    "public_api": [
+      "Profile",
+      "get_profile",
+      "profile_names",
+      "consensus_grade",
+      "ConsensusResult",
+      "PROFILE_SPECS"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/base.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/profiles.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/consensus.py"
+    ],
+    "estimated_loc": 40,
+    "build_order": 9
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_pipeline_integration.py",
+    "purpose": "End-to-end grades on the offline fixtures: fundamentals-only path, full path, single-stock path, universe path, every profile, and every registered method combination smoke-tested.",
+    "public_api": [
+      "test_fundamentals_only_grade",
+      "test_single_stock_grade_never_raises",
+      "test_universe_grade_percentiles_consistent",
+      "test_all_profiles_produce_a_grade",
+      "test_all_normalizer_aggregator_combinations_smoke",
+      "test_consensus_reports_disagreement"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/pipeline.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/graders/consensus.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 9
+  },
+  {
+    "path": "/Users/tylerforstrom/Desktop/Stock-Grader/tests/test_determinism.py",
+    "purpose": "The determinism guarantee, tested the only way that can catch process-salted hashing: two separate subprocesses with PYTHONHASHSEED=random, diffing the JSON report byte-for-byte.",
+    "public_api": [
+      "test_two_subprocesses_identical_report",
+      "test_shuffled_dict_order_identical_report",
+      "test_golden_grades_unchanged"
+    ],
+    "depends_on": [
+      "/Users/tylerforstrom/Desktop/Stock-Grader/src/stock_grader/cli.py",
+      "/Users/tylerforstrom/Desktop/Stock-Grader/tests/conftest.py"
+    ],
+    "estimated_loc": 260,
+    "build_order": 10
+  }
+]
