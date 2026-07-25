@@ -25,14 +25,28 @@ def _f(snapshot: SecuritySnapshot):
     return snapshot.fundamentals
 
 
-def _ttm(snapshot: SecuritySnapshot, concept: str) -> float | None:
-    f = _f(snapshot)
-    return f.ttm(concept) if f is not None else None
-
-
-# A balance-sheet figure older than this is not the company's current position. Generous on
-# purpose: an annual-only filer's balance sheet is legitimately up to fifteen months old.
 MAX_BALANCE_AGE_DAYS = 400
+
+
+def _ttm(snapshot: SecuritySnapshot, concept: str) -> float | None:
+    """Trailing-twelve-month value, age-bounded, falling back to the annual frame.
+
+    The fallback matters: when the quarterly series is stale the correct figure is usually sitting
+    in the *same object's* annual frame — Mastercard's annual net income is $14.97B against the
+    $3.22B its 2014-era quarterly window produced. Refusing outright would delete 153 metric inputs
+    across 60 of 82 default-universe companies for data that is available.
+
+    Both paths carry the same age bound, so the worst remaining mismatch inside a ratio is an
+    annual figure ending one quarter before a trailing-twelve-month one — a normal and small
+    offset, not the twelve-year gap this replaced.
+    """
+    f = _f(snapshot)
+    if f is None:
+        return None
+    value = f.ttm(concept, asof=snapshot.asof, max_age_days=MAX_BALANCE_AGE_DAYS)
+    if value is not None:
+        return value
+    return f.latest(concept, annual=True, asof=snapshot.asof, max_age_days=MAX_BALANCE_AGE_DAYS)
 
 
 def _latest(snapshot: SecuritySnapshot, concept: str) -> float | None:

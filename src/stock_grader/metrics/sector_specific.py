@@ -40,8 +40,9 @@ __all__ = [
 
 
 def _ttm(s: SecuritySnapshot, concept: str) -> float | None:
-    f = s.fundamentals
-    return f.ttm(concept) if f is not None else None
+    from .fundamental import _ttm as _bounded_ttm
+
+    return _bounded_ttm(s, concept)
 
 
 def _latest(s: SecuritySnapshot, concept: str) -> float | None:

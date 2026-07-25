@@ -119,7 +119,13 @@ class Fundamentals:
         "fcf": (("cfo", 1), ("capex", -1)),
     }
 
-    def ttm(self, concept: str) -> float | None:
+    def ttm(
+        self,
+        concept: str,
+        *,
+        asof: date | None = None,
+        max_age_days: int | None = None,
+    ) -> float | None:
         """Trailing-twelve-month value: summed for flows, averaged for averages, latest for stocks.
 
         Returns ``None`` rather than a partial sum when fewer than four quarters are available —
@@ -128,11 +134,24 @@ class Fundamentals:
         Concepts in :attr:`averaged` (weighted-average share counts) are averaged rather than
         summed. Summing four quarterly average share counts would report a company as having four
         times the shares it does, and quadrupling the denominator of every per-share figure.
+
+        **The age bound is not optional in practice.** ``_is_contiguous_year`` only checks that the
+        four quarters span a year *internally*; it never asks whether that year is anywhere near
+        ``asof``. Without a bound, Mastercard's net income resolved to a window ending 2014-03-31 —
+        twelve years stale — and was divided by 2026 revenue to report a 9.5% net margin against a
+        true 45%. AbbVie combined 2018 revenue with 2026 EBIT inside one ratio. Boeing reported a
+        2.2% buyback yield from a 2019 window, having repurchased nothing since. All at
+        ``Coverage.OK``, with no warning. Measured across the default universe: **153 stale values
+        spanning 60 of 82 companies**.
+
+        Defaults to unbounded so existing callers are unaffected; the metric layer passes ~400 days.
         """
         if concept in self._COMPOSITES:
             total = 0.0
             for component, sign in self._COMPOSITES[concept]:
-                part = self.ttm(component)
+                # The bound must recurse: ebitda resolves ebit and depreciation separately, so
+                # checking only the composite would let a stale component through unnoticed.
+                part = self.ttm(component, asof=asof, max_age_days=max_age_days)
                 if part is None:
                     return None
                 # No abs(): capex is filed as a positive outflow (0 negatives in 1,547 sampled
@@ -144,6 +163,8 @@ class Fundamentals:
         series = self.quarterly[concept].dropna()
         if series.empty:
             return None
+        if self._too_old(series.index[-1], asof, max_age_days):
+            return None
         if self.period_type.get(concept, PeriodType.DURATION) is PeriodType.INSTANT:
             return float(series.iloc[-1])
         if len(series) < 4:
@@ -154,6 +175,16 @@ class Fundamentals:
         if concept in self.averaged:
             return float(window.mean())
         return float(window.sum())
+
+    @staticmethod
+    def _too_old(observed, asof: date | None, max_age_days: int | None) -> bool:
+        """Whether an observation is too far before ``asof`` to describe the company now."""
+        if asof is None or max_age_days is None:
+            return False
+        try:
+            return (pd.Timestamp(asof) - pd.Timestamp(observed)).days > max_age_days
+        except (TypeError, ValueError):
+            return False
 
     @staticmethod
     def _is_contiguous_year(window: pd.Series) -> bool:

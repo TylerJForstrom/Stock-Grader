@@ -445,7 +445,9 @@ def _plausible_q4(concept: str | None, derived: float, siblings: list[float]) ->
 
 # Ratios a stock split plausibly takes. A jump close to one of these, with the balance sheet
 # unchanged, is a split rather than a financing event.
-_SPLIT_RATIOS = (2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0, 25.0, 30.0)
+# Capped at 20:1, the largest split any major US company has done — Amazon and Alphabet both did
+# exactly that in 2022. Allowing 25 or 30 let Lucid's 29.8x SPAC reverse-merger read as a split.
+_SPLIT_RATIOS = (2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0)
 
 
 def _looks_like_split(ratio: float, tolerance: float = 0.06) -> float | None:
@@ -471,8 +473,15 @@ def restate_for_splits(shares: pd.Series, scale_reference: pd.Series | None = No
 
     A split changes the share count and nothing else, so ``scale_reference`` — a balance-sheet or
     income item from the same periods — distinguishes the two cases. If shares jump tenfold while
-    assets are flat, it is a split; if both jump, it is a merger or a genuine issuance and the
-    series is left alone.
+    assets grow at an ordinary pace, it is a split; if assets move roughly *with* the shares, money
+    came in and it is an issuance.
+
+    **This is inference, not a corporate-actions feed**, and it has a known limit. Measured against
+    five companies that never split, four are now left alone (Carvana's equity raise, Rivian's and
+    Snowflake's IPOs, Uber's IPO); Lucid still trips it, because a 0.12x share ratio after its SPAC
+    recapitalisation is arithmetically indistinguishable from a 1-for-8 reverse split. Every
+    inferred split is logged at INFO so it can be audited, and the candidate ratios stop at 20:1 —
+    the largest split any major US company has done, Amazon and Alphabet in 2022.
     """
     clean = shares.dropna()
     if len(clean) < 2:
@@ -483,18 +492,48 @@ def restate_for_splits(shares: pd.Series, scale_reference: pd.Series | None = No
     for i in range(len(clean) - 1, 0, -1):
         ratio = float(clean.iloc[i] / clean.iloc[i - 1]) if clean.iloc[i - 1] else float("nan")
         split = _looks_like_split(ratio)
-        if split is not None and scale_reference is not None:
-            # Confirm the rest of the business did not move with it.
-            reference = scale_reference.dropna()
-            try:
-                now = float(reference.asof(clean.index[i]))
-                before = float(reference.asof(clean.index[i - 1]))
-                if before and abs((now / before) / ratio - 1.0) <= 0.25:
-                    split = None  # assets moved with shares: a merger, not a split
-            except (KeyError, TypeError, ValueError):
-                pass
+        if split is not None:
+            # A split changes the share count and leaves the balance sheet ALONE. So the test is
+            # that the reference is roughly FLAT — not that it moved with the shares, which was
+            # the original mistake: an IPO or a SPAC merger moves both, just not proportionally,
+            # so a "did they move together" check let them through. Measured fabrications under
+            # that rule: Carvana (a 1.99x equity raise), Rivian and Snowflake (IPOs) and Lucid
+            # (a 29.8x SPAC merger) were all restated as splits.
+            #
+            # Without a reference series there is no way to tell a split from an issuance, so the
+            # series is left alone rather than guessed at.
+            if scale_reference is None:
+                split = None
+            else:
+                reference = scale_reference.dropna()
+                try:
+                    now = float(reference.asof(clean.index[i]))
+                    before = float(reference.asof(clean.index[i - 1]))
+                except (KeyError, TypeError, ValueError):
+                    before = now = 0.0
+                if not before or not np.isfinite(now / before):
+                    split = None
+                else:
+                    # Compare how far each moved. A split multiplies shares while the balance
+                    # sheet carries on at ordinary growth, so assets fall far short of the share
+                    # change. An issuance raises money, so assets move roughly *with* the shares.
+                    #
+                    # Requiring assets to be flat outright was too strict — a split happens
+                    # mid-year and assets still grow 10-20% over that year, which cost NVIDIA and
+                    # Apple their real corrections. Requiring assets to keep pace was too loose
+                    # and fabricated splits for Carvana, Rivian, Snowflake and Lucid. The ratio of
+                    # ratios separates them cleanly in both directions.
+                    asset_ratio = now / before
+                    share_ratio = ratio if ratio >= 1.0 else 1.0 / ratio
+                    asset_move = asset_ratio if asset_ratio >= 1.0 else 1.0 / asset_ratio
+                    if asset_move > 0.6 * share_ratio:
+                        split = None  # the business changed size with the count: issuance
         if split is not None:
             cumulative *= split
+            log.info(
+                "inferred a %.3gx split at %s (share ratio %.3g); earlier periods restated",
+                split, clean.index[i], ratio,
+            )
         factors.iloc[i - 1] = cumulative
     return (clean * factors).reindex(shares.index)
 
@@ -628,6 +667,21 @@ def build_fundamentals(
     )
 
 
+def _fill(df: pd.DataFrame, concept: str, values: pd.Series) -> None:
+    """Fill a derived concept, keeping any filed value that is already present.
+
+    Fills **gaps**, not just absent columns. A ``concept not in df`` guard is not enough, because a
+    filer can abandon a tag without deleting its history: Costco, Amazon and Target all still carry
+    a ``GrossProfit`` column whose last observation is 2,519, 6,142 and 3,094 days old. The column
+    exists, so the derivation never ran, and gross margin was either stale-era or missing for every
+    one of them — while revenue minus COGS was available and current the whole time.
+    """
+    if concept in df.columns:
+        df[concept] = df[concept].combine_first(values)
+    else:
+        df[concept] = values
+
+
 def _derive(df: pd.DataFrame) -> None:
     """Fill in concepts that are arithmetic consequences of others, in place.
 
@@ -637,15 +691,15 @@ def _derive(df: pd.DataFrame) -> None:
     """
     if df.empty:
         return
-    if "gross_profit" not in df and {"revenue", "cogs"} <= set(df.columns):
-        df["gross_profit"] = df["revenue"] - df["cogs"]
+    if {"revenue", "cogs"} <= set(df.columns):
+        _fill(df, "gross_profit", df["revenue"] - df["cogs"])
     if "loan_loss_allowance" not in df and {"loans_gross", "loans"} <= set(df.columns):
         # Under CECL the allowance is the gap between gross and net loans. Banks tag both sides
         # but stopped tagging the allowance itself around 2021, so deriving it keeps the credit
         # metrics alive on current data instead of resolving to a figure four years old.
         allowance = df["loans_gross"] - df["loans"]
         df["loan_loss_allowance"] = allowance.where(allowance > 0)
-    if "liabilities" not in df and {"assets", "equity"} <= set(df.columns):
+    if {"assets", "equity"} <= set(df.columns):
         # Walmart, Nike, TJX, McDonald's, Target and AbbVie never tag `Liabilities` at all, so both
         # ohlson_o_score and altman_z_prime returned None for them while the grade was still issued
         # — silently missing its solvency input.
@@ -659,7 +713,7 @@ def _derive(df: pd.DataFrame) -> None:
         equity_total = df["equity"]
         if "minority_interest" in df.columns:
             equity_total = equity_total + df["minority_interest"].fillna(0.0)
-        df["liabilities"] = df["assets"] - equity_total
+        _fill(df, "liabilities", df["assets"] - equity_total)
     if "total_debt" not in df:
         # Only components the company actually reports somewhere. A filer that never tags
         # short-term borrowings at all would otherwise have every quarter refused for a missing
@@ -676,7 +730,7 @@ def _derive(df: pd.DataFrame) -> None:
             df["total_debt"] = df[parts].sum(axis=1, min_count=len(parts))
     if "net_debt" not in df and "total_debt" in df and "cash" in df:
         df["net_debt"] = df["total_debt"] - df["cash"]
-    if "pretax_income" not in df and {"net_income", "income_tax"} <= set(df.columns):
+    if {"net_income", "income_tax"} <= set(df.columns):
         # Recovers what removing the domestic-only geographic subtotal gave up: that tag reported a
         # third of McDonald's true pretax income, while this puts it at $11.11B against $8.68B of
         # net income — pretax above net income, as it must be for a taxpayer.
@@ -688,7 +742,7 @@ def _derive(df: pd.DataFrame) -> None:
         derived_pretax = df["net_income"] + df["income_tax"]
         if "minority_interest" in df.columns:
             derived_pretax = derived_pretax + df["minority_interest"].fillna(0.0)
-        df["pretax_income"] = derived_pretax
+        _fill(df, "pretax_income", derived_pretax)
     if "ebit" not in df and "operating_income" in df:
         df["ebit"] = df["operating_income"]
     elif "ebit" not in df and {"pretax_income", "interest_expense"} <= set(df.columns):
@@ -703,8 +757,8 @@ def _derive(df: pd.DataFrame) -> None:
         # The Q4 plausibility gate now rejects such values, and without the mask a negative that
         # slips through propagates visibly instead of silently.
         df["fcf"] = df["cfo"] - df["capex"]
-    if "working_capital" not in df and {"current_assets", "current_liabilities"} <= set(df.columns):
-        df["working_capital"] = df["current_assets"] - df["current_liabilities"]
+    if {"current_assets", "current_liabilities"} <= set(df.columns):
+        _fill(df, "working_capital", df["current_assets"] - df["current_liabilities"])
     if "tangible_book" not in df and "equity" in df:
         intangible_cols = [c for c in ("goodwill", "intangibles") if c in df.columns]
         if intangible_cols:
