@@ -7,32 +7,46 @@ much stronger claim than one from a single hand-picked weight vector.
 
 ```
                                     ┌──────────── weighting method (23) ────────────┐
-SEC EDGAR ──▶ metrics (115) ──▶ normalize (10) ──▶ PILLARS ──▶ weighting method ──▶ GRADE
+SEC EDGAR ──▶ metrics (114) ──▶ normalize (10) ──▶ PILLARS ──▶ weighting method ──▶ GRADE
                                     └──── aggregator (8) ────┘        (again)        + interval
                                                                                      + explanation
 ```
 
 ```
-$ stock-grader grade AAPL --explain
+$ stock-grader grade AAPL --stockanalysis --explain
 
 ╭─ stock-grader ───────────────────────────────────────────────────────────────╮
-│ AAPL  A-  79.7/100   90% CI [77–82]   93th pct                               │
-│ profile all_weather  ·  weighting equal/fixed  ·  norm robust_z              │
-│ coverage 100%  (42 computed, 0 missing, 0 n/a for sector)                    │
+│ AAPL  B  70.3/100   90% CI [37–80]   87th pct                                │
+│ profile all_weather  ·  weighting equal/fixed  ·  norm robust_z  ·  agg      │
+│ weighted_mean/ces                                                            │
+│ coverage 97%  (101 computed, 3 missing, 10 n/a for sector)                   │
 │                                                                              │
-│  pillar            score                                 weight    contrib   │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│  profitability      75.4   ██████████████████░░░░░░         18%      +6.17   │
-│  efficiency         73.0   ██████████████████░░░░░░          5%      +1.56   │
-│  health             62.8   ███████████████░░░░░░░░░         16%      +2.77   │
-│  quality            55.4   █████████████░░░░░░░░░░░         14%      +1.01   │
-│  growth             51.3   ████████████░░░░░░░░░░░░         14%      +0.25   │
-│  shareholder        50.7   ████████████░░░░░░░░░░░░          7%      +0.07   │
+│  pillar          score                              weight    eff   contrib  │
+│  ──────────────────────────────────────────────────────────────────────────  │
+│  liquidity        76.1   ██████████████████░░░░░░       1%     1%     +0.26  │
+│  profitability    70.2   █████████████████░░░░░░░      17%    17%     +3.43  │
+│  risk             62.8   ███████████████░░░░░░░░░       7%     7%     +0.89  │
+│  momentum         61.7   ███████████████░░░░░░░░░       7%     7%     +0.82  │
+│  efficiency       61.6   ███████████████░░░░░░░░░       4%     4%     +0.46  │
+│  health           60.5   ███████████████░░░░░░░░░      15%    15%     +1.58  │
+│  quality          51.2   ████████████░░░░░░░░░░░░      13%    13%     +0.15  │
+│  growth           48.0   ████████████░░░░░░░░░░░░      13%    13%     -0.26  │
+│  shareholder      45.2   ███████████░░░░░░░░░░░░░       6%     6%     -0.29  │
+│  valuation        36.2   █████████░░░░░░░░░░░░░░░      17%    17%     -2.35  │
+│                                                                              │
 │                                                                              │
 │  strongest                             weakest                               │
-│  interest_coverage             +0.89   payout_ratio                   -0.37  │
-│  fcf_to_debt                   +0.84   cash_conversion                -0.29  │
-│  croic                         +0.82   revenue_growth_consistency     -0.25  │
+│  ──────────────────────────────────────────────────────────────────────────  │
+│  roic                          +0.76   price_to_tangible_book         -0.50  │
+│  croic                         +0.73   price_to_book                  -0.49  │
+│  roa                           +0.63   dividend_yield                 -0.27  │
+│  roe                           +0.52   peg_ratio                      -0.26  │
+│  fcf_to_debt                   +0.43   ev_to_gross_profit             -0.21  │
+│  altman_z                      +0.42   revenue_growth_consistency     -0.17  │
+│                                                                              │
+│ ! public_float: newest cover-page value is dated 2025-03-28, too stale to    │
+│ use                                                                          │
+│                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -73,22 +87,24 @@ works at both levels.
 | supervised | `ic`, `ic_ir`, `regression`, `shapley`, `mutual_information` | what actually predicted returns |
 | meta | `consensus`, `bagged` | the median across methods; bootstrap-stabilised |
 
-Why so many? Because they disagree, and the disagreement is information. Run the same universe
-through eight of them:
+Why so many? Because they disagree, and the disagreement is information. The same 82-name universe
+under five of them:
 
 ```
-  method             AAPL     GE    JNJ    JPM     SO    SPG    WMT    XOM
-  equal                B+     B-     C+      B     D-      D      C     C-
-  entropy              B-     B+      C     A-     D-      D     C-     C+
-  critic               B+      B     C+     B-     D-      D      C     C-
-  hrp                  B+     B-     C+      B     D-     C-      C     D+
-  decorrelated          B     B+     B-     C+     D-      D      C     C-
+  method           AAPL    JPM    XOM    WMT    JNJ   NVDA     KO      T
+  equal              A-     A-     B+     B-      B     B+     B-     C-
+  entropy            A-      B      B     C+     B-      A     C+      D
+  critic             B-     A-      C      B     C-     D+      C     C+
+  hrp                B+     B+     A-     C+     B+     A-     B-     D+
+  decorrelated        B     A-     A-     C+     B+     B+     B-     D+
 
-  score spread:  SO 2.8  ·  WMT 7.9  ·  AAPL 12.2  ·  XOM 21.9  ·  JPM 23.2
+  score spread:  JPM 9.5  ·  KO 9.9  ·  WMT 17.0  ·  AAPL 18.2  ·  NVDA 48.2
 ```
 
-SO grades D− no matter how you weight it. JPM swings 23 points. That tells you something no single
-number does.
+JPMorgan and Coca-Cola land in the same place however you weight them. NVIDIA swings 48 points —
+D+ to A — because its profile is extreme on a few dimensions and how much those count is exactly
+what the weighting method decides. That is worth knowing before you act on any single grade, and no
+one number tells you.
 
 `ahp` deserves a mention: you supply pairwise judgements ("valuation matters 3× as much as
 momentum"), it takes the principal eigenvector, and it **audits your judgements** — if you claim
@@ -112,16 +128,21 @@ thing doesn't survive. `growth` runs at `0.8`, letting a real compounder look ex
 ### Eleven profiles, and their disagreement is the output
 
 ```
-$ stock-grader consensus AAPL XOM SO
+$ stock-grader consensus AAPL XOM KO --stockanalysis
 
-  AAPL: B- (61.4) — best as low_volatility (79), worst as deep_value (39), clarity  0/100
-  XOM:  C+ (55.7) — best as deep_value    (79), worst as growth      (26), clarity  0/100
-  SO:   D  (32.7) — best as deep_value    (45), worst as momentum    (24), clarity 46/100
+Consensus across profiles — low clarity means the answer depends on the lens    
+                                                                                
+  ticker   consensus   score   clarity   best as               worst as         
+ ────────────────────────────────────────────────────────────────────────────── 
+  XOM         B+        74.9        74   turnaround (79)       momentum (68)    
+  AAPL        B-        60.3         0   low_volatility (80)   deep_value (31)  
+  KO          C+        56.5        47   low_volatility (71)   deep_value (49)
 ```
 
-AAPL and XOM are near-mirror images. Averaging them both to "C+" would destroy the only interesting
-thing here, so `clarity` is reported as a first-class number: low clarity means *the answer depends
-entirely on what you're looking for*.
+Apple scores **80 as a low-volatility holding and 31 as a deep-value one** — clarity 0, meaning the
+answer is entirely a function of which lens you use. Exxon and Coca-Cola score consistently across
+profiles, so their grades mean something on their own. Collapsing all three to a single number
+would destroy exactly the distinction worth knowing.
 
 ### Financials are graded as financials
 
@@ -149,10 +170,17 @@ SPG, O, PLD or AMT.
 ### It tells you when not to trust it
 
 Every grade carries a 90% confidence interval from resampling both the weights (Dirichlet) and the
-metric set (leave-p-out), widened as data coverage falls. Metrics that disagree produce a wide
-interval — `[61.5, 77.9]` versus `[70.0, 70.6]` when they agree. Below 35% coverage it refuses to
-issue a letter at all, and grading with no peer universe returns `N/A` rather than a confident-looking
-`C 50.0` built from nothing.
+metric set (leave-p-out), then re-ranking each draw against the peer set so the percentile half
+carries its real width. The same loop yields a probability for each letter.
+
+That interval is a testable claim, and `scripts/calibrate_intervals.py` tests it: hide k% of metrics,
+regrade, and count how often the degraded interval contains the full-data score. Measured coverage
+is **1.00 / 0.98 / 0.94 / 0.88 / 0.86** as 0–40% of metrics are hidden — erring toward admitting
+uncertainty. An earlier construction covered 0.70 falling to 0.40, which is how the harness earned
+its place.
+
+Below 35% coverage it refuses to issue a letter at all, and grading with no peer universe returns
+`N/A` rather than a confident-looking `C 50.0` built from nothing.
 
 ## Data
 
@@ -200,7 +228,8 @@ stock-grader grade AAPL --price-dir ./prices    # TICKER.csv files; date,close i
 `yahoo` and `tiingo` providers ship and will likely work on a normal network — they just could not
 be verified here, so they fail soft with a warning rather than taking down the grade.
 
-Details and measurements: [`docs/design/DATA-GROUND-TRUTH.md`](docs/design/DATA-GROUND-TRUTH.md).
+Measurements for all of this — which endpoints work, what each source actually returns, and the
+traps below — are in [`docs/design/DATA-GROUND-TRUTH.md`](docs/design/DATA-GROUND-TRUTH.md).
 
 ## Four traps this handles that most implementations don't
 
@@ -252,7 +281,7 @@ src/stock_grader/
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q     # 305 tests
+.venv/bin/python -m pytest -q     # 330 tests
 .venv/bin/ruff check src tests scripts
 ```
 

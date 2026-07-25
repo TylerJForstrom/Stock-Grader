@@ -39,7 +39,7 @@ stock-grader = "stock_grader.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-stock_grader = ["py.typed"]
+stock_grader = ["py.typed", "config/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

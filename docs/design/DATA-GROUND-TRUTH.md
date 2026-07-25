@@ -3,6 +3,8 @@
 > Everything in this document was **measured** from live endpoints on 2026-07-24, not assumed.
 > Where a source is unavailable it says so and says what to do instead.
 > Implementers: this document overrides any conflicting statement in `SPEC.md` about data sources.
+> **§1's "no price source is reachable" was true of the price *feeds* and is superseded by the
+> addendum at the end of this file**, which documents three sources found later and measured.
 
 ## 1. Source availability (measured)
 
@@ -213,3 +215,83 @@ ship it. Universe options that are honest:
 
 Option 3 is the most defensible default for sector-neutral scoring: it is a real peer set derived
 from data we actually have.
+
+---
+
+# Addendum — price sources found after the original survey
+
+§1 above concluded that no price source was reachable. That was true of the *feeds* and is still
+true of Yahoo and Stooq, but it is no longer the whole picture: three further sources were found
+and measured, and this section supersedes §1's "prices: unavailable" for everything except those
+two feeds.
+
+## A. Insider transaction prices — SEC, free, keyless (PRIMARY)
+
+Every Form 4 reports the per-share price of an insider's trade, and SEC publishes them quarterly:
+
+    https://www.sec.gov/files/structureddata/data/insider-transactions-data-sets/{YYYY}q{N}_form345.zip
+
+Measured: ~8 MB per quarter, **3,000–4,400 distinct tickers**. Only transaction codes `S` (open-market
+sale), `P` (open-market purchase) and `F` (shares withheld for tax) execute at market; `M` is an
+option exercise priced at the *strike*, and `A`/`G` are grants and gifts often recorded at zero.
+
+Median insider price against the known market range, 2025Q3 — inside the real range for all eight:
+
+| ticker | median insider price | market range |
+|---|---|---|
+| AAPL | 227.63 | 210–260 |
+| WMT | 98.02 | 90–110 |
+| JPM | 297.94 | 280–320 |
+| NVDA | 174.88 | 160–190 |
+
+**8.5% of raw rows carry implausible dates.** The 2026q1 bundle contained transaction dates from
+2002 to 2027 — a future-dated row wins every "latest price" query — so rows outside the bundle's own
+quarter (plus a quarter of slack) are dropped.
+
+## B. `dei:EntityPublicFloat` — a dated dollar market value (FALLBACK)
+
+On every 10-K cover page, with an explicit measurement date. It **excludes affiliate holdings**, so
+dividing by all shares understates, always in the direction that makes a stock look cheap:
+
+| ticker | error vs true price | why |
+|---|---|---|
+| WMT | **−50%** | the Walton family holds about half |
+| SPG | **−37%** | Simon family plus OP units |
+| AAPL, GE, JNJ, JPM, SO, XOM | under 3% | widely held |
+
+Usable only with the non-affiliate fraction solved from a **date-matched** market price:
+
+    fraction = public_float / (price * shares_outstanding)
+
+That recovered 49.9% for Walmart and 95% for widely-held names. **The dates must match**: pairing a
+2025 float with a 2026 price makes the "fraction" absorb a year of price movement and then reproduce
+its own input, so the calibration looks successful while learning nothing. Pairs more than 45 days
+apart are refused.
+
+Sources are ranked by **freshness, not kind** — a 131-day-old insider price beats a 480-day-old
+float — and every grade reports the price's age.
+
+## C. stockanalysis.com — daily adjusted OHLCV (OPT-IN)
+
+The only reachable *daily* series, and what brings the 40 risk/momentum/liquidity metrics to life.
+An **undocumented internal endpoint of a commercial site**, not a licensed feed: opt-in behind
+`--stockanalysis`, rate-limited, cached, and identifying itself honestly. `robots.txt` disallows
+nothing for general agents; ToS is a separate question and should be read before depending on it.
+
+The adjusted column is verified rather than trusted: BRK.B (never paid a dividend) has adjusted
+equal to raw on **100%** of bars, while AT&T's ten-year price CAGR is **−5.5%** against **+3.1%**
+adjusted — the sign flips, so using the raw close would report a decade of holding it as a loss.
+
+## D. FRED — risk-free rate and benchmark indices
+
+`fredgraph.csv?id=DTB3` (3-month bill) and `SP500` / `NASDAQCOM` / `DJIA`. `WILL5000IND` is
+discontinued and 404s. The indices are **price-only**, so alpha measured against them is overstated
+by roughly beta times the index dividend yield — around 1.5–2 points a year for the S&P 500.
+Snapshots built this way are stamped `benchmark_is_price_only`.
+
+## E. Free outcome labels — EDGAR full-text search
+
+`efts.sec.gov/LATEST/search-index` returns structured JSON. 2023 counts: **853** going-concern
+opinions, **1,847** Chapter 11 8-Ks, **296** restatements, **401** material-weakness disclosures.
+These are real, dated outcome labels, which is what makes accuracy measurable without any price
+data at all — see `scripts/validate_distress.py`.

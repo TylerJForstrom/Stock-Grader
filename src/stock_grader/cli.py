@@ -47,9 +47,12 @@ console = Console()
 
 def _default_universe_path() -> Path | None:
     """Locate the bundled default peer list, whether running from a checkout or an install."""
+    # The packaged copy first: it is the only one that exists after a plain `pip install`, and
+    # without it every install outside a source checkout graded against a universe of one, which
+    # makes every cross-sectional score a flat 50 and every grade N/A.
     candidates = [
-        Path(__file__).resolve().parent.parent.parent / "config" / "universe_default.txt",
         Path(__file__).resolve().parent / "config" / "universe_default.txt",
+        Path(__file__).resolve().parent.parent.parent / "config" / "universe_default.txt",
         Path.cwd() / "config" / "universe_default.txt",
     ]
     return next((p for p in candidates if p.exists()), None)

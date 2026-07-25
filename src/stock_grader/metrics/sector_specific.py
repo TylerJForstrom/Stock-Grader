@@ -30,7 +30,7 @@ __all__ = [
     "deposits_to_assets",
     "efficiency_ratio",
     "fee_income_share",
-    "funds_from_operations",
+    "ffo_to_assets",
     "loans_to_deposits",
     "net_interest_income_to_assets",
     "price_to_ffo",
@@ -173,9 +173,13 @@ def tangible_common_equity_ratio(s: SecuritySnapshot) -> float | None:
 # ---------------------------------------------------------------------------------------------
 
 
-@metric("funds_from_operations", pillar="profitability", direction=1, unit="usd")
-def funds_from_operations(s: SecuritySnapshot) -> tuple[float, dict] | None:
-    """FFO — the REIT earnings measure, **reconstructed** because nobody tags it.
+@metric("ffo_to_assets", pillar="profitability", direction=1, unit="ratio")
+def ffo_to_assets(s: SecuritySnapshot) -> tuple[float, dict] | None:
+    """FFO over total assets — the REIT earnings measure, **reconstructed** because nobody tags it.
+
+    Scaled by assets deliberately. FFO in dollars is a *size* measure: scored cross-sectionally in
+    a profitability pillar, the biggest REIT in the universe would win on being big, which is not
+    what profitability means. Every other metric in that pillar is a ratio for the same reason.
 
     ``FFO = net income to common + real-estate depreciation - gains on property sales + impairments``
 
@@ -203,13 +207,17 @@ def funds_from_operations(s: SecuritySnapshot) -> tuple[float, dict] | None:
     ffo = income + depreciation - gains + impairment
     if ffo <= 0:
         return None
+    assets = _latest(s, "assets")
+    if not assets or assets <= 0:
+        return None
     if income > 0:
         ratio = ffo / income
         if not 1.0 <= ratio <= 6.0:
             return None
     return (
-        float(ffo),
+        float(ffo / assets),
         {
+            "ffo": ffo,
             "income_to_common": income,
             "depreciation": depreciation,
             "gain_on_sale": gains,
@@ -227,8 +235,8 @@ def price_to_ffo(s: SecuritySnapshot) -> float | None:
     favour of: depreciation dominates a REIT's income statement, so a P/E computed on GAAP earnings
     says more about the age of the portfolio than about its value.
     """
-    result = funds_from_operations.fn(s)
+    result = ffo_to_assets.fn(s)
     if result is None:
         return None
-    ffo = result[0] if isinstance(result, tuple) else result
+    ffo = result[1]["ffo"] if isinstance(result, tuple) else None
     return safe_div(s.market_cap, ffo, positive_denominator=True, cap=100.0)

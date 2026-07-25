@@ -65,7 +65,7 @@ def classify_sic(sic: str | int | None) -> SectorClass:
 # elsewhere keeps the coverage accounting honest: an industrial company is marked NOT_APPLICABLE
 # for "efficiency_ratio" rather than MISSING, so it takes no penalty for lacking a bank metric.
 BANK_ONLY_METRICS: frozenset[str] = frozenset({"efficiency_ratio", "net_interest_income_to_assets", "fee_income_share", "deposits_to_assets", "loans_to_deposits", "allowance_coverage", "provision_burden", "tangible_common_equity_ratio"})
-REIT_ONLY_METRICS: frozenset[str] = frozenset({"funds_from_operations", "price_to_ffo"})
+REIT_ONLY_METRICS: frozenset[str] = frozenset({"ffo_to_assets", "price_to_ffo"})
 
 
 SECTOR_DISABLED_METRICS: dict[SectorClass, frozenset[str]] = {

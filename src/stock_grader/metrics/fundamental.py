@@ -154,11 +154,11 @@ def fcf_yield(s: SecuritySnapshot) -> float | None:
     return safe_div(_ttm(s, "fcf"), s.market_cap, positive_denominator=True)
 
 
-@metric("acquirers_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
-def acquirers_multiple(s: SecuritySnapshot) -> float | None:
-    """EV / operating earnings — Tobias Carlisle's takeover-value screen."""
-    return safe_div(_enterprise_value(s), _ttm(s, "operating_income"),
-                    positive_denominator=True, cap=_MULTIPLE_CAP)
+# NOTE: `acquirers_multiple` was removed rather than kept as an alias. Carlisle's Acquirer's
+# Multiple is enterprise value over operating earnings, and `_derive` sets ``ebit =
+# operating_income`` whenever the latter exists — so it computed a bit-identical value to
+# `ev_to_ebit` and handed one valuation signal two votes, 11.8% of the valuation pillar under the
+# shipped equal weighting. The sector matrix still references the name harmlessly.
 
 
 @metric("ev_to_gross_profit", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))

@@ -1,0 +1,32 @@
+# Default peer universe.
+#
+# Cross-sectional scoring needs a comparison group — a P/E of 22 means nothing until you know what
+# peers trade at — so `stock-grader grade TICKER` loads this list when no --universe is given.
+# It is a spread of large, liquid US filers across sectors, chosen so a grade has a sane reference
+# distribution rather than any claim to be an index. Index membership is licensed data and is not
+# something this project can ship.
+#
+# Replace it freely: a tighter, more comparable peer set gives a more meaningful grade. For a true
+# peer group, use companies sharing the subject's SIC code.
+
+# Technology
+AAPL MSFT NVDA GOOGL META AVGO ORCL CRM ADBE CSCO INTC AMD QCOM TXN IBM
+
+# Consumer
+AMZN WMT COST HD MCD NKE SBUX TGT LOW PG KO PEP PM
+
+# Healthcare
+JNJ UNH LLY ABBV MRK PFE TMO ABT DHR AMGN
+
+# Financials
+BRK-B JPM V MA BAC WFC GS MS AXP BLK C SCHW
+
+# Industrials & energy
+GE CAT HON UNP BA LMT RTX DE UPS
+XOM CVX COP SLB EOG PSX
+
+# Utilities, real estate, materials, telecom
+NEE SO DUK D AEP
+SPG PLD AMT EQIX O
+LIN SHW APD
+T VZ CMCSA DIS

@@ -114,7 +114,11 @@ def downside_deviation(s: SecuritySnapshot) -> float | None:
     negative = returns[returns < 0]
     if len(negative) < 5:
         return None
-    return float(np.sqrt((negative**2).mean()) * np.sqrt(TRADING_DAYS))
+    # Divide by the FULL sample, not just the losing days. Averaging squared losses over only the
+    # negatives inflates the result by 1/sqrt(P(loss)) — about 1.46x at a typical 47% down-day
+    # rate — and, worse, the inflation varies with each security's own down-day frequency, so it
+    # is not a constant the cross-section can absorb.
+    return float(np.sqrt((negative**2).sum() / len(returns)) * np.sqrt(TRADING_DAYS))
 
 
 @metric("sharpe_ratio", pillar="risk", direction=1, unit="ratio",
@@ -142,7 +146,7 @@ def sortino_ratio(s: SecuritySnapshot) -> float | None:
     negative = excess[excess < 0]
     if len(negative) < 5:
         return None
-    downside = float(np.sqrt((negative**2).mean()))
+    downside = float(np.sqrt((negative**2).sum() / len(excess)))
     if downside <= 0:
         return None
     return float(excess.mean() / downside * np.sqrt(TRADING_DAYS))

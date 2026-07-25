@@ -389,6 +389,14 @@ class TestSectorSpecificMetrics:
 
         assert "efficiency" not in SECTOR_DISABLED_PILLARS[SectorClass.BANK]
 
+    def test_ffo_is_scaled_not_a_dollar_level(self):
+        """FFO in dollars is a size measure: scored cross-sectionally in a profitability pillar,
+        the biggest REIT would win on being big."""
+        from stock_grader.registry import METRICS
+
+        spec = METRICS.get("ffo_to_assets")
+        assert spec.unit == "ratio"
+
     def test_ffo_is_reconstructed_not_read(self):
         """No major REIT tags FundsFromOperations — checked SPG, O, PLD and AMT.
 
@@ -402,21 +410,21 @@ class TestSectorSpecificMetrics:
     def test_ffo_rejects_an_implausible_reconstruction(self):
         from datetime import date as _date
 
-        from stock_grader.metrics.sector_specific import funds_from_operations
+        from stock_grader.metrics.sector_specific import ffo_to_assets
         from stock_grader.types import Fundamentals, SecuritySnapshot
 
         quarters = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
         # Depreciation twenty times income: the components did not assemble sensibly.
         frame = pd.DataFrame(
             {"net_income": [10.0] * 4, "income_to_common": [10.0] * 4,
-             "depreciation_amortization": [200.0] * 4},
+             "depreciation_amortization": [200.0] * 4, "assets": [5000.0] * 4},
             index=quarters,
         )
         snapshot = SecuritySnapshot(
             ticker="X", asof=_date(2026, 1, 31),
             fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
         )
-        assert funds_from_operations.fn(snapshot) is None
+        assert ffo_to_assets.fn(snapshot) is None
 
     def test_loans_to_deposits_is_a_band_not_a_direction(self):
         """Above ~1.0 a bank funds itself wholesale — the vulnerability that closed SVB.
