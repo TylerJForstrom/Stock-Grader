@@ -156,31 +156,44 @@ def _pillar_members(names: list[str]) -> dict[str, list[str]]:
     return dict(grouped)
 
 
-def _curve_interval(
-    interval: tuple[float, float],
-    percentile: float | None,
+def _interval_and_letter_probs(
+    samples: np.ndarray,
+    peer_composites: np.ndarray,
     config: GradeConfig,
-) -> tuple[float, float]:
-    """Map a raw-composite confidence interval onto whatever scale the headline score uses.
+) -> tuple[tuple[float, float], dict[str, float]]:
+    """Interval on the reported scale, plus the distribution over letters.
 
-    Under the ``hybrid`` curve the reported score is a blend of the raw composite and the security's
-    percentile. The percentile is a fixed property of the security within this universe, so only the
-    raw half of the blend carries uncertainty and the bounds transform with the same affine map.
+    The previous approach mapped the raw interval affinely — ``w*low + (1-w)*percentile`` — which
+    added the same constant to both ends. That multiplied the half-width by ``absolute_weight``
+    (0.5 by default) and assigned the percentile *zero* width, even though the percentile is a
+    function of the same resampled composite. Measured empirical coverage of the advertised 90%
+    was 0.697 / 0.551 / 0.439 / 0.395 as 10/20/30/40% of pillars were masked: the interval was not
+    a 90% interval at any level.
+
+    Ranking each draw against the fixed peer set instead gives the percentile its real width — a
+    median span of 22.5 points that used to be discarded — and the same loop yields the probability
+    of each letter for free.
     """
-    low, high = interval
-    if not np.isfinite(low) or not np.isfinite(high):
-        return interval
-    if config.curve == "absolute" or percentile is None or not np.isfinite(percentile):
-        return interval
-    if config.curve == "cross_sectional":
-        # The letter comes purely from rank, which the metric-level resampling does not perturb;
-        # the raw interval is still the honest statement about the underlying score.
-        return interval
-    weight = config.absolute_weight
-    return (
-        float(np.clip(weight * low + (1 - weight) * percentile, 0.0, 100.0)),
-        float(np.clip(weight * high + (1 - weight) * percentile, 0.0, 100.0)),
-    )
+    if samples.size == 0:
+        return ((float("nan"), float("nan")), {})
+    if config.curve == "absolute" or peer_composites.size < 2:
+        blended = samples
+    else:
+        ranks = np.searchsorted(np.sort(peer_composites), samples, side="left")
+        percentiles = ranks / len(peer_composites) * 100.0
+        if config.curve == "cross_sectional":
+            blended = percentiles
+        else:
+            weight = config.absolute_weight
+            blended = weight * samples + (1.0 - weight) * percentiles
+    blended = np.clip(blended, 0.0, 100.0)
+    low, high = np.percentile(blended, [5.0, 95.0])
+    counts: dict[str, int] = {}
+    for value in blended:
+        letter = to_letter(float(value))
+        counts[letter] = counts.get(letter, 0) + 1
+    probabilities = {k: v / len(blended) for k, v in sorted(counts.items(), key=lambda kv: -kv[1])}
+    return ((float(low), float(high)), probabilities)
 
 
 def grade_universe(
@@ -334,7 +347,11 @@ def grade_universe(
         if config.curve == "absolute":
             final_score, letter = float(score), to_letter(score)
         elif config.curve == "cross_sectional" and percentile is not None:
-            final_score, letter = float(score), grade_from_percentile(percentile)
+            # Report the percentile, not the raw composite. Under this curve the letter comes from
+            # rank, so returning the raw score put the headline number, the letter and the interval
+            # on three different scales — a security could show 48.1 next to a D- and an interval
+            # ending at 25.
+            final_score, letter = float(percentile), grade_from_percentile(percentile)
         else:
             final_score, letter = hybrid_grade(score, percentile, absolute_weight=config.absolute_weight)
 
@@ -390,20 +407,39 @@ def grade_universe(
             # up "no information" as a considered C.
             letter = "N/A"
 
+        # Nominal weights describe the profile; effective weights describe THIS grade. They differ
+        # whenever a pillar could not be computed, and the report is the layer a user checks to
+        # audit a score — so printing the nominal vector there asserts a provenance the number does
+        # not have. Measured on a price-free run, the momentum profile graded ABT B+ while printing
+        # momentum 0.50 / risk 0.20 / liquidity 0.06 and drawing its contributions from growth and
+        # profitability alone: 76% of the advertised weight was inert.
+        live = {p: float(pillar_weights.get(p, 0.0)) for p in objects}
+        live_total = sum(live.values())
+        effective_weights = (
+            {p: w / live_total for p, w in live.items()} if live_total > 0 else {}
+        )
+        lost_weight = float(max(0.0, 1.0 - live_total))
+        if lost_weight > 0.02:
+            warns.append(
+                f"{lost_weight:.0%} of this profile's nominal pillar weight could not be applied "
+                f"(those pillars did not compute); the grade rests on the remaining "
+                f"{1 - lost_weight:.0%}, renormalised"
+            )
+
         pillar_series = pd.Series({p: obj.score for p, obj in objects.items()}, dtype="float64")
-        raw_interval = uncertainty_interval(
+        samples = uncertainty_interval(
             pillar_series,
             pillar_weights,
             coverage=coverage,
             aggregator=config.pillar_aggregator,
             draws=config.uncertainty_draws,
             seed=config.seed,
+            return_samples=True,
             **config.aggregator_kwargs,
         )
-        # The interval is estimated on the raw composite, so it has to pass through the same curve
-        # the headline score did. Reporting a hybrid-scaled score beside a raw-scaled interval
-        # produced intervals that did not contain their own score.
-        interval = _curve_interval(raw_interval, percentile, config)
+        interval, letter_probabilities = _interval_and_letter_probs(
+            np.asarray(samples), composite.dropna().to_numpy(), config
+        )
 
         reports[ticker] = GradeReport(
             ticker=ticker,
@@ -413,6 +449,8 @@ def grade_universe(
             letter=letter,
             pillars=objects,
             pillar_weights={k: float(v) for k, v in pillar_weights.items()},
+            effective_pillar_weights=effective_weights,
+            lost_weight=lost_weight,
             percentile=percentile,
             ci=interval,
             coverage=coverage,
@@ -428,12 +466,15 @@ def grade_universe(
                 ),
                 "n_metrics_run_limited": len(run_limited),
                 "universe_size": len(snapshots),
+                "lost_weight": lost_weight,
+                "letter_probabilities": letter_probabilities,
             },
             warnings=warns,
             meta={
                 "sector": snapshot.sector.value,
                 "pit_mode": snapshot.meta.get("pit_mode"),
                 "curve": config.curve,
+                "pillar_set": sorted(objects),
                 "coverage_penalty": coverage_penalty(coverage),
             },
         )

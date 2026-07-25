@@ -79,6 +79,20 @@ def _resolve_peers(args: argparse.Namespace, tickers: list[str]) -> list[str]:
         return _load_universe(args.universe)
     if args.no_peers:
         return []
+    if args.asof:
+        asof = date.fromisoformat(args.asof)
+        if (date.today() - asof).days > 365:
+            # The bundled list is 82 companies that are large TODAY, so using it to grade a past
+            # date compares that date's company against a peer group selected for having survived
+            # to now. Of 7,018 filers in late 2015, 45.5% still filed a decade later, and the
+            # survivors had median ROA of +1.01% against -6.15% for the rest — the grader then
+            # reports where a company sits on exactly profitability and health, with the left tail
+            # deleted.
+            raise SystemExit(
+                f"config/universe_default.txt is a survivor list built from today's listings, so "
+                f"it cannot be a peer group for --asof {asof}. Pass --universe with a list "
+                f"constructed as of that date (CIKs preferred — tickers get reused)."
+            )
     path = _default_universe_path()
     if path is None:
         console.print("[yellow]no default universe found; grading without peers[/yellow]")
@@ -212,6 +226,17 @@ def _build_snapshots(
         snapshots.append(snapshot)
     if status:
         status.stop()
+
+    unresolved = [s.ticker for s in snapshots if s.cik is None]
+    if unresolved:
+        # One aggregate note rather than N scrolling warnings.
+        console.print(
+            f"[yellow]{len(unresolved)}/{len(snapshots)} tickers are absent from SEC's ticker "
+            f"map ({', '.join(unresolved[:6])}{'…' if len(unresolved) > 6 else ''}). That map "
+            f"lists only currently-listed issuers, so delisted companies are missing and reused "
+            f"tickers resolve to the survivor — BBBY resolves to the entity that bought the brand, "
+            f"not the retailer that failed.[/yellow]"
+        )
     return snapshots
 
 

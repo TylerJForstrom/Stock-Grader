@@ -661,6 +661,30 @@ class SECProvider:
             self._tickers = self.client.ticker_map()
         return self._tickers.get(ticker.upper())
 
+    def fetch_by_cik(
+        self,
+        cik: str,
+        *,
+        ticker: str | None = None,
+        asof: date | None = None,
+        pit_mode: PitMode = PitMode.LATEST,
+        refresh: bool = False,
+    ) -> SecuritySnapshot:
+        """Fetch by CIK, bypassing the ticker map entirely.
+
+        The supported entry point for historical work. ``company_tickers.json`` lists only
+        **currently-listed** issuers, so a ticker-keyed historical run is survivorship-filtered by
+        construction — and worse, tickers get reused: ``BBBY`` resolves today to CIK 1130713, the
+        entity that bought the brand out of bankruptcy, while the retailer that actually failed is
+        CIK 886158, now named "20230930-DK-Butterfly-1, Inc." with no ticker at all. Grading the
+        survivor in place of the casualty is silent and total.
+
+        CIKs are permanent, so keying fixtures and historical universes on them is the only way to
+        study companies that no longer exist.
+        """
+        return self._fetch(str(cik).zfill(10), ticker or str(cik),
+                           asof=asof or date.today(), pit_mode=pit_mode, refresh=refresh)
+
     def fetch(
         self,
         ticker: str,
@@ -681,12 +705,28 @@ class SECProvider:
                 f"point-in-time selection, or drop asof to grade as of today."
             )
         asof = asof or date.today()
-        snap = SecuritySnapshot(ticker=ticker.upper(), asof=asof)
-
         cik = self.resolve_cik(ticker)
         if cik is None:
-            snap.warnings.append(f"{ticker}: no CIK found in SEC ticker map (non-US or delisted?)")
+            snap = SecuritySnapshot(ticker=ticker.upper(), asof=asof)
+            snap.warnings.append(
+                f"{ticker}: not in SEC's ticker map, which lists only currently-listed issuers. "
+                f"Delisted and acquired companies are absent (SIVB, FRC, WE and BBBY's failed "
+                f"entity all resolve to nothing); use fetch_by_cik for those."
+            )
             return snap
+        return self._fetch(cik, ticker, asof=asof, pit_mode=pit_mode, refresh=refresh)
+
+    def _fetch(
+        self,
+        cik: str,
+        ticker: str,
+        *,
+        asof: date,
+        pit_mode: PitMode = PitMode.LATEST,
+        refresh: bool = False,
+    ) -> SecuritySnapshot:
+        """Shared body for :meth:`fetch` and :meth:`fetch_by_cik`."""
+        snap = SecuritySnapshot(ticker=ticker.upper(), asof=asof)
         snap.cik = cik
 
         subs = self.client.submissions(cik, refresh=refresh)

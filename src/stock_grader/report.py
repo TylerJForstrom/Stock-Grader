@@ -67,6 +67,8 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
     meta.append(f"  ·  norm {report.normalizer}", style="dim")
     meta.append(f"  ·  agg {report.aggregator}", style="dim")
     meta.append(f"\ncoverage {report.coverage:.0%}", style="dim")
+    if report.lost_weight > 0.02:
+        meta.append(f"  ·  {report.lost_weight:.0%} of nominal weight inert", style="yellow")
     meta.append(
         f"  ({report.explain.get('n_metrics_ok', 0)} computed, "
         f"{report.explain.get('n_metrics_missing', 0)} missing, "
@@ -79,6 +81,7 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
     pillars.add_column("score", justify="right", width=6)
     pillars.add_column("", width=26)
     pillars.add_column("weight", justify="right", width=7)
+    pillars.add_column("eff", justify="right", width=6)
     pillars.add_column("contrib", justify="right", width=8)
     contributions = report.explain.get("pillar_contributions", {})
     for name, pillar in sorted(report.pillars.items(), key=lambda kv: -kv[1].score):
@@ -88,6 +91,7 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
             f"{pillar.score:.1f}",
             _bar(pillar.score),
             f"{report.pillar_weights.get(name, 0.0):.0%}",
+            f"{report.effective_pillar_weights.get(name, 0.0):.0%}",
             Text(f"{contribution:+.2f}", style="green" if contribution >= 0 else "red"),
         )
 

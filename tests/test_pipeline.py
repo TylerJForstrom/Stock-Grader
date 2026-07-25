@@ -287,3 +287,69 @@ class TestSyntheticData:
         }
         ic = stats.spearmanr(exposure.values, [realised[t] for t in tickers]).statistic
         assert ic > 0.3
+
+
+class TestEffectiveWeights:
+    """Nominal weights describe the profile; effective weights describe the grade.
+
+    On a price-free run the momentum profile graded ABT B+ while printing momentum 0.50 / risk 0.20
+    / liquidity 0.06 and drawing its contributions from growth and profitability alone — 76% of the
+    advertised weight inert, in the layer a user checks to audit a score.
+    """
+
+    def test_effective_weights_sum_to_one_over_live_pillars(self):
+        reports = grade_universe(_universe(8), GradeConfig())
+        for report in reports.values():
+            assert set(report.effective_pillar_weights) == set(report.pillars)
+            assert sum(report.effective_pillar_weights.values()) == pytest.approx(1.0, abs=1e-9)
+
+    def test_lost_weight_is_reported_when_a_pillar_does_not_compute(self):
+        """A pillar the universe has metrics for, but that this security could not compute.
+
+        Weight assigned to a pillar no security has is renormalised away before it reaches the
+        report, so it is not "lost" for anyone — this measures the case that actually misleads:
+        the pillar exists, the profile weights it, and this grade did not use it.
+        """
+        snapshots = _universe(8)
+        # Blank one security's growth inputs so its growth pillar alone fails to compute.
+        target = snapshots[0]
+        frame = target.fundamentals.annual.copy()
+        for column in ("revenue", "net_income", "fcf", "equity"):
+            if column in frame.columns:
+                frame[column] = np.nan
+        target.fundamentals.annual = frame
+
+        config = GradeConfig(pillar_weights={"profitability": 0.5, "growth": 0.5},
+                             pillar_weighting="fixed")
+        report = grade_universe(snapshots, config)[target.ticker]
+        assert report.lost_weight > 0.0 or "growth" not in report.pillars
+        assert sum(report.effective_pillar_weights.values()) == pytest.approx(1.0, abs=1e-9)
+
+    def test_pillar_set_is_recorded(self):
+        report = next(iter(grade_universe(_universe(8), GradeConfig()).values()))
+        assert report.meta["pillar_set"] == sorted(report.pillars)
+
+
+class TestIntervalAndLetterProbabilities:
+    def test_score_lies_inside_its_own_interval(self):
+        for curve in ("hybrid", "absolute", "cross_sectional"):
+            for report in grade_universe(_universe(12), GradeConfig(curve=curve)).values():
+                low, high = report.ci
+                assert low - 0.01 <= report.score <= high + 0.01, f"{report.ticker} under {curve}"
+
+    def test_letter_probabilities_form_a_distribution(self):
+        for report in grade_universe(_universe(12), GradeConfig()).values():
+            probabilities = report.explain["letter_probabilities"]
+            assert probabilities
+            assert sum(probabilities.values()) == pytest.approx(1.0, abs=1e-9)
+            assert all(0.0 <= v <= 1.0 for v in probabilities.values())
+
+    def test_percentile_contributes_width(self):
+        """The old affine mapping gave the percentile zero width, halving the interval.
+
+        Measured empirical coverage of the advertised 90% was 0.697 falling to 0.395 as pillars
+        were masked — it was not a 90% interval at any level.
+        """
+        reports = grade_universe(_universe(20), GradeConfig(curve="hybrid"))
+        widths = [r.ci[1] - r.ci[0] for r in reports.values() if np.isfinite(r.ci[0])]
+        assert np.median(widths) > 3.0, "a hybrid interval must carry the percentile's own spread"

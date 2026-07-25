@@ -359,6 +359,8 @@ class GradeReport:
     letter: str
     pillars: dict[str, PillarScore] = field(default_factory=dict)
     pillar_weights: dict[str, float] = field(default_factory=dict)
+    effective_pillar_weights: dict[str, float] = field(default_factory=dict)
+    lost_weight: float = 0.0
     percentile: float | None = None
     ci: tuple[float, float] | None = None
     coverage: float = 1.0

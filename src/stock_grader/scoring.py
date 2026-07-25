@@ -167,8 +167,9 @@ def uncertainty_interval(
     concentration: float = 50.0,
     leave_out: float = 0.15,
     seed: int = 0,
+    return_samples: bool = False,
     **aggregator_kwargs: object,
-) -> tuple[float, float]:
+) -> tuple[float, float] | np.ndarray:
     """Confidence interval for a composite score, from two sources of doubt.
 
     1. **Weight uncertainty.** The weight vector is one defensible choice among many, so it is
@@ -183,10 +184,12 @@ def uncertainty_interval(
     """
     scores, w = align_and_renormalize(metric_scores, weights)
     if scores.empty:
-        return (float("nan"), float("nan"))
+        return np.array([]) if return_samples else (float("nan"), float("nan"))
     if len(scores) == 1:
         centre = float(scores.iloc[0])
         half = 5.0 * coverage_penalty(coverage)
+        if return_samples:
+            return np.full(draws, centre)
         return (max(0.0, centre - half), min(100.0, centre + half))
 
     rng = np.random.default_rng(seed)
@@ -225,6 +228,14 @@ def uncertainty_interval(
             samples[i] = np.nan if result is None else result
 
     finite = samples[np.isfinite(samples)]
+    if return_samples:
+        # The caller re-ranks each draw against the peer set before taking percentiles, which is
+        # the only way the percentile half of a hybrid score carries any width at all.
+        penalty = coverage_penalty(coverage)
+        if finite.size and penalty > 1.0:
+            centre = float(np.median(finite))
+            finite = centre + (finite - centre) * penalty
+        return finite
     if finite.size == 0:
         return (float("nan"), float("nan"))
 
