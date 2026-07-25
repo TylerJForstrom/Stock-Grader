@@ -35,7 +35,8 @@ from .sectors import classify_sic
 
 log = logging.getLogger(__name__)
 
-__all__ = ["SECClient", "SECProvider", "normalize_duration_facts", "normalize_instant_facts"]
+__all__ = ["SECClient", "SECProvider", "normalize_duration_facts", "normalize_instant_facts",
+           "restate_for_splits"]
 
 _DAYS_PER_QUARTER = 91.31
 _SEC_BASE = "https://data.sec.gov"
@@ -442,6 +443,62 @@ def _plausible_q4(concept: str | None, derived: float, siblings: list[float]) ->
     return 0.15 * median <= abs(derived) <= 6.0 * median
 
 
+# Ratios a stock split plausibly takes. A jump close to one of these, with the balance sheet
+# unchanged, is a split rather than a financing event.
+_SPLIT_RATIOS = (2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0, 25.0, 30.0)
+
+
+def _looks_like_split(ratio: float, tolerance: float = 0.06) -> float | None:
+    """The split factor this ratio represents, or ``None`` if it is not close to one."""
+    if not np.isfinite(ratio) or ratio <= 0:
+        return None
+    for candidate in _SPLIT_RATIOS:
+        if abs(ratio / candidate - 1.0) <= tolerance:
+            return candidate
+        if abs(ratio * candidate - 1.0) <= tolerance:  # reverse split
+            return 1.0 / candidate
+    return None
+
+
+def restate_for_splits(shares: pd.Series, scale_reference: pd.Series | None = None) -> pd.Series:
+    """Put a share-count series onto one post-split basis.
+
+    Filers restate share counts retroactively when they split, but only in filings made *after* the
+    split. Selecting the newest vintage per period therefore stitches restated recent periods onto
+    un-restated older ones, and the seam looks like an enormous share issuance: NVIDIA's annual
+    series jumps **9.9x** at its 10-for-1 split, Amazon's **20.2x**, Apple's **3.8x**. Any metric
+    reading several years of share history across that seam sees a split as dilution.
+
+    A split changes the share count and nothing else, so ``scale_reference`` — a balance-sheet or
+    income item from the same periods — distinguishes the two cases. If shares jump tenfold while
+    assets are flat, it is a split; if both jump, it is a merger or a genuine issuance and the
+    series is left alone.
+    """
+    clean = shares.dropna()
+    if len(clean) < 2:
+        return shares
+    factors = pd.Series(1.0, index=clean.index)
+    cumulative = 1.0
+    # Walk backwards from the newest observation, which is always on the current basis.
+    for i in range(len(clean) - 1, 0, -1):
+        ratio = float(clean.iloc[i] / clean.iloc[i - 1]) if clean.iloc[i - 1] else float("nan")
+        split = _looks_like_split(ratio)
+        if split is not None and scale_reference is not None:
+            # Confirm the rest of the business did not move with it.
+            reference = scale_reference.dropna()
+            try:
+                now = float(reference.asof(clean.index[i]))
+                before = float(reference.asof(clean.index[i - 1]))
+                if before and abs((now / before) / ratio - 1.0) <= 0.25:
+                    split = None  # assets moved with shares: a merger, not a split
+            except (KeyError, TypeError, ValueError):
+                pass
+        if split is not None:
+            cumulative *= split
+        factors.iloc[i - 1] = cumulative
+    return (clean * factors).reindex(shares.index)
+
+
 def _annualise_instants(series: pd.Series) -> pd.Series:
     """Reduce a quarterly balance-sheet series to one observation per fiscal year.
 
@@ -545,6 +602,16 @@ def build_fundamentals(
 
     q_df = pd.DataFrame(quarterly).sort_index() if quarterly else pd.DataFrame()
     a_df = pd.DataFrame(annual).sort_index() if annual else pd.DataFrame()
+
+    # Put share counts on one post-split basis before anything reads a multi-year history from
+    # them. Assets are the scale reference: a split moves shares and leaves the balance sheet alone.
+    for frame in (q_df, a_df):
+        if frame.empty:
+            continue
+        reference = frame["assets"] if "assets" in frame.columns else None
+        for concept in ("shares_diluted", "shares_basic"):
+            if concept in frame.columns:
+                frame[concept] = restate_for_splits(frame[concept], reference)
 
     # Derived concepts that filers often omit but which follow arithmetically.
     _derive(q_df)
@@ -790,8 +857,33 @@ class SECProvider:
         if snap.fundamentals is not None:
             diluted = snap.fundamentals.latest("shares_diluted")
             if diluted:
+                # Filers tag share counts in whatever unit their statements are presented in.
+                # McDonald's reports diluted shares as **716** against a DEI cover-page count of
+                # 710,505,859 — a factor of a million. Nothing else in the payload says so, and a
+                # market cap computed from it would come out at $180 thousand rather than $180
+                # billion, making the company look absurdly cheap on every multiple.
+                #
+                # The DEI cover count is always in whole shares, so it is the scale oracle. Only
+                # clean powers of a thousand are corrected: anything else is a genuine difference
+                # between weighted-average diluted and period-end basic shares, not a unit error.
+                if snap.shares_outstanding:
+                    ratio = snap.shares_outstanding / diluted
+                    for factor in (1_000_000.0, 1_000.0):
+                        if 0.5 * factor <= ratio <= 2.0 * factor:
+                            diluted *= factor
+                            snap.meta["shares_scale_corrected"] = factor
+                            snap.warnings.append(
+                                f"{ticker}: diluted share count was tagged in units of {factor:,.0f}; "
+                                f"rescaled against the DEI cover-page count"
+                            )
+                            break
                 snap.meta["shares_diluted"] = diluted
                 if snap.shares_outstanding is None:
                     snap.shares_outstanding = diluted
+                    snap.meta["shares_source"] = "income_statement_diluted"
+                    snap.warnings.append(
+                        f"{ticker}: no DEI cover-page share count, so the scale of the diluted "
+                        f"count could not be cross-checked"
+                    )
 
         return snap

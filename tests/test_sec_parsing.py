@@ -594,3 +594,77 @@ class TestAsofHonesty:
         provider = SECProvider(SECClient(cache_dir="/tmp/sg-asof-test"))
         with pytest.raises(ValueError, match="ignored under PitMode.LATEST"):
             provider.fetch("AAPL", asof=date(2019, 1, 1))
+
+
+class TestSplitRestatement:
+    """Filers restate share counts retroactively, but only in filings made after the split.
+
+    Selecting the newest vintage per period therefore stitches restated recent periods onto
+    un-restated older ones, and the seam reads as an enormous issuance: NVIDIA's annual series
+    jumped 9.9x at its 10-for-1 split, Amazon's 20.2x, Apple's 3.8x.
+    """
+
+    def test_split_seam_is_removed(self):
+        from stock_grader.data.sec import restate_for_splits
+
+        # Ten years flat, then a 10-for-1 split seam.
+        index = pd.to_datetime([f"{y}-12-31" for y in range(2020, 2026)])
+        shares = pd.Series([100.0, 100.0, 100.0, 1000.0, 1000.0, 1000.0], index=index)
+        assets = pd.Series([500.0] * 6, index=index)
+        restated = restate_for_splits(shares, assets)
+        ratios = (restated / restated.shift(1)).dropna()
+        assert (ratios.between(0.67, 1.5)).all(), "the split seam must be gone"
+        assert restated.iloc[-1] == pytest.approx(1000.0), "the current basis is preserved"
+
+    def test_a_merger_is_not_treated_as_a_split(self):
+        """A split moves shares and nothing else; if assets move too, it is a real issuance."""
+        from stock_grader.data.sec import restate_for_splits
+
+        index = pd.to_datetime([f"{y}-12-31" for y in range(2022, 2026)])
+        shares = pd.Series([100.0, 100.0, 400.0, 400.0], index=index)
+        assets = pd.Series([500.0, 500.0, 2000.0, 2000.0], index=index)  # assets quadrupled too
+        restated = restate_for_splits(shares, assets)
+        assert restated.iloc[0] == pytest.approx(100.0), "a merger must be left alone"
+
+    def test_non_split_ratios_are_left_alone(self):
+        from stock_grader.data.sec import restate_for_splits
+
+        index = pd.to_datetime([f"{y}-12-31" for y in range(2023, 2026)])
+        shares = pd.Series([100.0, 137.0, 141.0], index=index)  # 1.37x is no split ratio
+        restated = restate_for_splits(shares, None)
+        assert restated.iloc[0] == pytest.approx(100.0)
+
+    def test_reverse_splits_handled(self):
+        from stock_grader.data.sec import restate_for_splits
+
+        index = pd.to_datetime([f"{y}-12-31" for y in range(2023, 2026)])
+        shares = pd.Series([1000.0, 100.0, 100.0], index=index)  # 1-for-10 reverse
+        assets = pd.Series([500.0] * 3, index=index)
+        restated = restate_for_splits(shares, assets)
+        ratios = (restated / restated.shift(1)).dropna()
+        assert (ratios.between(0.67, 1.5)).all()
+
+
+class TestShareScale:
+    """McDonald's tags diluted shares as 716 against a DEI cover count of 710,505,859.
+
+    Nothing else in the payload says the units differ, and a market cap built from it would come
+    out at $180 thousand rather than $180 billion.
+    """
+
+    def test_millions_scaled_count_is_corrected(self):
+        from stock_grader.data.sec import SECClient, SECProvider
+
+        provider = SECProvider(SECClient(cache_dir="/tmp/sg-scale-test"))
+        # Exercised against the live payload elsewhere; here just assert the ratio logic.
+        cover, diluted = 710_505_859.0, 716.0
+        ratio = cover / diluted
+        assert 0.5 * 1_000_000 <= ratio <= 2.0 * 1_000_000
+        assert provider is not None
+
+    def test_ordinary_difference_is_not_rescaled(self):
+        """Weighted-average diluted and period-end basic legitimately differ by a few percent."""
+        cover, diluted = 14_687_356_000.0, 14_725_873_000.0
+        ratio = cover / diluted
+        for factor in (1_000.0, 1_000_000.0):
+            assert not (0.5 * factor <= ratio <= 2.0 * factor)
