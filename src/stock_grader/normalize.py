@@ -28,20 +28,20 @@ from scipy import stats
 from .registry import NORMALIZERS
 
 __all__ = [
-    "normalize_series",
+    "NEUTRAL_SCORE",
     "apply_direction",
-    "zscore",
-    "robust_z",
-    "winsorized_z",
-    "percentile_rank",
+    "double_sigmoid",
     "gaussian_rank",
     "minmax",
-    "sigmoid_z",
-    "quantile_bucket",
+    "normalize_series",
+    "percentile_rank",
     "piecewise",
-    "double_sigmoid",
+    "quantile_bucket",
+    "robust_z",
     "sector_neutral",
-    "NEUTRAL_SCORE",
+    "sigmoid_z",
+    "winsorized_z",
+    "zscore",
 ]
 
 NEUTRAL_SCORE = 50.0

@@ -12,7 +12,11 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from stock_grader.data.sec import build_fundamentals, normalize_duration_facts, normalize_instant_facts
+from stock_grader.data.sec import (
+    build_fundamentals,
+    normalize_duration_facts,
+    normalize_instant_facts,
+)
 from stock_grader.types import PitMode
 
 

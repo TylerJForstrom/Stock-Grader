@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from ..types import PeriodType
 
-__all__ = ["CONCEPTS", "PERIOD_TYPES", "DEI_CONCEPTS", "concept_names"]
+__all__ = ["CONCEPTS", "DEI_CONCEPTS", "PERIOD_TYPES", "concept_names"]
 
 
 # Ordered fallback chains: canonical name -> XBRL tags, most-preferred first.

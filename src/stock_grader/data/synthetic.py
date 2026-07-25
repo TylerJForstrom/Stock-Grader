@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-__all__ = ["generate_prices", "generate_panel", "SYNTHETIC_BANNER"]
+__all__ = ["SYNTHETIC_BANNER", "generate_panel", "generate_prices"]
 
 SYNTHETIC_BANNER = (
     "SYNTHETIC PRICE DATA — generated, not real market history. "

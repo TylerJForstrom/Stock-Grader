@@ -32,13 +32,13 @@ than the honest fallback to equal weights, which is what happens.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import numpy as np
 import pandas as pd
 from scipy import stats
-from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.cluster.hierarchy import linkage
 from scipy.optimize import minimize
 from scipy.spatial.distance import squareform
 
@@ -46,7 +46,7 @@ from .registry import WEIGHTINGS
 
 log = logging.getLogger(__name__)
 
-__all__ = ["WeightingContext", "compute_weights", "WEIGHT_METHOD_INFO"]
+__all__ = ["WEIGHT_METHOD_INFO", "WeightingContext", "compute_weights"]
 
 _EPS = 1e-12
 _MIN_PANEL = 5  # rows below which a cross-sectional statistic is not worth computing
@@ -772,7 +772,7 @@ def bagged_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
         sample = X.iloc[rng.integers(0, n, size=n)]
         try:
             vectors.append(compute_weights(sample, method=base, ctx=ctx))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             ctx.warn(f"bagged: base method {base} failed ({exc})")
             break
     if not vectors:
@@ -795,7 +795,7 @@ def consensus_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
             continue
         try:
             vectors.append(compute_weights(X, method=name, ctx=ctx))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             ctx.warn(f"consensus: method {name} failed ({exc}), skipped")
     if not vectors:
         return _equal(X.columns)

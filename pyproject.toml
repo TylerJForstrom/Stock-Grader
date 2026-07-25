@@ -6,7 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "stock-grader"
 version = "0.1.0"
 description = "Grade a stock A+..F from fundamentals, statistics, and risk — with pluggable weighting methods at every level"
+readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["finance", "investing", "stocks", "sec", "edgar", "xbrl", "factor-investing", "quant"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy>=1.26",
     "pandas>=2.1",
@@ -19,13 +30,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "pytest-cov"]
+dev = ["pytest>=7.4", "pytest-cov", "ruff>=0.5", "mypy>=1.8", "pandas-stubs", "types-requests"]
 
 [project.scripts]
 stock-grader = "stock_grader.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+stock_grader = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -35,3 +49,52 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "SIM",       # simplify
+    "RUF",       # ruff-specific
+    "PERF",      # performance
+    "ISC",       # implicit string concat
+    "PL",        # pylint subset
+]
+ignore = [
+    # Financial reporting periods are calendar dates, not instants; attaching a timezone to a
+    # fiscal quarter end would imply a precision the filings do not have.
+    "DTZ",
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915",  # metric functions legitimately branch a lot
+    "PLR2004",  # named constants for every threshold would hurt readability of formulas
+    "E501",     # line length is enforced by the formatter, not the linter
+    # Em dashes and en dashes in reports and docstrings are deliberate typography.
+    "RUF001", "RUF002", "RUF003",
+    "SIM102", "SIM108",  # nested ifs are often clearer than the collapsed form here
+    "B007",              # `for _ in range(n)` retry loops read fine
+    "PERF102", "RUF005", # micro-optimisations that hurt readability
+    "RUF046",            # int(round(x)) is deliberate: numpy round can return a numpy float
+    "UP042",             # (str, Enum) stays for 3.11 compatibility with StrEnum semantics
+    "SIM105", "ISC003", "PLW2901", "RUF043",
+    # Lazy imports are deliberate: they break import cycles between the metric modules and keep
+    # sklearn out of the import path for anyone not using the supervised weighting methods.
+    "PLC0415",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004", "PLC0415"]   # magic numbers and local imports are fine in tests
+"scripts/*" = ["PLC0415"]
+
+[tool.mypy]
+# Deliberately unset python_version: numpy's bundled stubs use 3.12+ syntax, so pinning to the
+# package's 3.11 floor makes mypy fail parsing them before it reaches any of this code. Runtime
+# support is still 3.11+, which CI verifies by actually running the suite on each version.
+files = ["src"]
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true

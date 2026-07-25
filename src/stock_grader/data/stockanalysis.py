@@ -109,7 +109,7 @@ class StockAnalysisPriceProvider(PriceProvider):
             if age_hours < self.ttl_hours:
                 try:
                     return pd.read_parquet(cache)
-                except Exception:  # noqa: BLE001 - a bad cache should refetch, not crash
+                except Exception:
                     log.debug("unreadable cache %s, refetching", cache)
 
         self._throttle()
@@ -159,6 +159,6 @@ class StockAnalysisPriceProvider(PriceProvider):
         frame = frame.sort_index()
         try:
             frame.to_parquet(cache)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.debug("could not cache %s: %s", ticker, exc)
         return frame

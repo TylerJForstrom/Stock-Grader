@@ -22,6 +22,7 @@ import logging
 import os
 from datetime import date
 from pathlib import Path
+from typing import ClassVar
 
 import pandas as pd
 import requests
@@ -29,15 +30,15 @@ import requests
 log = logging.getLogger(__name__)
 
 __all__ = [
-    "PriceProvider",
+    "OHLCV_COLUMNS",
     "BenchmarkProvider",
     "CSVPriceProvider",
-    "YahooPriceProvider",
+    "ChainedPriceProvider",
+    "PriceProvider",
+    "RiskFreeProvider",
     "StooqPriceProvider",
     "TiingoPriceProvider",
-    "ChainedPriceProvider",
-    "RiskFreeProvider",
-    "OHLCV_COLUMNS",
+    "YahooPriceProvider",
 ]
 
 OHLCV_COLUMNS = ["open", "high", "low", "close", "adj_close", "volume"]
@@ -79,7 +80,7 @@ class PriceProvider:
     def get(self, ticker: str, *, start: date | None = None, end: date | None = None) -> pd.DataFrame | None:
         try:
             df = self._fetch(ticker, start=start, end=end)
-        except Exception as exc:  # noqa: BLE001 - a data source must never break the grade
+        except Exception as exc:
             log.warning("%s price fetch failed for %s: %s", self.name, ticker, exc)
             return None
         if df is None or df.empty:
@@ -278,7 +279,7 @@ class RiskFreeProvider:
     _URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
     # 3-month T-bill is the standard short-rate proxy; 10-year for term-structure work.
-    SERIES = {"3m": "DTB3", "10y": "DGS10"}
+    SERIES: ClassVar[dict[str, str]] = {"3m": "DTB3", "10y": "DGS10"}
 
     def __init__(self, cache_dir: str | Path | None = None, timeout: float = 20.0) -> None:
         self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader")
@@ -301,7 +302,7 @@ class RiskFreeProvider:
                 log.warning("FRED returned HTTP %s for %s", resp.status_code, series_id)
                 return None
             frame = pd.read_csv(io.StringIO(resp.text))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("FRED fetch failed for %s: %s", series_id, exc)
             return None
         date_col = frame.columns[0]
@@ -335,7 +336,7 @@ class BenchmarkProvider:
 
     name = "fred_benchmark"
 
-    SERIES = {"SP500": "SP500", "NASDAQ": "NASDAQCOM", "DJIA": "DJIA"}
+    SERIES: ClassVar[dict[str, str]] = {"SP500": "SP500", "NASDAQ": "NASDAQCOM", "DJIA": "DJIA"}
 
     def __init__(self, cache_dir: str | Path | None = None, timeout: float = 20.0) -> None:
         self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader")
@@ -362,7 +363,7 @@ class BenchmarkProvider:
                     log.warning("FRED benchmark %s returned HTTP %s", series_id, response.status_code)
                     return None
                 raw = pd.read_csv(io.StringIO(response.text))
-            except Exception as exc:  # noqa: BLE001 - a benchmark must never break a grade
+            except Exception as exc:
                 log.warning("FRED benchmark %s failed: %s", series_id, exc)
                 return None
             date_col = raw.columns[0]

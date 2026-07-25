@@ -52,7 +52,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-__all__ = ["SECInsiderPriceProvider", "implied_price_from_float", "MARKET_PRICED_CODES"]
+__all__ = ["MARKET_PRICED_CODES", "SECInsiderPriceProvider", "implied_price_from_float"]
 
 # Form 4 transaction codes that execute at the prevailing market price.
 #   S = open-market sale, P = open-market purchase, F = shares withheld at market to cover tax.
@@ -128,7 +128,7 @@ class SECInsiderPriceProvider:
         if cache.exists() and not refresh:
             try:
                 return pd.read_parquet(cache)
-            except Exception:  # noqa: BLE001 - a corrupt cache should refetch, not crash
+            except Exception:
                 log.debug("unreadable insider cache %s, refetching", cache)
 
         url = _DATASET_URL.format(quarter=quarter)
@@ -192,7 +192,7 @@ class SECInsiderPriceProvider:
         )
         try:
             table.to_parquet(cache, index=False)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.debug("could not cache insider prices for %s: %s", quarter, exc)
         return table
 
@@ -274,7 +274,7 @@ def resolve_price(
     ticker: str,
     *,
     asof: date,
-    insider: "SECInsiderPriceProvider | None",
+    insider: SECInsiderPriceProvider | None,
     public_float: float | None,
     float_history: pd.Series | None,
     shares_outstanding: float | None,

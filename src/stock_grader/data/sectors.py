@@ -16,11 +16,11 @@ from __future__ import annotations
 from ..types import SectorClass
 
 __all__ = [
-    "classify_sic",
     "SECTOR_DISABLED_METRICS",
     "SECTOR_DISABLED_PILLARS",
-    "is_applicable",
     "altman_variant_for",
+    "classify_sic",
+    "is_applicable",
     "sector_label",
 ]
 

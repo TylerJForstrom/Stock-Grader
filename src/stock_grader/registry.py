@@ -8,12 +8,27 @@ methods``, ``stock-grader metrics``) read straight off these registries.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Iterator, TypeVar
+from typing import Any, Generic, TypeVar
 
-__all__ = ["Registry", "MetricSpec", "METRICS", "NORMALIZERS", "AGGREGATORS", "WEIGHTINGS",
-           "GRADERS", "PROVIDERS", "PROFILES", "metric", "normalizer", "aggregator",
-           "weighting", "grader", "provider"]
+__all__ = [
+    "AGGREGATORS",
+    "GRADERS",
+    "METRICS",
+    "NORMALIZERS",
+    "PROFILES",
+    "PROVIDERS",
+    "WEIGHTINGS",
+    "MetricSpec",
+    "Registry",
+    "aggregator",
+    "grader",
+    "metric",
+    "normalizer",
+    "provider",
+    "weighting",
+]
 
 T = TypeVar("T")
 
@@ -41,7 +56,7 @@ class Registry(Generic[T]):
                 except AttributeError:
                     pass
             try:
-                setattr(obj, "name", name)
+                obj.name = name
             except AttributeError:
                 pass
             return self.register(name, obj)

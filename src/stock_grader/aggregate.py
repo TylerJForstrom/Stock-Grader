@@ -33,15 +33,15 @@ from .registry import AGGREGATORS
 __all__ = [
     "aggregate",
     "align_and_renormalize",
-    "weighted_mean",
-    "weighted_median",
-    "trimmed_mean",
+    "ces",
     "geometric_mean",
     "harmonic_mean",
-    "ces",
-    "soft_min",
     "owa",
+    "soft_min",
     "topsis_score",
+    "trimmed_mean",
+    "weighted_mean",
+    "weighted_median",
 ]
 
 _EPS = 1e-12

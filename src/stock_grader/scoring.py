@@ -21,19 +21,19 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .aggregate import align_and_renormalize, aggregate
+from .aggregate import aggregate, align_and_renormalize
 from .types import Coverage, MetricResult, PillarScore
 
 __all__ = [
     "GRADE_CUTOFFS",
-    "to_letter",
-    "letter_to_midpoint",
-    "grade_from_percentile",
-    "hybrid_grade",
-    "uncertainty_interval",
+    "apply_hysteresis",
     "coverage_penalty",
     "explain_contributions",
-    "apply_hysteresis",
+    "grade_from_percentile",
+    "hybrid_grade",
+    "letter_to_midpoint",
+    "to_letter",
+    "uncertainty_interval",
 ]
 
 

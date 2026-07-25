@@ -17,7 +17,7 @@ from stock_grader.metrics.engine import evaluate_metrics
 from stock_grader.pipeline import GradeConfig, grade_universe
 from stock_grader.profiles import consensus_grade, get_profile, profile_names
 from stock_grader.registry import METRICS, WEIGHTINGS
-from stock_grader.types import Coverage, Fundamentals, SecuritySnapshot, SectorClass
+from stock_grader.types import Coverage, Fundamentals, SectorClass, SecuritySnapshot
 
 
 def _fundamentals(scale: float = 1.0, *, quality: float = 1.0) -> Fundamentals:

@@ -26,16 +26,16 @@ from ..types import SecuritySnapshot
 from .util import safe_div
 
 __all__ = [
-    "efficiency_ratio",
-    "net_interest_income_to_assets",
-    "fee_income_share",
-    "deposits_to_assets",
-    "loans_to_deposits",
     "allowance_coverage",
+    "deposits_to_assets",
+    "efficiency_ratio",
+    "fee_income_share",
+    "funds_from_operations",
+    "loans_to_deposits",
+    "net_interest_income_to_assets",
+    "price_to_ffo",
     "provision_burden",
     "tangible_common_equity_ratio",
-    "funds_from_operations",
-    "price_to_ffo",
 ]
 
 

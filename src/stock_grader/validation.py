@@ -38,7 +38,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-__all__ = ["OutcomeLabel", "LABEL_QUERIES", "EdgarLabelSearch", "separation_report", "auc"]
+__all__ = ["LABEL_QUERIES", "EdgarLabelSearch", "OutcomeLabel", "auc", "separation_report"]
 
 _EFTS = "https://efts.sec.gov/LATEST/search-index"
 

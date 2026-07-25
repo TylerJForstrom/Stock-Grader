@@ -14,7 +14,7 @@ from stock_grader import aggregate as agg
 from stock_grader import normalize as norm
 from stock_grader import weighting as wt
 from stock_grader.registry import AGGREGATORS, NORMALIZERS, WEIGHTINGS
-from stock_grader.scoring import to_letter, uncertainty_interval, explain_contributions
+from stock_grader.scoring import explain_contributions, to_letter, uncertainty_interval
 
 CROSS_SECTIONAL = [n for n in NORMALIZERS.names() if n not in ("piecewise", "double_sigmoid")]
 
@@ -216,7 +216,6 @@ def test_supervised_methods_recover_a_planted_signal(panel):
     factor that is pure noise.
     """
     returns = 2.0 * panel["roe"] + 0.25 * np.random.default_rng(3).standard_normal(len(panel))
-    ctx = wt.WeightingContext(forward_returns=returns)
     for method in ("ic", "regression", "shapley"):
         weights = wt.compute_weights(panel, method=method, ctx=wt.WeightingContext(forward_returns=returns))
         assert weights["roe"] > weights["debt"], f"{method} failed to find the planted signal"

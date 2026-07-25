@@ -23,7 +23,7 @@ import pandas as pd
 from .pipeline import GradeConfig, grade_universe
 from .types import GradeReport, SecuritySnapshot
 
-__all__ = ["PROFILE_SPECS", "get_profile", "profile_names", "consensus_grade", "ConsensusResult"]
+__all__ = ["PROFILE_SPECS", "ConsensusResult", "consensus_grade", "get_profile", "profile_names"]
 
 
 # pillar weights, aggregator rho, thesis

@@ -19,7 +19,7 @@ silently averaged in as a real observation.
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -29,18 +29,18 @@ import pandas as pd
 _T_STAT_CAP = 1e6
 
 __all__ = [
+    "cagr",
+    "clip_finite",
+    "coalesce",
+    "consistency",
+    "growth_rate",
+    "is_finite_number",
+    "linear_trend",
+    "mean_or_none",
+    "r_squared_loglinear",
     "safe_div",
     "safe_log",
-    "cagr",
-    "growth_rate",
-    "mean_or_none",
     "winsorize",
-    "clip_finite",
-    "linear_trend",
-    "r_squared_loglinear",
-    "consistency",
-    "is_finite_number",
-    "coalesce",
 ]
 
 

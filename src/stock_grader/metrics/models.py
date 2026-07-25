@@ -20,7 +20,7 @@ from ..registry import metric
 from ..types import SecuritySnapshot
 from .util import safe_div
 
-__all__ = ["beneish_m_score", "ohlson_o_score", "altman_z_prime"]
+__all__ = ["altman_z_prime", "beneish_m_score", "ohlson_o_score"]
 
 
 def _pair(s: SecuritySnapshot, concept: str) -> tuple[float | None, float | None]:
@@ -84,15 +84,18 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     )
     # Asset quality index — the share of assets that is neither current nor plant.
     aqi = None
-    if None not in (curr_ca, curr_ppe, prior_ca, prior_ppe):
-        curr_soft = 1.0 - safe_div(curr_ca + curr_ppe, curr_ta, positive_denominator=True)
-        prior_soft = 1.0 - safe_div(prior_ca + prior_ppe, prior_ta, positive_denominator=True)
-        aqi = _index(curr_soft, prior_soft)
+    if (curr_ca is not None and curr_ppe is not None
+            and prior_ca is not None and prior_ppe is not None):
+        curr_hard = safe_div(curr_ca + curr_ppe, curr_ta, positive_denominator=True)
+        prior_hard = safe_div(prior_ca + prior_ppe, prior_ta, positive_denominator=True)
+        if curr_hard is not None and prior_hard is not None:
+            aqi = _index(1.0 - curr_hard, 1.0 - prior_hard)
     # Sales growth index.
     sgi = _index(curr_rev, prior_rev)
     # Depreciation index — a falling depreciation rate inflates earnings.
     depi = None
-    if None not in (curr_dep, curr_ppe, prior_dep, prior_ppe):
+    if (curr_dep is not None and curr_ppe is not None
+            and prior_dep is not None and prior_ppe is not None):
         curr_rate = safe_div(curr_dep, curr_dep + curr_ppe, positive_denominator=True)
         prior_rate = safe_div(prior_dep, prior_dep + prior_ppe, positive_denominator=True)
         depi = _index(prior_rate, curr_rate)
@@ -103,7 +106,8 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     )
     # Leverage index.
     lvgi = None
-    if None not in (curr_ltd, curr_cl, prior_ltd, prior_cl):
+    if (curr_ltd is not None and curr_cl is not None
+            and prior_ltd is not None and prior_cl is not None):
         lvgi = _index(
             safe_div(curr_ltd + curr_cl, curr_ta, positive_denominator=True),
             safe_div(prior_ltd + prior_cl, prior_ta, positive_denominator=True),
@@ -174,7 +178,9 @@ def ohlson_o_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     pretax = f.ttm("pretax_income")
     depreciation = f.ttm("depreciation_amortization")
 
-    if None in (total_assets, total_liabilities, curr_ni) or total_assets <= 0:
+    if total_assets is None or total_liabilities is None or curr_ni is None:
+        return None
+    if total_assets <= 0:
         return None
     if total_liabilities <= 0:
         return None
@@ -235,7 +241,7 @@ def altman_z_prime(s: SecuritySnapshot) -> float | None:
     retained = f.latest("retained_earnings")
     equity = f.latest("equity")
     ebit = f.ttm("ebit")
-    if None in (working_capital, retained, ebit, equity):
+    if working_capital is None or retained is None or ebit is None or equity is None:
         return None
 
     # Retained earnings over assets is unbounded above, and under US GAAP treasury stock is

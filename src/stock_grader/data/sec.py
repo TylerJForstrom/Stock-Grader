@@ -30,7 +30,7 @@ import pandas as pd
 import requests
 
 from ..types import Fundamentals, PitMode, SecuritySnapshot
-from .concepts import AVERAGED_CONCEPTS, CONCEPTS, DEI_CONCEPTS, PERIOD_TYPES, chains_for
+from .concepts import AVERAGED_CONCEPTS, DEI_CONCEPTS, PERIOD_TYPES, chains_for
 from .sectors import classify_sic
 
 log = logging.getLogger(__name__)

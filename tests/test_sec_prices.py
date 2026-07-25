@@ -36,7 +36,7 @@ class TestTransactionCodes:
         Including code M would drag a price estimate toward strikes set years earlier; A (grant)
         and G (gift) are frequently recorded at zero.
         """
-        assert MARKET_PRICED_CODES == {"S", "P", "F"}
+        assert {"S", "P", "F"} == MARKET_PRICED_CODES
         for code in ("M", "A", "G", "D", "J"):
             assert code not in MARKET_PRICED_CODES
 
@@ -223,13 +223,13 @@ class TestBenchmark:
     def test_capm_metrics_fire_once_a_benchmark_exists(self):
         from datetime import date as _date
 
+        import pandas as pd
+
         from stock_grader.data.synthetic import generate_panel
         from stock_grader.metrics import statistical  # noqa: F401
         from stock_grader.metrics.engine import evaluate_one
         from stock_grader.registry import METRICS
         from stock_grader.types import Coverage, SecuritySnapshot
-
-        import pandas as pd
 
         prices, benchmark, _ = generate_panel(["X"], n_days=700, seed=2, synthetic=True)
         # capm_alpha also declares needs_risk_free: a 0% rate is a different, flattering statistic.
@@ -269,7 +269,6 @@ class TestStockAnalysisProvider:
 
     def test_payload_missing_the_adjusted_column_is_refused(self):
         """Guessing which column is the adjusted close would silently drop dividends."""
-        import pandas as pd
 
         from stock_grader.data.stockanalysis import StockAnalysisPriceProvider
 
@@ -322,10 +321,10 @@ class TestProfileWeightCoverage:
 
     def test_zero_weight_pillars_are_reported(self):
         """A computed pillar with no weight must say so rather than vanish."""
-        from datetime import date as _date
+
+        from tests.test_pipeline import _universe
 
         from stock_grader.pipeline import GradeConfig, grade_universe
-        from tests.test_pipeline import _universe
 
         config = GradeConfig(pillar_weights={"profitability": 1.0}, pillar_weighting="fixed")
         report = next(iter(grade_universe(_universe(6), config).values()))

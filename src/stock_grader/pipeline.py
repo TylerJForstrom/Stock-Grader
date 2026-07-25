@@ -23,14 +23,13 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import date
 
 import numpy as np
 import pandas as pd
 
 from .aggregate import aggregate
 from .metrics.engine import evaluate_metrics
-from .normalize import NEUTRAL_SCORE, normalize_series
+from .normalize import normalize_series
 from .registry import METRICS
 from .scoring import (
     build_pillar_score,
@@ -46,7 +45,7 @@ from .weighting import WeightingContext, compute_weights
 
 log = logging.getLogger(__name__)
 
-__all__ = ["GradeConfig", "grade_universe", "grade_one", "build_metric_matrix"]
+__all__ = ["GradeConfig", "build_metric_matrix", "grade_one", "grade_universe"]
 
 MIN_COVERAGE_TO_GRADE = 0.35
 

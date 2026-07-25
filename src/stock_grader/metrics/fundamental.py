@@ -455,7 +455,8 @@ def altman_z(s: SecuritySnapshot) -> float | None:
     liabilities = _latest(s, "liabilities")
     sales = _ttm(s, "revenue")
     cap = s.market_cap
-    if None in (working_capital, retained, ebit, liabilities, sales, cap) or liabilities <= 0:
+    if (working_capital is None or retained is None or ebit is None
+            or liabilities is None or sales is None or cap is None or liabilities <= 0):
         return None
     return float(
         1.2 * (working_capital / assets)
@@ -502,7 +503,7 @@ def piotroski_f_score(s: SecuritySnapshot) -> float | None:
 
     prev_assets, curr_assets = pair("assets")
     prev_income, curr_income = pair("net_income")
-    prev_cfo, curr_cfo = pair("cfo")
+    _prev_cfo, curr_cfo = pair("cfo")
 
     roa_curr = safe_div(curr_income, curr_assets, positive_denominator=True)
     roa_prev = safe_div(prev_income, prev_assets, positive_denominator=True)

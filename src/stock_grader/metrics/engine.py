@@ -22,7 +22,7 @@ would hide a real bug — so the failure is captured and surfaced in the report.
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from collections.abc import Iterable
 
 from ..data.sectors import is_applicable
 from ..registry import METRICS, MetricSpec
@@ -31,7 +31,7 @@ from .util import is_finite_number
 
 log = logging.getLogger(__name__)
 
-__all__ = ["evaluate_metrics", "evaluate_one", "coverage_summary", "MIN_HISTORY_DEFAULT"]
+__all__ = ["MIN_HISTORY_DEFAULT", "coverage_summary", "evaluate_metrics", "evaluate_one"]
 
 MIN_HISTORY_DEFAULT = 60  # trading days below which price-derived statistics are unreliable
 
@@ -86,7 +86,7 @@ def evaluate_one(spec: MetricSpec, snapshot: SecuritySnapshot) -> MetricResult:
 
     try:
         value = spec.fn(snapshot)
-    except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
+    except Exception as exc:
         log.debug("metric %s raised for %s: %s", spec.name, snapshot.ticker, exc)
         result.coverage = Coverage.MISSING
         result.note = f"error: {type(exc).__name__}: {exc}"

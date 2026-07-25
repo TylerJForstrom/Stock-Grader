@@ -18,14 +18,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 from rich.console import Console
 
-from . import __version__
-
 # Importing these modules is what populates the registries.
-from . import aggregate, normalize, weighting  # noqa: F401
-from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
-
+from . import __version__, aggregate, normalize, weighting  # noqa: F401
 from .data.prices import (
     BenchmarkProvider,
     ChainedPriceProvider,
@@ -34,9 +31,10 @@ from .data.prices import (
     YahooPriceProvider,
 )
 from .data.sec import SECClient, SECProvider
-from .data.stockanalysis import StockAnalysisPriceProvider
 from .data.sec_prices import SECInsiderPriceProvider, resolve_price
+from .data.stockanalysis import StockAnalysisPriceProvider
 from .data.synthetic import generate_prices
+from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from .pipeline import GradeConfig, grade_universe
 from .profiles import consensus_grade, get_profile, profile_names
 from .registry import AGGREGATORS, METRICS, NORMALIZERS, WEIGHTINGS
@@ -181,7 +179,9 @@ def _build_snapshots(
                         "understated by cumulative dividends"
                     )
         if args.synthetic_prices and snapshot.prices is None:
-            snapshot.prices = generate_prices(ticker, n_days=1300, end=asof, synthetic=True)
+            snapshot.prices = generate_prices(
+                ticker, n_days=1300, end=pd.Timestamp(asof), synthetic=True
+            )
             snapshot.meta["synthetic_prices"] = True
             if snapshot.price is None:
                 snapshot.price = float(snapshot.prices["adj_close"].iloc[-1])
@@ -322,8 +322,8 @@ def cmd_consensus(args: argparse.Namespace) -> int:
 
 
 def cmd_methods(args: argparse.Namespace) -> int:
-    from rich.table import Table
     from rich.box import SIMPLE
+    from rich.table import Table
 
     table = Table(box=SIMPLE, title="Weighting methods", title_justify="left", header_style="bold")
     table.add_column("name", style="cyan")
@@ -347,8 +347,8 @@ def cmd_methods(args: argparse.Namespace) -> int:
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
-    from rich.table import Table
     from rich.box import SIMPLE
+    from rich.table import Table
 
     table = Table(box=SIMPLE, title=f"{len(METRICS)} registered metrics", title_justify="left",
                   header_style="bold")
@@ -456,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         console.print("\n[dim]interrupted[/dim]")
         return 130
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         console.print(f"[red]error:[/red] {exc}")
         if getattr(args, "verbose", False):
             raise

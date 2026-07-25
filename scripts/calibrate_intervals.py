@@ -32,7 +32,6 @@ import numpy as np
 from stock_grader import aggregate, normalize, weighting  # noqa: F401
 from stock_grader.metrics import fundamental, models, statistical  # noqa: F401
 from stock_grader.pipeline import GradeConfig, grade_universe
-from stock_grader.types import Coverage
 
 
 def mask_metrics(snapshots, fraction: float, rng: np.random.Generator):
@@ -70,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     sys.path.insert(0, "tests")
-    from test_pipeline import _universe  # noqa: PLC0415 - test fixture reused deliberately
+    from test_pipeline import _universe
 
     snapshots = _universe(args.universe_size)
     truth = {t: r.score for t, r in grade_universe(snapshots, GradeConfig(seed=0)).items()}
@@ -107,8 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {fraction:7.0%} {coverage:9.3f} {width:13.2f} {total:6}   "
               f"{'ok' if ok else 'MISCALIBRATED'}")
 
-    print(f"\ncoverage below target means the interval is too narrow and the grade is being sold "
-          f"as\nmore certain than it is; above target means it is too wide to be useful.")
+    print("\ncoverage below target means the interval is too narrow and the grade is being sold "
+          "as\nmore certain than it is; above target means it is too wide to be useful.")
     return 1 if failures else 0
 
 
