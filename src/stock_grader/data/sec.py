@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -236,6 +237,7 @@ def normalize_duration_facts(
     pit_mode: PitMode = PitMode.LATEST,
     asof: date | None = None,
     averaged: bool = False,
+    concept: str | None = None,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """Turn a duration fact into (discrete quarters, fiscal years, filing dates).
 
@@ -282,6 +284,12 @@ def normalize_duration_facts(
         if value is None:
             continue
         if n_q == 1:
+            if concept in SIGN_CONSTRAINED and float(value) < 0:
+                # Filers make sign errors too. Chevron filed capex of -$4.452B for 2008-Q1 (2 of
+                # 160 records), which no derivation gate can catch because it is what the company
+                # actually reported. Cash paid out is not negative.
+                log.info("%s %s: dropping filed negative value %.4g", concept or "fact", end, value)
+                continue
             quarters[end] = float(value)
             filed = _parse(rec.get("filed"))
             if filed:
@@ -313,7 +321,18 @@ def normalize_duration_facts(
             q1 = next((v for e, v in sorted(quarters.items()) if start <= e <= end), None)
             prior_value = q1
         if prior_value is not None:
-            quarters[end] = value - prior_value
+            # Same vintage hazard as the Q4 derivation: two year-to-date records selected
+            # independently can come from different restatements, so their difference is not a
+            # quarter. Chevron's 2008-Q1 capex came out at -$4.45B this way, between siblings of
+            # +$13.4B and +$4.7B.
+            differenced = value - prior_value
+            if _plausible_q4(concept, differenced, list(quarters.values())[-3:]):
+                quarters[end] = differenced
+            else:
+                log.info(
+                    "%s %s: rejecting year-to-date difference of %.4g", concept or "fact",
+                    end, differenced,
+                )
 
     # Pass 3: derive the missing Q4 from the fiscal-year total.
     for fy_end, fy_value in sorted(years.items()):
@@ -322,7 +341,15 @@ def normalize_duration_facts(
             continue
         inside = sorted(e for e in quarters if fy_start <= e <= fy_end)
         if len(inside) == 3 and fy_end not in quarters:
-            quarters[fy_end] = fy_value - sum(quarters[e] for e in inside)
+            siblings = [quarters[e] for e in inside]
+            derived = fy_value - sum(siblings)
+            if _plausible_q4(concept, derived, siblings):
+                quarters[fy_end] = derived
+            else:
+                log.info(
+                    "%s %s: rejecting derived Q4 of %.4g against sibling quarters %s",
+                    concept or "fact", fy_end, derived, [f"{v:.4g}" for v in siblings],
+                )
 
     q_series = pd.Series(quarters, dtype="float64").sort_index()
     a_series = pd.Series(years, dtype="float64").sort_index()
@@ -370,6 +397,49 @@ def normalize_instant_facts(
         if pick is not None and pick.get("val") is not None:
             out[end] = float(pick["val"])
     return pd.Series(out, dtype="float64").sort_index()
+
+
+# Concepts that cannot legitimately be negative in a single quarter — cash paid out, share counts,
+# revenue, and depreciation. A negative here is a filer error or a failed derivation, never a
+# business event.
+#
+# Deliberately excludes income_tax, which is genuinely negative when a loss produces a tax benefit
+# (measured across 20 filers, that was the overwhelming majority of apparent "violations"), and
+# excludes operating_income, net_income and pretax_income, which are negative whenever a company
+# loses money. Constraining those would delete real losses — precisely the companies a solvency
+# pillar most needs to see.
+SIGN_CONSTRAINED = frozenset({
+    "revenue", "cogs", "capex", "depreciation_amortization",
+    "shares_basic", "shares_diluted", "buybacks", "dividends_paid",
+})
+
+
+def _plausible_q4(concept: str | None, derived: float, siblings: list[float]) -> bool:
+    """Whether a Q4 derived as FY minus three quarters can be believed.
+
+    The fiscal-year total and the three quarters are each selected independently, so they can come
+    from **different restatement vintages** and the subtraction then mixes them. Target's FY2013
+    capex was filed at $3.453B and later restated to $1.886B while the year-to-date Q3 figure stayed
+    at $2.839B in both vintages — deriving Q4 from the restated year and the original quarters gave
+    **-$953M**, the only negative in the series, which an ``.abs()`` downstream quietly turned into
+    a plausible $953M outflow inside free cash flow.
+
+    Two checks, both on the value rather than on filing dates: filing dates do not catch Target,
+    whose winning fiscal-year record was filed *after* all four quarters.
+    """
+    if not np.isfinite(derived):
+        return False
+    if concept in SIGN_CONSTRAINED and derived < 0:
+        return False
+    magnitudes = [abs(v) for v in siblings if np.isfinite(v)]
+    if not magnitudes:
+        return True
+    median = float(np.median(magnitudes))
+    if median <= 0:
+        return True
+    # A real fourth quarter looks like its siblings. Wide bounds on purpose: seasonal businesses do
+    # earn several times a quiet quarter, so this catches arithmetic failure, not seasonality.
+    return 0.15 * median <= abs(derived) <= 6.0 * median
 
 
 def _annualise_instants(series: pd.Series) -> pd.Series:
@@ -463,7 +533,8 @@ def build_fundamentals(
                 annual[concept] = _annualise_instants(series)
         else:
             q, a, f = normalize_duration_facts(
-                fact, pit_mode=pit_mode, asof=asof, averaged=concept in AVERAGED_CONCEPTS
+                fact, pit_mode=pit_mode, asof=asof,
+                averaged=concept in AVERAGED_CONCEPTS, concept=concept,
             )
             if not q.empty:
                 quarterly[concept] = q
@@ -552,8 +623,13 @@ def _derive(df: pd.DataFrame) -> None:
     if "ebitda" not in df and {"ebit", "depreciation_amortization"} <= set(df.columns):
         df["ebitda"] = df["ebit"] + df["depreciation_amortization"]
     if "fcf" not in df and {"cfo", "capex"} <= set(df.columns):
-        # capex is reported as a positive outflow in the cash-flow statement.
-        df["fcf"] = df["cfo"] - df["capex"].abs()
+        # Capex is filed as a positive outflow — measured 0 negatives in 1,547 raw records across
+        # fourteen large filers. So `.abs()` here never corrected a sign convention; it only ever
+        # turned a failed Q4 derivation into a plausible number. Target's -$953M derived capex
+        # became a +$953M outflow inside free cash flow, off by $1.9B and completely invisible.
+        # The Q4 plausibility gate now rejects such values, and without the mask a negative that
+        # slips through propagates visibly instead of silently.
+        df["fcf"] = df["cfo"] - df["capex"]
     if "working_capital" not in df and {"current_assets", "current_liabilities"} <= set(df.columns):
         df["working_capital"] = df["current_assets"] - df["current_liabilities"]
     if "tangible_book" not in df and "equity" in df:
@@ -594,6 +670,16 @@ class SECProvider:
         refresh: bool = False,
     ) -> SecuritySnapshot:
         """Build a snapshot with fundamentals, sector and share count. Never raises on data gaps."""
+        if asof is not None and asof != date.today() and pit_mode is not PitMode.PIT:
+            # `_select` filters on filed <= asof only under PIT, so a historical asof would be
+            # accepted and then ignored. Measured on Bed Bath & Beyond at asof=2019-01-01: PIT
+            # returns assets of $7.32B from a 2018-09-01 balance sheet, the default returns $2.23B
+            # from 2023-02-25 — four years of leakage from one omitted keyword, which would let a
+            # distress model score companies on their post-bankruptcy balance sheets.
+            raise ValueError(
+                f"asof={asof} is ignored under PitMode.LATEST. Pass pit_mode=PitMode.PIT for "
+                f"point-in-time selection, or drop asof to grade as of today."
+            )
         asof = asof or date.today()
         snap = SecuritySnapshot(ticker=ticker.upper(), asof=asof)
 
@@ -641,10 +727,17 @@ class SECProvider:
             if tag is None:
                 continue
             series = normalize_instant_facts(dei[tag], pit_mode=pit_mode, asof=asof)
+            # normalize_instant_facts keys on the fact's own end date and filters by `filed` only
+            # under PIT, so without this a --asof 2020 run computed market_cap = price(2020) x
+            # shares(2026): silent look-ahead in the denominator of every valuation metric.
+            if asof is not None:
+                series = series[[d for d in series.index if d <= asof]]
             if series.empty:
+                snap.warnings.append(f"no {concept} observation on or before {asof}")
                 continue
             if concept == "shares_outstanding":
                 snap.shares_outstanding = float(series.iloc[-1])
+                snap.meta["shares_date"] = series.index[-1]
             elif concept == "public_float":
                 snap.public_float = float(series.iloc[-1])
                 # The full dated history, not just the latest value: pricing from public float

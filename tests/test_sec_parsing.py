@@ -530,3 +530,67 @@ def test_unknown_debt_is_not_zero_debt():
         price=10.0, shares_outstanding=100.0,
     )
     assert _enterprise_value(snapshot) is None
+
+
+class TestQ4Plausibility:
+    """The fiscal-year total and the three quarters are selected independently, so they can come
+    from different restatement vintages and the subtraction mixes them.
+
+    Target's FY2013 capex was filed at $3.453B and restated to $1.886B while year-to-date Q3 stayed
+    at $2.839B in both vintages, giving a derived Q4 of -$953M — which an ``.abs()`` downstream
+    turned into a plausible $953M outflow inside free cash flow, off by $1.9B and invisible.
+    """
+
+    def _facts(self, q1: float, q2: float, q3: float, fy: float) -> dict:
+        records = [
+            _duration("2024-01-01", "2024-03-31", q1),
+            _duration("2024-04-01", "2024-06-30", q2),
+            _duration("2024-07-01", "2024-09-30", q3),
+            _duration("2024-01-01", "2024-12-31", fy, form="10-K", fp="FY"),
+        ]
+        return {"facts": {"us-gaap": {"PaymentsToAcquirePropertyPlantAndEquipment": _fact(records)}}}
+
+    def test_negative_derived_q4_is_rejected(self):
+        fundamentals = build_fundamentals(self._facts(1000.0, 1000.0, 839.0, 1886.0))
+        capex = fundamentals.quarterly["capex"].dropna()
+        assert (capex >= 0).all()
+        assert len(capex) == 3, "the implausible fourth quarter must be dropped, not stored"
+
+    def test_plausible_q4_is_kept(self):
+        fundamentals = build_fundamentals(self._facts(1000.0, 1000.0, 1000.0, 4200.0))
+        capex = fundamentals.quarterly["capex"].dropna()
+        assert len(capex) == 4
+        assert capex.iloc[-1] == pytest.approx(1200.0)
+
+    def test_wildly_oversized_q4_is_rejected(self):
+        """A quarter twenty times its siblings is arithmetic failure, not seasonality."""
+        fundamentals = build_fundamentals(self._facts(100.0, 100.0, 100.0, 20300.0))
+        assert len(fundamentals.quarterly["capex"].dropna()) == 3
+
+    def test_filed_negative_outflow_is_dropped(self):
+        """Chevron filed capex of -$4.452B for 2008-Q1; no derivation gate can catch that."""
+        records = [_duration("2008-01-01", "2008-03-31", -4.452e9)]
+        facts = {"facts": {"us-gaap": {"PaymentsToAcquirePropertyPlantAndEquipment": _fact(records)}}}
+        fundamentals = build_fundamentals(facts)
+        assert "capex" not in fundamentals.quarterly.columns or fundamentals.quarterly["capex"].dropna().empty
+
+    def test_losses_are_not_sign_constrained(self):
+        """Constraining net income would delete real losses — the companies solvency most needs."""
+        from stock_grader.data.sec import SIGN_CONSTRAINED
+
+        for concept in ("net_income", "operating_income", "pretax_income", "income_tax"):
+            assert concept not in SIGN_CONSTRAINED
+
+
+class TestAsofHonesty:
+    def test_historical_asof_without_pit_raises(self):
+        """`_select` filters on filed <= asof only under PIT, so asof was accepted then ignored.
+
+        Bed Bath & Beyond at asof=2019-01-01 returned a 2023 balance sheet under the default —
+        four years of leakage from one omitted keyword.
+        """
+        from stock_grader.data.sec import SECClient, SECProvider
+
+        provider = SECProvider(SECClient(cache_dir="/tmp/sg-asof-test"))
+        with pytest.raises(ValueError, match="ignored under PitMode.LATEST"):
+            provider.fetch("AAPL", asof=date(2019, 1, 1))

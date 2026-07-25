@@ -135,8 +135,9 @@ class Fundamentals:
                 part = self.ttm(component)
                 if part is None:
                     return None
-                # Capex is filed as a positive outflow, so free cash flow subtracts its magnitude.
-                total += sign * (abs(part) if component == "capex" else part)
+                # No abs(): capex is filed as a positive outflow (0 negatives in 1,547 sampled
+                # records), so a negative here is a derivation failure that must stay visible.
+                total += sign * part
             return float(total)
         if concept not in self.quarterly.columns:
             return None

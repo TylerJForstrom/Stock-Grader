@@ -151,7 +151,21 @@ def _build_snapshots(
             if frame is not None:
                 snapshot.prices = frame
                 snapshot.meta["price_source"] = prices.last_source
-                snapshot.price = float(frame["adj_close"].dropna().iloc[-1])
+                # Market cap wants the TRADED price, not the adjusted one. adj_close sits below
+                # the raw close by the whole cumulative dividend adjustment, and that gap grows the
+                # further back --asof reaches: AT&T's 2018-07-25 bar is close 30.25 against
+                # adjusted 14.09, a 53% deflation. Using it would deflate every historical multiple
+                # in near-exact proportion to dividend yield, so a valuation backtest would
+                # "discover" that high-yield stocks are cheap. The statistical metrics keep
+                # adj_close, where the dividend adjustment is exactly what you want.
+                column = "close" if frame["close"].notna().any() else "adj_close"
+                snapshot.price = float(frame[column].dropna().iloc[-1])
+                if column == "adj_close":
+                    snapshot.meta["price_is_adjusted"] = True
+                    snapshot.warnings.append(
+                        "no raw close available; market cap uses the adjusted close and is "
+                        "understated by cumulative dividends"
+                    )
         if args.synthetic_prices and snapshot.prices is None:
             snapshot.prices = generate_prices(ticker, n_days=1300, end=asof, synthetic=True)
             snapshot.meta["synthetic_prices"] = True
