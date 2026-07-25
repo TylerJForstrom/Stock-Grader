@@ -501,12 +501,50 @@ def _derive(df: pd.DataFrame) -> None:
         return
     if "gross_profit" not in df and {"revenue", "cogs"} <= set(df.columns):
         df["gross_profit"] = df["revenue"] - df["cogs"]
+    if "liabilities" not in df and {"assets", "equity"} <= set(df.columns):
+        # Walmart, Nike, TJX, McDonald's, Target and AbbVie never tag `Liabilities` at all, so both
+        # ohlson_o_score and altman_z_prime returned None for them while the grade was still issued
+        # — silently missing its solvency input.
+        #
+        # Derived as assets - equity, which reproduces the reported figure essentially exactly for
+        # filers that publish both. Deliberately NOT taken from LiabilitiesAndStockholdersEquity:
+        # that tag equals total *assets* for ~99% of filers, so putting it in the chain would set
+        # liabilities = assets for precisely the companies being repaired, forcing TL/TA to 1.0 and
+        # tripping Ohlson's insolvency indicator. The repair would have introduced a worse bug than
+        # the gap it closed.
+        equity_total = df["equity"]
+        if "minority_interest" in df.columns:
+            equity_total = equity_total + df["minority_interest"].fillna(0.0)
+        df["liabilities"] = df["assets"] - equity_total
     if "total_debt" not in df:
-        parts = [c for c in ("long_term_debt", "short_term_debt") if c in df.columns]
+        # Only components the company actually reports somewhere. A filer that never tags
+        # short-term borrowings at all would otherwise have every quarter refused for a missing
+        # piece it does not have, which trades one wrong number for no number.
+        parts = [c for c in ("long_term_debt", "short_term_debt")
+                 if c in df.columns and df[c].notna().any()]
         if parts:
-            df["total_debt"] = df[parts].sum(axis=1, min_count=1)
+            # min_count=len(parts), not 1. Filers tag different components in different quarters:
+            # Lowe's most recent quarter carries only short-term borrowings of $380M, so summing
+            # "whatever is present" reported that as the company's entire debt against a true
+            # $39.8B — a 99% understatement that made a leveraged retailer look debt-free.
+            # Requiring every known component leaves the row missing instead, and `latest()` then
+            # falls back to the most recent quarter where the full picture was filed.
+            df["total_debt"] = df[parts].sum(axis=1, min_count=len(parts))
     if "net_debt" not in df and "total_debt" in df and "cash" in df:
         df["net_debt"] = df["total_debt"] - df["cash"]
+    if "pretax_income" not in df and {"net_income", "income_tax"} <= set(df.columns):
+        # Recovers what removing the domestic-only geographic subtotal gave up: that tag reported a
+        # third of McDonald's true pretax income, while this puts it at $11.11B against $8.68B of
+        # net income — pretax above net income, as it must be for a taxpayer.
+        #
+        # Only a fallback, because the identity is not universal. It holds exactly for Apple and
+        # J&J (relative error 0.0000) but is 41% off for Caterpillar, where non-controlling
+        # interests and discontinued operations sit between the two lines. A filed tag therefore
+        # always wins; this fills absence only, and minority interest is netted out where tagged.
+        derived_pretax = df["net_income"] + df["income_tax"]
+        if "minority_interest" in df.columns:
+            derived_pretax = derived_pretax + df["minority_interest"].fillna(0.0)
+        df["pretax_income"] = derived_pretax
     if "ebit" not in df and "operating_income" in df:
         df["ebit"] = df["operating_income"]
     elif "ebit" not in df and {"pretax_income", "interest_expense"} <= set(df.columns):

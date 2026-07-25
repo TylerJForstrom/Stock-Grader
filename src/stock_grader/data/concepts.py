@@ -59,7 +59,12 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
     "pretax_income": (
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+        # NOT ...BeforeIncomeTaxesDomestic. That is the US-only slice of a geographic breakdown,
+        # never a synonym for consolidated pretax income. McDonald's resolved to it and reported
+        # FY2024 pretax income of $3.28B against $8.22B of net income — pretax below net income,
+        # which is impossible for a taxpayer. ``ebit = pretax + interest`` inherited the error, so
+        # EBIT margin, interest coverage, EV/EBIT and EBITDA were all built on a number about a
+        # third of the truth.
     ),
     "income_tax": ("IncomeTaxExpenseBenefit",),
     "interest_expense": (

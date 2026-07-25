@@ -169,13 +169,74 @@ class Fundamentals:
             return True  # non-date index: nothing to check
         return 240 <= span <= 400
 
-    def latest(self, concept: str, *, annual: bool = False) -> float | None:
-        """Most recent reported value for a concept."""
+    # Balance-sheet concepts assembled from components. Resolved from each component's own most
+    # recent observation rather than row-wise, because filers tag the pieces in different quarters:
+    # Home Depot and Target never file long-term and short-term debt in the same period, so a
+    # row-wise sum is permanently empty for them while each component is individually available.
+    _INSTANT_COMPOSITES: ClassVar[dict[str, tuple[str, ...]]] = {
+        "total_debt": ("long_term_debt", "short_term_debt"),
+    }
+
+    def latest(
+        self,
+        concept: str,
+        *,
+        annual: bool = False,
+        asof: date | None = None,
+        max_age_days: int | None = None,
+    ) -> float | None:
+        """Most recent reported value for a concept, optionally refusing stale ones.
+
+        Without an age bound this returns the last non-NaN value however old it is, which is how a
+        balance-sheet figure abandoned years ago reaches a ratio as though it were current.
+
+        ``max_age_days`` defaults to unbounded so existing callers are unaffected; the metric layer
+        passes ~400 days. That bound is deliberately generous rather than tight: a 10-K-only filer's
+        balance sheet is legitimately up to fifteen months old, and a stricter limit would delete
+        those companies rather than protect them.
+        """
         frame = self.annual if annual else self.quarterly
+        direct = self._latest_direct(frame, concept, asof, max_age_days)
+        if direct is not None:
+            return direct
+        # The stored column was absent, empty, or too old. Rebuilding from components can still
+        # succeed, because filers tag the pieces in different quarters than the whole: Home Depot's
+        # combined debt row was last filed in January 2024 while its long-term debt is current.
+        components = self._INSTANT_COMPOSITES.get(concept)
+        if not components:
+            return None
+        reported = [c for c in components if c in frame.columns and frame[c].notna().any()]
+        parts = [
+            self._latest_direct(frame, c, asof, max_age_days) for c in reported
+        ]
+        # Every component the company reports must resolve. A partial sum here is exactly what
+        # reported Lowe's $39.8B of debt as $380M, and the error runs one way: it understates
+        # leverage, making a company look safer and cheaper than it is.
+        if parts and all(p is not None for p in parts):
+            return float(sum(parts))  # type: ignore[arg-type]
+        return None
+
+    @staticmethod
+    def _latest_direct(
+        frame: pd.DataFrame,
+        concept: str,
+        asof: date | None,
+        max_age_days: int | None,
+    ) -> float | None:
+        """Last value of a stored column, subject to the age bound."""
         if concept not in frame.columns:
             return None
         series = frame[concept].dropna()
-        return float(series.iloc[-1]) if not series.empty else None
+        if series.empty:
+            return None
+        if asof is not None and max_age_days is not None:
+            try:
+                age = (pd.Timestamp(asof) - pd.Timestamp(series.index[-1])).days
+            except (TypeError, ValueError):
+                age = 0
+            if age > max_age_days:
+                return None
+        return float(series.iloc[-1])
 
     def history(
         self,

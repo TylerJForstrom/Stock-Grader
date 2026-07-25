@@ -415,3 +415,118 @@ class TestCurrency:
             "EarningsPerShareDiluted": {"units": {"JPY/shares": []}},
         }}}
         assert detect_currencies(facts) == {"JPY", "USD"}
+
+
+class TestDerivedLiabilities:
+    """Walmart, Nike, TJX, McDonald's, Target and AbbVie never tag ``Liabilities`` at all.
+
+    Both ohlson_o_score and altman_z_prime returned None for all six while the grade was still
+    issued — silently missing its solvency input.
+    """
+
+    def _facts(self, assets: float, equity: float, *, include_liabilities: bool = False) -> dict:
+        gaap = {
+            "Assets": _fact([_instant("2025-12-31", assets)]),
+            "StockholdersEquity": _fact([_instant("2025-12-31", equity)]),
+        }
+        if include_liabilities:
+            gaap["Liabilities"] = _fact([_instant("2025-12-31", assets - equity)])
+        return {"facts": {"us-gaap": gaap}}
+
+    def test_liabilities_derived_when_untagged(self):
+        fundamentals = build_fundamentals(self._facts(260e9, 91e9))
+        assert fundamentals.latest("liabilities") == pytest.approx(169e9)
+
+    def test_filed_tag_wins_over_derivation(self):
+        fundamentals = build_fundamentals(self._facts(260e9, 91e9, include_liabilities=True))
+        assert fundamentals.tag_used.get("liabilities") == "Liabilities"
+
+    def test_liabilities_and_equity_tag_is_not_used(self):
+        """That tag equals total *assets* for ~99% of filers.
+
+        Putting it in the chain would set liabilities = assets for exactly the companies being
+        repaired, forcing TL/TA to 1.0 and tripping Ohlson's insolvency indicator — a worse bug
+        than the gap it closes.
+        """
+        from stock_grader.data.concepts import CONCEPTS
+
+        assert "LiabilitiesAndStockholdersEquity" not in CONCEPTS["liabilities"]
+
+
+class TestPretaxChain:
+    def test_domestic_only_tag_is_not_in_the_chain(self):
+        """McDonald's resolved to the US-only geographic slice and reported pretax income of
+        $3.28B against $8.22B of net income — pretax below net income, impossible for a taxpayer."""
+        from stock_grader.data.concepts import CONCEPTS
+
+        assert "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic" not in CONCEPTS["pretax_income"]
+
+    def test_pretax_derived_from_the_identity_when_untagged(self):
+        quarters = [("2025-01-01", "2025-03-31"), ("2025-04-01", "2025-06-30"),
+                    ("2025-07-01", "2025-09-30"), ("2025-10-01", "2025-12-31")]
+        facts = {"facts": {"us-gaap": {
+            "NetIncomeLoss": _fact([_duration(s, e, 100.0) for s, e in quarters]),
+            "IncomeTaxExpenseBenefit": _fact([_duration(s, e, 30.0) for s, e in quarters]),
+        }}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.ttm("pretax_income") == pytest.approx(520.0)
+
+
+class TestTotalDebtComposition:
+    """Lowe's most recent quarter tags only short-term borrowings of $380M.
+
+    Summing "whatever is present" reported that as its entire debt, against a true $39.8B — a 99%
+    understatement that made a leveraged retailer read as debt-free.
+    """
+
+    def _facts(self, rows: list[tuple[str, float | None, float | None]]) -> dict:
+        lt = [_instant(d, v) for d, v, _ in rows if v is not None]
+        st = [_instant(d, v) for d, _, v in rows if v is not None]
+        gaap = {}
+        if lt:
+            gaap["LongTermDebt"] = _fact(lt)
+        if st:
+            gaap["ShortTermBorrowings"] = _fact(st)
+        return {"facts": {"us-gaap": gaap}}
+
+    def test_partial_quarter_does_not_become_total_debt(self):
+        facts = self._facts([("2025-01-31", 35.3e9, None), ("2026-05-01", None, 0.38e9)])
+        fundamentals = build_fundamentals(facts)
+        total = fundamentals.latest("total_debt", asof=date(2026, 7, 24), max_age_days=400)
+        assert total is None or total > 1e9, "a lone short-term line must not become total debt"
+
+    def test_single_reported_component_still_resolves(self):
+        """A filer that never tags short-term borrowings must not lose total debt entirely."""
+        facts = self._facts([("2026-05-01", 20e9, None)])
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.latest("total_debt", asof=date(2026, 7, 24), max_age_days=400) == pytest.approx(20e9)
+
+    def test_stale_values_are_refused(self):
+        facts = self._facts([("2015-01-31", 10e9, 1e9)])
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.latest("total_debt", asof=date(2026, 7, 24), max_age_days=400) is None
+
+    def test_unbounded_by_default(self):
+        facts = self._facts([("2015-01-31", 10e9, 1e9)])
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.latest("total_debt") == pytest.approx(11e9)
+
+
+def test_unknown_debt_is_not_zero_debt():
+    """``debt or 0.0`` turned "we could not read the debt" into "there is no debt".
+
+    A one-directional optimistic error across every EV multiple.
+    """
+    import pandas as pd
+
+    from stock_grader.metrics.fundamental import _enterprise_value
+    from stock_grader.types import Fundamentals, SecuritySnapshot
+
+    index = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
+    frame = pd.DataFrame({"cash": [10.0] * 4}, index=index)
+    snapshot = SecuritySnapshot(
+        ticker="X", asof=date(2026, 1, 31),
+        fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
+        price=10.0, shares_outstanding=100.0,
+    )
+    assert _enterprise_value(snapshot) is None

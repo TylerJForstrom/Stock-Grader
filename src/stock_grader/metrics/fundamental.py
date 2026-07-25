@@ -30,16 +30,33 @@ def _ttm(snapshot: SecuritySnapshot, concept: str) -> float | None:
     return f.ttm(concept) if f is not None else None
 
 
+# A balance-sheet figure older than this is not the company's current position. Generous on
+# purpose: an annual-only filer's balance sheet is legitimately up to fifteen months old.
+MAX_BALANCE_AGE_DAYS = 400
+
+
 def _latest(snapshot: SecuritySnapshot, concept: str) -> float | None:
     f = _f(snapshot)
-    return f.latest(concept) if f is not None else None
+    if f is None:
+        return None
+    return f.latest(concept, asof=snapshot.asof, max_age_days=MAX_BALANCE_AGE_DAYS)
 
 
 def _enterprise_value(snapshot: SecuritySnapshot) -> float | None:
+    """Market cap plus debt less cash. ``None`` when debt is unknown.
+
+    ``debt or 0.0`` was the bug here: it silently converted "we could not read this company's debt"
+    into "this company has no debt", which is a one-directional optimistic error across every
+    EV-based multiple — an unknown-debt company looked cheaper than a debt-free one is entitled to.
+    Cash keeps the zero default, because that error runs the other way and makes a company look
+    more expensive, and because a missing cash line is far rarer.
+    """
     cap = snapshot.market_cap
     if cap is None:
         return None
-    debt = _latest(snapshot, "total_debt") or 0.0
+    debt = _latest(snapshot, "total_debt")
+    if debt is None:
+        return None
     cash = _latest(snapshot, "cash") or 0.0
     ev = cap + debt - cash
     return ev if ev > 0 else None
