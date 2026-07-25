@@ -172,11 +172,18 @@ def linear_trend(series: pd.Series | Sequence[float]) -> tuple[float, float] | N
         return None
     x = np.arange(n, dtype="float64")
     y = values.to_numpy()
+    if not np.all(np.isfinite(y)):
+        # An inf in the series (a zero-revenue year in a margin history) makes the slope NaN, and
+        # copysign(CAP, nan) returned +1,000,000 — a maximally POSITIVE trend, so the worst input
+        # in the universe scored as the best improving margin.
+        return None
     x_centered = x - x.mean()
     denom = float((x_centered**2).sum())
     if denom == 0.0:
         return None
     slope = float((x_centered * (y - y.mean())).sum() / denom)
+    if not math.isfinite(slope):
+        return None
     intercept = float(y.mean() - slope * x.mean())
     residuals = y - (intercept + slope * x)
     dof = n - 2

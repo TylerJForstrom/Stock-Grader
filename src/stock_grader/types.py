@@ -333,7 +333,16 @@ class SecuritySnapshot:
 
     @property
     def market_cap(self) -> float | None:
+        """Price times shares, or ``None`` if either is not a usable positive number.
+
+        A negative or zero price is a data error, never a quotation. Left unchecked it produced a
+        negative market cap, and since every valuation multiple guards its *denominator* rather
+        than its numerator, the result was a clean 0.0 — the best possible score — at full
+        reported coverage.
+        """
         if self.price is None or self.shares_outstanding is None:
+            return None
+        if self.price <= 0 or self.shares_outstanding <= 0:
             return None
         return self.price * self.shares_outstanding
 

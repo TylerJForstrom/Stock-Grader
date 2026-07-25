@@ -42,6 +42,8 @@ _DAYS_PER_QUARTER = 91.31
 _SEC_BASE = "https://data.sec.gov"
 _SEC_WWW = "https://www.sec.gov"
 _DEFAULT_CONTACT = "stock-grader (set STOCK_GRADER_CONTACT to your email)"
+# Matches metrics.fundamental.MAX_BALANCE_AGE_DAYS; duplicated to avoid a circular import.
+_MAX_FACT_AGE_DAYS = 400
 
 
 class _RateLimiter:
@@ -784,9 +786,20 @@ class SECProvider:
         self._tickers: dict[str, str] | None = None
 
     def resolve_cik(self, ticker: str) -> str | None:
+        """Ticker to CIK, tolerating both share-class spellings.
+
+        SEC writes Berkshire's B shares as ``BRK-B``; essentially every other source, and every
+        human, writes ``BRK.B``. A bare dict lookup returned None for the dot form and the
+        diagnostic then blamed delisting, which is both wrong and misleading.
+        """
         if self._tickers is None:
             self._tickers = self.client.ticker_map()
-        return self._tickers.get(ticker.upper())
+        upper = ticker.upper().strip()
+        for candidate in (upper, upper.replace(".", "-"), upper.replace("-", ".")):
+            found = self._tickers.get(candidate)
+            if found:
+                return found
+        return None
 
     def fetch_by_cik(
         self,
@@ -902,6 +915,16 @@ class SECProvider:
             if series.empty:
                 snap.warnings.append(f"no {concept} observation on or before {asof}")
                 continue
+            # The cover-page count needs the same age bound as every other figure. Mastercard's
+            # newest DEI observation is dated 2010-10-27 at 122.5M shares against a real ~900M, and
+            # Visa's is 2010-01-27 — so market cap came out 7.3x too small and every valuation
+            # multiple 7.3x too cheap, at full reported coverage.
+            if asof is not None and (asof - series.index[-1]).days > _MAX_FACT_AGE_DAYS:
+                snap.warnings.append(
+                    f"{concept}: newest cover-page value is dated {series.index[-1]}, too stale "
+                    f"to use"
+                )
+                continue
             if concept == "shares_outstanding":
                 snap.shares_outstanding = float(series.iloc[-1])
                 snap.meta["shares_date"] = series.index[-1]
@@ -944,6 +967,23 @@ class SECProvider:
                     snap.warnings.append(
                         f"{ticker}: no DEI cover-page share count, so the scale of the diluted "
                         f"count could not be cross-checked"
+                    )
+
+        if snap.shares_outstanding is None and snap.fundamentals is not None:
+            # Last resort: shares = net income / diluted EPS, an identity. Visa tags its
+            # multi-class shares dimensionally, so companyfacts exposes no consolidated diluted
+            # count at all, and its only DEI cover-page records are from 2009 and 2010 — leaving
+            # a $500B company with no share count and therefore no valuation metrics whatsoever.
+            income = snap.fundamentals.ttm("net_income")
+            eps = snap.fundamentals.ttm("eps_diluted")
+            if income is not None and eps and abs(eps) > 1e-9:
+                implied = income / eps
+                if implied > 0:
+                    snap.shares_outstanding = implied
+                    snap.meta["shares_source"] = "implied_from_eps"
+                    snap.warnings.append(
+                        f"{ticker}: share count implied from net income divided by diluted EPS; "
+                        f"no usable cover-page or income-statement count was available"
                     )
 
         return snap

@@ -432,3 +432,54 @@ def test_piotroski_sparse_data_cannot_reach_a_perfect_score():
         assert sparse_score < 9.0, "sparse data must not reach a perfect score"
         if full_score is not None:
             assert full_score > sparse_score, "more confirming evidence must score higher"
+
+
+def test_linear_trend_refuses_a_non_finite_series():
+    """copysign(CAP, nan) returned +1,000,000 — a maximally POSITIVE trend, so a zero-revenue
+    year in a margin history scored as the best improving margin in the universe."""
+    from stock_grader.metrics.util import linear_trend
+
+    # inf is broken data and is refused; NaN is merely missing and is dropped, leaving a fit on
+    # the points that do exist. The two are deliberately not the same.
+    assert linear_trend([1.0, float("inf"), 3.0]) is None
+    assert linear_trend([1.0, -float("inf"), 3.0, 4.0]) is None
+    dropped = linear_trend([1.0, float("nan"), 3.0, 4.0])
+    assert dropped is not None and np.isfinite(dropped[1])
+    slope, t_stat = linear_trend([1.0, 2.0, 3.0, 4.0, 5.0])
+    assert slope == pytest.approx(1.0)
+    assert np.isfinite(t_stat)
+
+
+def test_non_positive_price_has_no_market_cap():
+    """Every valuation multiple guards its denominator, not its numerator, so a negative market
+    cap produced a clean 0.0 — the best possible score — at full reported coverage."""
+    from datetime import date as _date
+
+    from stock_grader.types import SecuritySnapshot
+
+    for price in (-5.0, 0.0):
+        snapshot = SecuritySnapshot(
+            ticker="X", asof=_date(2026, 7, 25), price=price, shares_outstanding=100.0
+        )
+        assert snapshot.market_cap is None
+    ok = SecuritySnapshot(ticker="X", asof=_date(2026, 7, 25), price=10.0, shares_outstanding=100.0)
+    assert ok.market_cap == pytest.approx(1000.0)
+
+
+def test_synthetic_prices_are_stable_across_processes():
+    """hash() is salted per process, so the 'deterministic' generator produced a different series
+    on every run — three processes gave 93.15, 121.60 and 115.59 for the same ticker."""
+    import subprocess
+    import sys
+
+    snippet = (
+        "import warnings;warnings.filterwarnings('ignore');"
+        "from stock_grader.data.synthetic import generate_prices;"
+        "print(round(float(generate_prices('AAPL',n_days=50,synthetic=True)['close'].iloc[-1]),6))"
+    )
+    runs = {
+        subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True,
+                       check=True).stdout.strip()
+        for _ in range(3)
+    }
+    assert len(runs) == 1, f"non-deterministic across processes: {runs}"

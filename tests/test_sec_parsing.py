@@ -672,3 +672,61 @@ class TestShareScale:
         ratio = cover / diluted
         for factor in (1_000.0, 1_000_000.0):
             assert not (0.5 * factor <= ratio <= 2.0 * factor)
+
+
+class TestStalenessEverywhere:
+    """The age contract was added to latest() and missed everywhere else."""
+
+    def _facts(self, concept_tag: str, values: list[tuple[str, str, float]]) -> dict:
+        return {"facts": {"us-gaap": {concept_tag: _fact(
+            [_duration(s, e, v) for s, e, v in values])}}}
+
+    def test_ttm_refuses_a_stale_window(self):
+        """Mastercard's net income came from a window ending 2014-03-31 — twelve years stale —
+        and was divided by 2026 revenue to report a 9.5% net margin against a true 45%."""
+        quarters = [("2014-01-01", "2014-03-31"), ("2014-04-01", "2014-06-30"),
+                    ("2014-07-01", "2014-09-30"), ("2014-10-01", "2014-12-31")]
+        fundamentals = build_fundamentals(self._facts("Revenues", [(s, e, 100.0) for s, e in quarters]))
+        assert fundamentals.ttm("revenue") == pytest.approx(400.0)  # unbounded: unchanged
+        assert fundamentals.ttm("revenue", asof=date(2026, 7, 25), max_age_days=400) is None
+
+    def test_staleness_recurses_into_composites(self):
+        """ebitda resolves ebit and depreciation separately, so checking only the composite
+        would let a stale component through."""
+        quarters = [("2014-01-01", "2014-03-31"), ("2014-04-01", "2014-06-30"),
+                    ("2014-07-01", "2014-09-30"), ("2014-10-01", "2014-12-31")]
+        facts = {"facts": {"us-gaap": {
+            "NetCashProvidedByUsedInOperatingActivities": _fact(
+                [_duration(s, e, 100.0) for s, e in quarters]),
+            "PaymentsToAcquirePropertyPlantAndEquipment": _fact(
+                [_duration(s, e, 20.0) for s, e in quarters]),
+        }}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.ttm("fcf", asof=date(2026, 7, 25), max_age_days=400) is None
+
+    def test_derivation_fills_gaps_not_only_absent_columns(self):
+        """Costco, Amazon and Target all still carry a GrossProfit column whose last value is
+        thousands of days old, so a `not in df` guard never ran the derivation."""
+        quarters = [("2025-01-01", "2025-03-31"), ("2025-04-01", "2025-06-30"),
+                    ("2025-07-01", "2025-09-30"), ("2025-10-01", "2025-12-31")]
+        facts = {"facts": {"us-gaap": {
+            "Revenues": _fact([_duration(s, e, 100.0) for s, e in quarters]),
+            "CostOfRevenue": _fact([_duration(s, e, 60.0) for s, e in quarters]),
+            # An abandoned gross-profit tag from a decade earlier.
+            "GrossProfit": _fact([_duration("2014-01-01", "2014-03-31", 5.0)]),
+        }}}
+        fundamentals = build_fundamentals(facts)
+        assert fundamentals.ttm("gross_profit") == pytest.approx(160.0)
+
+
+class TestShareClassTickers:
+    def test_dot_and_hyphen_forms_both_resolve(self):
+        """SEC writes BRK-B; every human and every other source writes BRK.B."""
+        from stock_grader.data.sec import SECClient, SECProvider
+
+        provider = SECProvider(SECClient(cache_dir="/tmp/sg-ticker-test"))
+        provider._tickers = {"BRK-B": "0001067983", "AAPL": "0000320193"}
+        assert provider.resolve_cik("BRK.B") == "0001067983"
+        assert provider.resolve_cik("BRK-B") == "0001067983"
+        assert provider.resolve_cik("aapl") == "0000320193"
+        assert provider.resolve_cik("NOTREAL") is None

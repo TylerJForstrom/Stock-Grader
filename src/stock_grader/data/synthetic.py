@@ -17,6 +17,8 @@ Two honest responses, both provided here:
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pandas as pd
 
@@ -65,7 +67,11 @@ def generate_prices(
 
     # Seed deterministically from the ticker so a given name always yields the same series.
     if seed is None:
-        seed = abs(hash(ticker)) % (2**31)
+        # NOT hash(): Python salts string hashing per process, so the "deterministic" generator
+        # produced a different series on every run — three separate processes gave closes of
+        # 93.15, 121.60 and 115.59 for the same ticker. A content hash is stable across processes,
+        # machines and versions.
+        seed = int(hashlib.blake2b(ticker.encode(), digest_size=4).hexdigest(), 16)
     rng = np.random.default_rng(seed)
 
     dt = 1.0 / _TRADING_DAYS
