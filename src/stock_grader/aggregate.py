@@ -55,7 +55,7 @@ def align_and_renormalize(
     The single most important function in this module. A pillar of ten metrics where three could
     not be computed must be the weighted average of the seven that *were*, at full strength — not
     seven-tenths of a score. The coverage penalty for those three missing metrics is applied
-    separately and visibly, in the confidence interval, not smuggled in as a silent haircut.
+    separately and visibly, in the model-sensitivity range, not smuggled in as a silent haircut.
     """
     scores = pd.Series(scores, dtype="float64")
     if weights is None:

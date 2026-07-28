@@ -121,6 +121,51 @@ class TestRestatements:
         )
         assert quarters.empty
 
+    def test_future_preferred_tag_cannot_displace_the_historical_tag(self):
+        """Adding facts first filed after ``asof`` must not alter a historical reconstruction.
+
+        Tag preference used to inspect every modern record before PIT filtering. A preferred tag
+        adopted later could therefore displace the fallback tag investors actually saw, after
+        which value selection returned an empty series.
+        """
+        fallback = _fact(
+            [
+                _duration(
+                    "2024-01-01",
+                    "2024-03-31",
+                    100.0,
+                    filed="2024-05-01",
+                )
+            ]
+        )
+        historical_payload = {"facts": {"us-gaap": {"Revenues": fallback}}}
+        payload_with_future_tag = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": fallback,
+                    "RevenueFromContractWithCustomerExcludingAssessedTax": _fact(
+                        [
+                            _duration(
+                                "2024-04-01",
+                                "2024-06-30",
+                                125.0,
+                                filed="2024-08-01",
+                            )
+                        ]
+                    ),
+                }
+            }
+        }
+        kwargs = {"pit_mode": PitMode.PIT, "asof": date(2024, 6, 1)}
+        historical = build_fundamentals(historical_payload, **kwargs)
+        with_future_tag = build_fundamentals(payload_with_future_tag, **kwargs)
+
+        pd.testing.assert_series_equal(
+            historical.quarterly["revenue"],
+            with_future_tag.quarterly["revenue"],
+        )
+        assert with_future_tag.tag_used["revenue"] == "Revenues"
+
 
 class TestAveragedConcepts:
     """Weighted-average share counts are not flows.

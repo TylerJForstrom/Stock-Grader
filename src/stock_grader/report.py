@@ -1,9 +1,9 @@
 """Rendering: terminal, JSON, and Markdown.
 
 The terminal report is the primary interface and is built around one principle — **a grade that
-cannot be argued with is not useful**. So every report shows the confidence interval beside the
-score, the data coverage behind it, which attributes pushed the grade up and down, and any warning
-that qualifies it (synthetic prices, missing pillars, a weighting method that had to fall back).
+cannot be argued with is not useful**. So every report shows its model-sensitivity interval beside
+the score, the data coverage behind it, which attributes pushed the grade up and down, and any
+warning that qualifies it (synthetic prices, missing pillars, a weighting method that fell back).
 """
 
 from __future__ import annotations
@@ -12,8 +12,11 @@ import json
 import math
 from dataclasses import asdict, is_dataclass
 from datetime import date
+from enum import Enum
 from typing import Any
 
+import numpy as np
+import pandas as pd
 from rich.box import SIMPLE
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -22,7 +25,16 @@ from rich.text import Text
 
 from .types import GradeReport
 
-__all__ = ["render_consensus", "render_ranking", "render_report", "to_json", "to_markdown"]
+__all__ = [
+    "rank_reports",
+    "render_consensus",
+    "render_ranking",
+    "render_report",
+    "to_consensus_markdown",
+    "to_json",
+    "to_markdown",
+    "to_ranking_markdown",
+]
 
 # Colour by letter family, so a grade reads at a glance.
 _COLOURS = {"A": "bright_green", "B": "green", "C": "yellow", "D": "dark_orange", "F": "red"}
@@ -49,6 +61,38 @@ def _letter_for(score: float) -> str:
     return to_letter(score)
 
 
+def _has_sensitivity_interval(report: GradeReport) -> bool:
+    interval = report.sensitivity_interval
+    return bool(interval and all(math.isfinite(float(value)) for value in interval))
+
+
+def _letter_scenario_frequency_text(report: GradeReport) -> str:
+    finite = {
+        letter: probability
+        for letter, probability in report.letter_probabilities.items()
+        if math.isfinite(probability) and probability >= 0.0
+    }
+    ordered = sorted(finite.items(), key=lambda item: (-item[1], item[0]))
+    return "  ·  ".join(f"{letter} {probability:.0%}" for letter, probability in ordered)
+
+
+def rank_reports(
+    reports: dict[str, GradeReport],
+    *,
+    top: int | None = None,
+) -> list[GradeReport]:
+    """Return the canonical rank order used by terminal, Markdown, and JSON output."""
+    ordered = sorted(
+        reports.values(),
+        key=lambda report: (
+            not report.graded,
+            -report.score if math.isfinite(report.score) else 1e9,
+            report.ticker,
+        ),
+    )
+    return ordered if top is None else ordered[: max(0, top)]
+
+
 def render_report(report: GradeReport, console: Console | None = None, *, explain: bool = False) -> None:
     """Render one security's grade to the terminal."""
     console = console or Console()
@@ -57,8 +101,9 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
     header.append(f"{report.ticker}  ", style="bold white")
     header.append(f"{report.letter}", style=f"bold {_colour(report.letter)}")
     header.append(f"  {report.score:.1f}/100", style="white")
-    if report.ci and not math.isnan(report.ci[0]):
-        header.append(f"   90% CI [{report.ci[0]:.0f}–{report.ci[1]:.0f}]", style="dim")
+    if _has_sensitivity_interval(report):
+        low, high = report.sensitivity_interval or (float("nan"), float("nan"))
+        header.append(f"   90% sensitivity [{low:.0f}–{high:.0f}]", style="dim")
     if report.percentile is not None:
         header.append(f"   {report.percentile:.0f}th pct", style="dim")
 
@@ -76,6 +121,14 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
         f"{report.explain.get('n_metrics_not_applicable', 0)} n/a for sector)",
         style="dim",
     )
+    if _has_sensitivity_interval(report):
+        meta.append(
+            "\nmodel sensitivity perturbs weights and metric inclusion; it is not a return forecast",
+            style="dim",
+        )
+    frequencies = _letter_scenario_frequency_text(report)
+    if frequencies:
+        meta.append(f"\nletter scenario frequencies  {frequencies}", style="dim")
 
     pillars = Table(box=SIMPLE, show_header=True, header_style="bold dim", pad_edge=False)
     pillars.add_column("pillar", style="white", width=14)
@@ -134,27 +187,27 @@ def render_ranking(reports: dict[str, GradeReport], console: Console | None = No
     table.add_column("grade", justify="center")
     table.add_column("score", justify="right")
     table.add_column("", width=22)
-    table.add_column("90% CI", justify="center", style="dim")
+    table.add_column("90% sensitivity", justify="center", style="dim")
     table.add_column("cov", justify="right", style="dim")
     table.add_column("sector", style="dim")
 
     # Ungraded names sort last regardless of score: an N/A at the top of a ranked list reads as
     # "best", when it means the opposite — we declined to judge it.
-    ordered = sorted(
-        reports.values(),
-        key=lambda r: (r.letter == "N/A", -r.score if not math.isnan(r.score) else 1e9),
-    )
-    if top:
-        ordered = ordered[:top]
+    ordered = rank_reports(reports, top=top)
     for i, report in enumerate(ordered, 1):
-        ci = f"{report.ci[0]:.0f}–{report.ci[1]:.0f}" if report.ci and not math.isnan(report.ci[0]) else "—"
+        interval = report.sensitivity_interval
+        sensitivity = (
+            f"{interval[0]:.0f}–{interval[1]:.0f}"
+            if _has_sensitivity_interval(report) and interval is not None
+            else "—"
+        )
         table.add_row(
             str(i),
             report.ticker,
             Text(report.letter, style=f"bold {_colour(report.letter)}"),
             f"{report.score:.1f}",
             _bar(report.score, 20),
-            ci,
+            sensitivity,
             f"{report.coverage:.0%}",
             str(report.meta.get("sector", "")),
         )
@@ -200,26 +253,43 @@ def render_consensus(results: dict, console: Console | None = None) -> None:
 
 
 def _encode(value: Any) -> Any:
+    if isinstance(value, GradeReport):
+        encoded = asdict(value)
+        # ``ci`` remains present for compatibility; the additional name states what it measures.
+        encoded["sensitivity_interval"] = value.sensitivity_interval
+        encoded["letter_probabilities"] = value.letter_probabilities
+        return _encode(encoded)
+    if value is pd.NA:
+        return None
+    if isinstance(value, np.generic):
+        return _encode(value.item())
+    if isinstance(value, np.ndarray):
+        return [_encode(item) for item in value.tolist()]
+    if isinstance(value, pd.Series):
+        return {str(key): _encode(item) for key, item in value.items()}
+    if isinstance(value, pd.DataFrame):
+        return _encode(value.to_dict(orient="index"))
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return _encode(to_dict())
     if is_dataclass(value) and not isinstance(value, type):
         return {k: _encode(v) for k, v in asdict(value).items()}
     if isinstance(value, dict):
         return {str(k): _encode(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set, frozenset)):
         return [_encode(v) for v in value]
     if isinstance(value, date):
         return value.isoformat()
-    if hasattr(value, "value") and hasattr(value, "name"):  # Enum
+    if isinstance(value, Enum):
         return value.value
-    if isinstance(value, float) and math.isnan(value):
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
 
 
-def to_json(reports: GradeReport | dict[str, GradeReport], *, indent: int = 2) -> str:
+def to_json(reports: Any, *, indent: int = 2) -> str:
     """Stable JSON representation, suitable for piping into other tools."""
-    if isinstance(reports, GradeReport):
-        return json.dumps(_encode(reports), indent=indent)
-    return json.dumps({k: _encode(v) for k, v in reports.items()}, indent=indent)
+    return json.dumps(_encode(reports), indent=indent, allow_nan=False, sort_keys=True)
 
 
 def to_markdown(report: GradeReport) -> str:
@@ -235,8 +305,17 @@ def to_markdown(report: GradeReport) -> str:
          + f"{report.explain.get('n_metrics_missing', 0)} missing, "
          + f"{report.explain.get('n_metrics_not_applicable', 0)} not applicable)"),
     ]
-    if report.ci and not math.isnan(report.ci[0]):
-        lines.append(f"- **90% confidence interval**: {report.ci[0]:.1f} – {report.ci[1]:.1f}")
+    if _has_sensitivity_interval(report):
+        low, high = report.sensitivity_interval or (float("nan"), float("nan"))
+        lines.append(
+            f"- **90% model sensitivity interval**: {low:.1f} – {high:.1f} "
+            "(weight and metric-inclusion perturbations; not a return forecast)"
+        )
+    frequencies = _letter_scenario_frequency_text(report)
+    if frequencies:
+        lines.append(
+            f"- **Letter frequencies under those model perturbations**: {frequencies}"
+        )
     if report.percentile is not None:
         lines.append(f"- **Universe percentile**: {report.percentile:.0f}")
     lines += ["", "## Pillars", "", "| pillar | score | weight | contribution |", "|---|---:|---:|---:|"]
@@ -255,4 +334,82 @@ def to_markdown(report: GradeReport) -> str:
     if report.warnings:
         lines += ["", "## Caveats", ""]
         lines += [f"- {w}" for w in report.warnings]
+    return "\n".join(lines)
+
+
+def to_ranking_markdown(
+    reports: dict[str, GradeReport],
+    *,
+    top: int | None = None,
+) -> str:
+    """Compact ranked-universe table, using the same ordering as terminal and JSON."""
+    lines = [
+        "# Ranked universe",
+        "",
+        "| # | ticker | grade | score | 90% model sensitivity | coverage | sector |",
+        "|---:|---|:---:|---:|:---:|---:|---|",
+    ]
+    for position, report in enumerate(rank_reports(reports, top=top), 1):
+        interval = report.sensitivity_interval
+        sensitivity = (
+            f"{interval[0]:.0f}–{interval[1]:.0f}"
+            if _has_sensitivity_interval(report) and interval is not None
+            else "—"
+        )
+        lines.append(
+            f"| {position} | {report.ticker} | {report.letter} | {report.score:.1f} "
+            f"| {sensitivity} | {report.coverage:.0%} "
+            f"| {report.meta.get('sector', '')} |"
+        )
+    return "\n".join(lines)
+
+
+def to_consensus_markdown(results: dict[str, Any]) -> str:
+    """Consensus summary and per-profile inclusion details."""
+    lines = [
+        "# Consensus across profiles",
+        "",
+        "Low clarity means the answer depends on the investment lens.",
+        "",
+        "| ticker | consensus | score | clarity | best as | worst as |",
+        "|---|:---:|---:|---:|---|---|",
+    ]
+    ordered = sorted(
+        results.values(),
+        key=lambda result: (
+            not bool(len(result.scores)),
+            -result.score if math.isfinite(result.score) else 1e9,
+            result.ticker,
+        ),
+    )
+    for result in ordered:
+        if not len(result.scores):
+            lines.append(f"| {result.ticker} | N/A | — | — | could not be graded | — |")
+            continue
+        lines.append(
+            f"| {result.ticker} | {result.letter} | {result.score:.1f} "
+            f"| {result.clarity:.0f} | {result.best_profile} ({result.scores.max():.0f}) "
+            f"| {result.worst_profile} ({result.scores.min():.0f}) |"
+        )
+
+    for result in ordered:
+        lines += [
+            "",
+            f"## {result.ticker} by profile",
+            "",
+            "| profile | grade | score | consensus status |",
+            "|---|:---:|---:|---|",
+        ]
+        per_profile = sorted(
+            result.per_profile.items(),
+            key=lambda item: (
+                not item[1].graded,
+                -item[1].score if math.isfinite(item[1].score) else 1e9,
+                item[0],
+            ),
+        )
+        for name, report in per_profile:
+            score = f"{report.score:.1f}" if math.isfinite(report.score) else "—"
+            status = "included" if report.graded else "excluded (not graded)"
+            lines.append(f"| {name} | {report.letter} | {score} | {status} |")
     return "\n".join(lines)

@@ -54,6 +54,18 @@ def _latest(s: SecuritySnapshot, concept: str) -> float | None:
     return f.latest(concept, asof=s.asof, max_age_days=MAX_BALANCE_AGE_DAYS)
 
 
+def _ttm_with_period_end(s: SecuritySnapshot, concept: str):
+    from .fundamental import _ttm_with_period_end as _bounded_ttm_with_end
+
+    return _bounded_ttm_with_end(s, concept)
+
+
+def _average_balance_for_period(s: SecuritySnapshot, concept: str, period_end):
+    from .fundamental import _average_balance_for_period as _aligned_average
+
+    return _aligned_average(s, concept, period_end)
+
+
 def _bank_revenue(s: SecuritySnapshot) -> float | None:
     """Net interest income plus fee income — the basis banks are actually compared on."""
     nii = _ttm(s, "net_interest_income")
@@ -90,7 +102,9 @@ def net_interest_income_to_assets(s: SecuritySnapshot) -> float | None:
     below a bank's published NIM and is not comparable with one. It is still a sound
     cross-sectional measure because the distortion is similar across banks.
     """
-    return safe_div(_ttm(s, "net_interest_income"), _latest(s, "assets"), positive_denominator=True)
+    income, period_end = _ttm_with_period_end(s, "net_interest_income")
+    assets = _average_balance_for_period(s, "assets", period_end)
+    return safe_div(income, assets, positive_denominator=True)
 
 
 @metric("fee_income_share", pillar="quality", direction=1, unit="ratio")
@@ -196,9 +210,9 @@ def ffo_to_assets(s: SecuritySnapshot) -> tuple[float, dict] | None:
     1.0-6.0x means the components did not assemble sensibly and it returns ``None`` rather than a
     number that looks authoritative.
     """
-    income = _ttm(s, "income_to_common")
+    income, period_end = _ttm_with_period_end(s, "income_to_common")
     if income is None:
-        income = _ttm(s, "net_income")
+        income, period_end = _ttm_with_period_end(s, "net_income")
     depreciation = _ttm(s, "depreciation_amortization")
     if income is None or depreciation is None:
         return None
@@ -207,7 +221,7 @@ def ffo_to_assets(s: SecuritySnapshot) -> tuple[float, dict] | None:
     ffo = income + depreciation - gains + impairment
     if ffo <= 0:
         return None
-    assets = _latest(s, "assets")
+    assets = _average_balance_for_period(s, "assets", period_end)
     if not assets or assets <= 0:
         return None
     if income > 0:

@@ -12,8 +12,10 @@ portfolio.
 
 from __future__ import annotations
 
+import pandas as pd
+
 from ..registry import metric
-from ..types import SecuritySnapshot
+from ..types import SecuritySnapshot, SectorClass
 from .util import cagr, consistency, linear_trend, r_squared_loglinear, safe_div
 
 # Multiples above these are arithmetically true but analytically meaningless; clamping stops a
@@ -54,6 +56,150 @@ def _latest(snapshot: SecuritySnapshot, concept: str) -> float | None:
     if f is None:
         return None
     return f.latest(concept, asof=snapshot.asof, max_age_days=MAX_BALANCE_AGE_DAYS)
+
+
+def _ttm_with_period_end(
+    snapshot: SecuritySnapshot,
+    concept: str,
+) -> tuple[float | None, pd.Timestamp | None]:
+    """Age-bounded trailing flow and the dated period it represents.
+
+    Return metrics need a denominator measured over the same interval as their numerator.  The
+    scalar-only ``_ttm`` helper cannot establish that alignment, so this companion mirrors its
+    quarterly-then-annual fallback and retains the selected period end.
+    """
+    f = _f(snapshot)
+    if f is None:
+        return (None, None)
+
+    value = f.ttm(concept, asof=snapshot.asof, max_age_days=MAX_BALANCE_AGE_DAYS)
+    if value is not None:
+        if concept in f.quarterly.columns:
+            series = f.quarterly[concept].dropna()
+            if not series.empty:
+                try:
+                    return (float(value), pd.Timestamp(series.index[-1]))
+                except (TypeError, ValueError):
+                    return (float(value), None)
+        return (float(value), None)
+
+    value = f.latest(
+        concept,
+        annual=True,
+        asof=snapshot.asof,
+        max_age_days=MAX_BALANCE_AGE_DAYS,
+    )
+    if value is None:
+        return (None, None)
+    if concept in f.annual.columns:
+        series = f.annual[concept].dropna()
+        if not series.empty:
+            try:
+                return (float(value), pd.Timestamp(series.index[-1]))
+            except (TypeError, ValueError):
+                pass
+    return (float(value), None)
+
+
+def _average_balance_for_period(
+    snapshot: SecuritySnapshot,
+    concept: str,
+    period_end: pd.Timestamp | None,
+) -> float | None:
+    """Beginning/ending average balance aligned to a trailing flow.
+
+    A return earned throughout a year should not be divided only by the balance left on the final
+    day.  We average observations approximately one year apart when the ending balance is dated
+    within 45 days of the numerator's period end.  If aligned history is unavailable, the latest
+    positive balance is retained as a conservative coverage-preserving fallback.  If an aligned
+    pair exists but either endpoint is non-positive, the ratio is undefined rather than silently
+    reverting to the more flattering ending balance.
+    """
+    f = _f(snapshot)
+    if f is None:
+        return None
+
+    series_by_frame: list[pd.Series] = []
+    for frame in (f.quarterly, f.annual):
+        if concept not in frame.columns:
+            continue
+        raw = frame[concept].dropna()
+        if raw.empty:
+            continue
+        try:
+            series = pd.Series(
+                raw.to_numpy(dtype="float64"),
+                index=pd.to_datetime(raw.index),
+                dtype="float64",
+            )
+        except (TypeError, ValueError):
+            continue
+        series = series.groupby(level=0).last().sort_index()
+        series_by_frame.append(series)
+
+    if period_end is not None:
+        end = pd.Timestamp(period_end)
+        for series in series_by_frame:
+            eligible = series.loc[series.index <= end]
+            if eligible.empty:
+                continue
+            ending_date = pd.Timestamp(eligible.index[-1])
+            if (end - ending_date).days > 45:
+                continue
+            beginning_candidates = eligible.iloc[:-1]
+            if beginning_candidates.empty:
+                continue
+            ages = pd.Series(
+                [(ending_date - pd.Timestamp(idx)).days for idx in beginning_candidates.index],
+                index=beginning_candidates.index,
+                dtype="float64",
+            )
+            aligned = ages[ages.between(300, 430)]
+            if aligned.empty:
+                continue
+            beginning_date = (aligned - 365.25).abs().idxmin()
+            beginning = float(beginning_candidates.loc[beginning_date])
+            ending = float(eligible.iloc[-1])
+            if beginning <= 0.0 or ending <= 0.0:
+                return None
+            return (beginning + ending) / 2.0
+
+    # Preserve coverage when the company only exposes an ending balance, but do not search beyond
+    # the same age bound used everywhere else in the fundamental metric layer.
+    latest = _latest(snapshot, concept)
+    if latest is None:
+        latest = f.latest(
+            concept,
+            annual=True,
+            asof=snapshot.asof,
+            max_age_days=MAX_BALANCE_AGE_DAYS,
+        )
+    return float(latest) if latest is not None and latest > 0.0 else None
+
+
+def _altman_model_for(snapshot: SecuritySnapshot) -> str | None:
+    """The single Altman variant supported by this security's actual business model.
+
+    The original Z model was estimated on publicly traded manufacturers (SIC 2000--3999).  Z''
+    removes the sales/asset term for other operating businesses.  Neither variant is defensible
+    for financials, REITs, holding companies, or regulated utilities.  When SIC is absent we
+    decline both instead of giving the same company two correlated distress votes.
+    """
+    if snapshot.sector in {
+        SectorClass.BANK,
+        SectorClass.INSURANCE,
+        SectorClass.REIT,
+        SectorClass.HOLDING,
+        SectorClass.UTILITY,
+    }:
+        return None
+    if snapshot.sic is None:
+        return None
+    try:
+        sic = int(str(snapshot.sic).strip())
+    except (TypeError, ValueError):
+        return None
+    return "z" if 2000 <= sic <= 3999 else "z_prime"
 
 
 def _enterprise_value(snapshot: SecuritySnapshot) -> float | None:
@@ -243,26 +389,31 @@ def fcf_margin(s: SecuritySnapshot) -> float | None:
 def roe(s: SecuritySnapshot) -> float | None:
     """Return on equity. Note a highly levered company can post a great ROE on a thin equity base,
     which is why the solvency pillar exists alongside this one."""
-    return safe_div(_ttm(s, "net_income"), _latest(s, "equity"), positive_denominator=True)
+    income, period_end = _ttm_with_period_end(s, "net_income")
+    equity = _average_balance_for_period(s, "equity", period_end)
+    return safe_div(income, equity, positive_denominator=True)
 
 
 @metric("roa", pillar="profitability", direction=1, unit="ratio")
 def roa(s: SecuritySnapshot) -> float | None:
     """Return on assets."""
-    return safe_div(_ttm(s, "net_income"), _latest(s, "assets"), positive_denominator=True)
+    income, period_end = _ttm_with_period_end(s, "net_income")
+    assets = _average_balance_for_period(s, "assets", period_end)
+    return safe_div(income, assets, positive_denominator=True)
 
 
 @metric("roic", pillar="profitability", direction=1, unit="ratio")
 def roic(s: SecuritySnapshot) -> float | None:
     """After-tax operating profit / invested capital — the best single measure of business quality."""
-    ebit = _ttm(s, "ebit")
+    ebit, period_end = _ttm_with_period_end(s, "ebit")
     tax = _ttm(s, "income_tax")
     pretax = _ttm(s, "pretax_income")
     if ebit is None:
         return None
     rate = safe_div(tax, pretax, positive_denominator=True)
     rate = 0.21 if rate is None or not (0.0 <= rate <= 0.6) else rate
-    return safe_div(ebit * (1 - rate), _latest(s, "invested_capital"), positive_denominator=True)
+    invested_capital = _average_balance_for_period(s, "invested_capital", period_end)
+    return safe_div(ebit * (1 - rate), invested_capital, positive_denominator=True)
 
 
 @metric("croic", pillar="profitability", direction=1, unit="ratio")
@@ -343,8 +494,51 @@ def fcf_cagr_3y(s: SecuritySnapshot) -> float | None:
 
 @metric("book_value_cagr_5y", pillar="growth", direction=1, unit="ratio", winsor=(-1.0, 3.0))
 def book_value_cagr_5y(s: SecuritySnapshot) -> float | None:
-    """Five-year book value per share growth — Buffett's preferred scorecard."""
-    return _cagr_metric(s, "equity", 5)
+    """Five-year split-adjusted book value *per share* growth.
+
+    Total equity growth is not per-share growth: an acquisition funded by doubling both equity and
+    the share count creates no book value for an existing share. Equity and share counts are joined
+    on the same fiscal dates, and the share history is put on the current split basis using assets
+    to distinguish a split from genuine issuance. Missing or misaligned share history returns
+    ``None`` rather than quietly reverting to total book value.
+    """
+    f = _f(s)
+    if f is None or f.annual.empty or "equity" not in f.annual.columns:
+        return None
+
+    from ..data.sec import restate_for_splits
+
+    equity = f.annual["equity"].dropna()
+    if equity.empty:
+        return None
+    scale_reference = f.annual["assets"].dropna() if "assets" in f.annual.columns else None
+    for share_concept in ("shares_diluted", "shares_basic"):
+        if share_concept not in f.annual.columns:
+            continue
+        shares = f.annual[share_concept].dropna()
+        if shares.empty:
+            continue
+        adjusted_shares = restate_for_splits(shares, scale_reference)
+        aligned = pd.concat(
+            [equity.rename("equity"), adjusted_shares.rename("shares")],
+            axis=1,
+            join="inner",
+        ).dropna()
+        aligned = aligned[(aligned["equity"] > 0.0) & (aligned["shares"] > 0.0)]
+        if len(aligned) < 6:
+            continue
+        window = aligned.iloc[-6:]
+        try:
+            dates = pd.to_datetime(window.index)
+        except (TypeError, ValueError):
+            continue
+        gaps = pd.Series(dates[1:] - dates[:-1]).dt.days
+        elapsed_years = (dates[-1] - dates[0]).days / 365.25
+        if not gaps.between(270, 460).all() or not 4.5 <= elapsed_years <= 5.5:
+            continue
+        bvps = window["equity"] / window["shares"]
+        return cagr(bvps.iloc[0], bvps.iloc[-1], elapsed_years)
+    return None
 
 
 @metric("revenue_growth_consistency", pillar="growth", direction=1, unit="r2")
@@ -460,6 +654,8 @@ def altman_z(s: SecuritySnapshot) -> float | None:
     companies: the model was never estimated on them and its working-capital and sales-to-assets
     terms are not meaningful there. The sector matrix enforces that.
     """
+    if _altman_model_for(s) != "z":
+        return None
     assets = _latest(s, "assets")
     if assets is None or assets <= 0:
         return None
@@ -576,7 +772,9 @@ def piotroski_f_score(s: SecuritySnapshot) -> float | None:
 @metric("asset_turnover", pillar="efficiency", direction=1, unit="x")
 def asset_turnover(s: SecuritySnapshot) -> float | None:
     """Revenue / total assets."""
-    return safe_div(_ttm(s, "revenue"), _latest(s, "assets"), positive_denominator=True)
+    revenue, period_end = _ttm_with_period_end(s, "revenue")
+    assets = _average_balance_for_period(s, "assets", period_end)
+    return safe_div(revenue, assets, positive_denominator=True)
 
 
 @metric("inventory_turnover", pillar="efficiency", direction=1, unit="x", winsor=(0.0, 100.0))

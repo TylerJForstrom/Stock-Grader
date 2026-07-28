@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
-"""Does the reported "90% confidence interval" actually cover 90%?
+"""Stress the model-sensitivity band against artificial missing-data perturbations.
 
-An interval is a testable claim, and this is the test. There is no external truth for a stock
-grade, but there is an operational one: the grade computed from **all** available data. Hide a
-random k% of metrics, regrade, and ask how often the degraded interval contains the full-data
-score. A calibrated 90% interval should manage that about 90% of the time at every level of
-degradation.
+The filename is retained for compatibility, but this is **not statistical calibration**. There is
+no observed true stock grade here. The script computes a full-data model score in the synthetic
+test universe, hides a random share of fundamental columns, reruns the model, and reports how often
+the degraded run's sensitivity band contains that full-data model output.
 
     python scripts/calibrate_intervals.py --trials 12
 
-Why this exists: the interval used to be produced by mapping the raw one affinely,
-``w*low + (1-w)*percentile``, which added the same constant to both ends. That halved the
-half-width (``absolute_weight`` is 0.5) and gave the percentile *zero* width even though the
-percentile is a function of the same resampled composite. Measured coverage of the advertised 90%
-was 0.697 / 0.551 / 0.439 / 0.395 as 10/20/30/40% of pillars were masked — not a 90% interval at
-any level, and increasingly wrong the less data there was.
-
-The fix ranks each resampled draw against the fixed peer set before taking percentiles, so the
-percentile half carries its real width. This script is how you check that claim rather than assume it.
+This is useful for catching implementation regressions and brittle missing-data behavior. The
+containment rate is not a frequentist coverage estimate, a Bayesian credible probability, a
+future-return forecast, or validation on a representative market population.
 """
 
 from __future__ import annotations
@@ -64,19 +57,30 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trials", type=int, default=10)
     parser.add_argument("--universe-size", type=int, default=30)
-    parser.add_argument("--target", type=float, default=0.90)
-    parser.add_argument("--tolerance", type=float, default=0.06)
+    parser.add_argument(
+        "--minimum-containment",
+        type=float,
+        help=(
+            "optional internal regression threshold in [0,1]; there is deliberately no default "
+            "or claim that the sensitivity band has statistical coverage"
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.minimum_containment is not None and not 0 <= args.minimum_containment <= 1:
+        parser.error("--minimum-containment must be between 0 and 1")
 
     sys.path.insert(0, "tests")
     from test_pipeline import _universe
 
     snapshots = _universe(args.universe_size)
-    truth = {t: r.score for t, r in grade_universe(snapshots, GradeConfig(seed=0)).items()}
+    baseline = {t: r.score for t, r in grade_universe(snapshots, GradeConfig(seed=0)).items()}
 
-    print(f"target coverage {args.target:.0%}, {args.trials} trials, "
-          f"{args.universe_size} securities\n")
-    print(f"  {'masked':>7} {'coverage':>9} {'median width':>13} {'n':>6}   verdict")
+    print(
+        f"missing-data sensitivity stress: {args.trials} trials, "
+        f"{args.universe_size} synthetic securities"
+    )
+    print("This is model self-consistency, not statistical or predictive coverage.\n")
+    print(f"  {'masked':>7} {'containment':>11} {'median width':>13} {'n':>6}   status")
     print("  " + "-" * 52)
 
     failures = 0
@@ -89,25 +93,33 @@ def main(argv: list[str] | None = None) -> int:
             degraded = mask_metrics(snapshots, fraction, rng)
             reports = grade_universe(degraded, GradeConfig(seed=trial))
             for ticker, report in reports.items():
-                if report.ci is None or not np.isfinite(report.ci[0]):
+                if report.sensitivity_interval is None or not np.isfinite(
+                    report.sensitivity_interval[0]
+                ):
                     continue
-                if ticker not in truth or not np.isfinite(truth[ticker]):
+                if ticker not in baseline or not np.isfinite(baseline[ticker]):
                     continue
-                low, high = report.ci
+                low, high = report.sensitivity_interval
                 widths.append(high - low)
                 total += 1
-                if low - 1e-9 <= truth[ticker] <= high + 1e-9:
+                if low - 1e-9 <= baseline[ticker] <= high + 1e-9:
                     hits += 1
-        coverage = hits / total if total else float("nan")
+        containment = hits / total if total else float("nan")
         width = float(np.median(widths)) if widths else float("nan")
-        ok = abs(coverage - args.target) <= args.tolerance if total else False
+        ok = total > 0 and np.isfinite(width)
+        if args.minimum_containment is not None:
+            ok = ok and containment >= args.minimum_containment
         if not ok:
             failures += 1
-        print(f"  {fraction:7.0%} {coverage:9.3f} {width:13.2f} {total:6}   "
-              f"{'ok' if ok else 'MISCALIBRATED'}")
+        print(
+            f"  {fraction:7.0%} {containment:11.3f} {width:13.2f} {total:6}   "
+            f"{'ok' if ok else 'FAILED STRESS CHECK'}"
+        )
 
-    print("\ncoverage below target means the interval is too narrow and the grade is being sold "
-          "as\nmore certain than it is; above target means it is too wide to be useful.")
+    print(
+        "\nContainment compares one model output with another under artificial masking. "
+        "Do not report it as confidence, probability of correctness, or future performance."
+    )
     return 1 if failures else 0
 
 

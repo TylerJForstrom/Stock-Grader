@@ -7,7 +7,7 @@ three-way distinction is the point of this module:
     Computed.
 ``MISSING``
     Applicable to this business, but the inputs were not available. Counts against data coverage
-    and widens the confidence interval — the grade genuinely knows less about this company.
+    and widens the model-sensitivity range — the grade genuinely knows less about this company.
 ``NOT_APPLICABLE``
     Not a defined quantity for this business model. A bank has no current ratio; that is not a gap
     in our data, it is a property of bank accounting. Renormalised away with **no** coverage

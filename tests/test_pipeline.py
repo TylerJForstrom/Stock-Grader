@@ -119,11 +119,11 @@ class TestGradeUniverse:
             assert 0.0 <= report.score <= 100.0
             assert np.isfinite(report.score)
 
-    def test_confidence_interval_contains_the_score(self):
-        """A reported interval that excludes its own score is incoherent.
+    def test_sensitivity_range_contains_the_score(self):
+        """A reported sensitivity range that excludes its own baseline score is incoherent.
 
-        This regressed once: the interval was estimated on the raw composite while the headline
-        score had been through the hybrid curve.
+        This regressed once: the range was estimated on the raw composite while the headline score
+        had been through the hybrid curve.
         """
         reports = grade_universe(_universe(), GradeConfig(curve="hybrid"))
         for report in reports.values():
@@ -145,16 +145,45 @@ class TestGradeUniverse:
     @pytest.mark.parametrize("method", sorted(WEIGHTINGS.names()))
     def test_every_weighting_method_produces_a_grade(self, method):
         reports = grade_universe(
-            _universe(), GradeConfig(metric_weighting=method, pillar_weighting=method)
+            _universe(),
+            GradeConfig(
+                metric_weighting=method,
+                pillar_weighting=method,
+                # This catalogue smoke test exercises legacy research methods without realised
+                # returns, so supervised methods fall back rather than fitting. Production configs
+                # remain blocked by default and are tested separately below.
+                allow_in_sample_supervised_weighting=True,
+            ),
         )
         assert all(np.isfinite(r.score) for r in reports.values())
+
+    @pytest.mark.parametrize(
+        "method",
+        sorted(
+            name
+            for name, info in weighting.WEIGHT_METHOD_INFO.items()
+            if info.get("needs_returns")
+        ),
+    )
+    def test_supervised_weighting_requires_explicit_research_authorization(self, method):
+        snapshots = _universe()
+        realised = pd.Series(
+            {snapshot.ticker: float(i) for i, snapshot in enumerate(snapshots)},
+            dtype="float64",
+        )
+        with pytest.raises(ValueError, match="in-sample supervised weighting is blocked"):
+            grade_universe(
+                snapshots,
+                GradeConfig(metric_weighting=method, pillar_weighting=method),
+                forward_returns=realised,
+            )
 
     @pytest.mark.parametrize("profile", profile_names())
     def test_every_profile_produces_a_grade(self, profile):
         reports = grade_universe(_universe(), get_profile(profile))
         assert all(np.isfinite(r.score) for r in reports.values())
 
-    def test_single_security_is_not_given_a_confident_letter(self):
+    def test_single_security_is_not_given_an_unsupported_letter(self):
         """With no peers, cross-sectional scores are all neutral and mean nothing."""
         reports = grade_universe(_universe(1), GradeConfig())
         report = next(iter(reports.values()))
@@ -172,6 +201,33 @@ class TestGradeUniverse:
         for report in reports.values():
             total = 50.0 + sum(report.explain["pillar_contributions"].values())
             assert total == pytest.approx(report.score, abs=1e-6)
+
+    def test_ces_contributions_reconstruct_then_curve_effect_reaches_headline(self):
+        reports = grade_universe(_universe(), GradeConfig(curve="hybrid"))
+        for report in reports.values():
+            standardized = 50.0 + sum(report.explain["pillar_contributions"].values())
+            assert standardized == pytest.approx(
+                report.explain["standardized_composite"], abs=1e-8
+            )
+            assert standardized + report.explain["peer_rank_curve_effect"] == pytest.approx(
+                report.score, abs=1e-8
+            )
+
+    def test_tied_points_and_unchanged_draws_use_the_same_midrank(self):
+        config = GradeConfig(
+            name="tie_regression",
+            metric_whitelist=["payout_ratio"],
+            pillar_weights={"shareholder": 1.0},
+            pillar_aggregator="weighted_mean",
+            curve="hybrid",
+            uncertainty_draws=1,
+        )
+        reports = grade_universe(_universe(2, with_prices=False), config)
+        for report in reports.values():
+            assert report.percentile == pytest.approx(50.0)
+            assert report.score == pytest.approx(75.0)
+            assert report.ci == pytest.approx((75.0, 75.0))
+            assert report.explain["letter_scenario_frequencies"] == {"B+": 1.0}
 
 
 class TestSectorHandling:
@@ -330,29 +386,64 @@ class TestEffectiveWeights:
         assert report.meta["pillar_set"] == sorted(report.pillars)
 
 
-class TestIntervalAndLetterProbabilities:
-    def test_score_lies_inside_its_own_interval(self):
+class TestProfileCoverageGates:
+    def test_profile_coverage_uses_authored_weights_not_run_renormalization(self):
+        config = GradeConfig(
+            name="coverage_regression",
+            metric_whitelist=["payout_ratio"],
+            pillar_weights={"shareholder": 0.69, "momentum": 0.31},
+            min_profile_weight_coverage=0.70,
+        )
+        reports = grade_universe(_universe(2, with_prices=False), config)
+        for report in reports.values():
+            assert report.letter == "N/A"
+            assert report.explain["profile_weight_coverage"] == pytest.approx(0.69)
+            assert any(reason.startswith("profile_weight_coverage:") for reason in report.gates)
+
+    def test_explicit_defining_pillar_is_a_hard_gate_with_a_reason(self):
+        config = GradeConfig(
+            name="required_regression",
+            metric_whitelist=["payout_ratio"],
+            pillar_weights={"shareholder": 1.0},
+            required_pillars={"momentum"},
+            min_profile_weight_coverage=0.0,
+        )
+        reports = grade_universe(_universe(2, with_prices=False), config)
+        for report in reports.values():
+            assert report.letter == "N/A"
+            assert "defining_pillar_missing:momentum" in report.gates
+
+    def test_momentum_profile_refuses_to_substitute_fundamentals_for_missing_momentum(self):
+        reports = grade_universe(_universe(8, with_prices=False), get_profile("momentum"))
+        for report in reports.values():
+            assert report.letter == "N/A"
+            assert any(reason.startswith("profile_weight_coverage:") for reason in report.gates)
+            assert "defining_pillar_missing:momentum" in report.gates
+
+
+class TestSensitivityAndLetterScenarioFrequencies:
+    def test_score_lies_inside_its_own_sensitivity_range(self):
         for curve in ("hybrid", "absolute", "cross_sectional"):
             for report in grade_universe(_universe(12), GradeConfig(curve=curve)).values():
                 low, high = report.ci
                 assert low - 0.01 <= report.score <= high + 0.01, f"{report.ticker} under {curve}"
 
-    def test_letter_probabilities_form_a_distribution(self):
+    def test_letter_scenario_frequencies_form_a_distribution(self):
         for report in grade_universe(_universe(12), GradeConfig()).values():
-            probabilities = report.explain["letter_probabilities"]
-            assert probabilities
-            assert sum(probabilities.values()) == pytest.approx(1.0, abs=1e-9)
-            assert all(0.0 <= v <= 1.0 for v in probabilities.values())
+            frequencies = report.explain["letter_scenario_frequencies"]
+            assert frequencies
+            assert sum(frequencies.values()) == pytest.approx(1.0, abs=1e-9)
+            assert all(0.0 <= value <= 1.0 for value in frequencies.values())
 
     def test_percentile_contributes_width(self):
-        """The old affine mapping gave the percentile zero width, halving the interval.
+        """The old affine mapping gave the percentile zero width, halving the range.
 
-        Measured empirical coverage of the advertised 90% was 0.697 falling to 0.395 as pillars
-        were masked — it was not a 90% interval at any level.
+        It discarded rank movement, so it understated sensitivity increasingly badly as pillars
+        were masked.
         """
         reports = grade_universe(_universe(20), GradeConfig(curve="hybrid"))
         widths = [r.ci[1] - r.ci[0] for r in reports.values() if np.isfinite(r.ci[0])]
-        assert np.median(widths) > 3.0, "a hybrid interval must carry the percentile's own spread"
+        assert np.median(widths) > 3.0, "a hybrid range must carry the percentile's own spread"
 
 
 class TestSectorSpecificMetrics:

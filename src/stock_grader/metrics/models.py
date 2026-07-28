@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pandas as pd
 
 from ..registry import metric
 from ..types import SecuritySnapshot
@@ -32,6 +33,46 @@ def _pair(s: SecuritySnapshot, concept: str) -> tuple[float | None, float | None
     if len(series) < 2:
         return (None, None)
     return (float(series.iloc[-2]), float(series.iloc[-1]))
+
+
+def _beneish_periods(s: SecuritySnapshot) -> tuple[object, object] | None:
+    """Two consecutive fiscal ends shared by Beneish's required anchor concepts."""
+    f = s.fundamentals
+    if f is None or f.annual.empty:
+        return None
+    if "revenue" not in f.annual.columns or "assets" not in f.annual.columns:
+        return None
+    anchors = f.annual[["revenue", "assets"]].dropna().sort_index()
+    if len(anchors) < 2:
+        return None
+    periods = (anchors.index[-2], anchors.index[-1])
+    try:
+        gap_days = (pd.Timestamp(periods[1]) - pd.Timestamp(periods[0])).days
+    except (TypeError, ValueError):
+        return None
+    return periods if 270 <= gap_days <= 460 else None
+
+
+def _at_beneish_periods(
+    s: SecuritySnapshot,
+    concept: str,
+    periods: tuple[object, object],
+) -> tuple[float | None, float | None]:
+    """Values at the exact reference fiscal ends, never an independently selected pair."""
+    f = s.fundamentals
+    if f is None or concept not in f.annual.columns:
+        return (None, None)
+    series = f.annual[concept]
+    try:
+        values = series.reindex(list(periods))
+    except (TypeError, ValueError):
+        return (None, None)
+    if len(values) != 2 or values.isna().any():
+        return (None, None)
+    prior, current = float(values.iloc[0]), float(values.iloc[1])
+    if not np.isfinite(prior) or not np.isfinite(current):
+        return (None, None)
+    return (prior, current)
 
 
 # Beneish's indices are year-over-year ratios of ratios, so a real company sits near 1.0 — in the
@@ -66,18 +107,21 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     Direction is -1: a higher M-score is worse. The score is only as good as its inputs, so any
     company missing more than a couple of the eight indices returns ``None``.
     """
-    prior_rev, curr_rev = _pair(s, "revenue")
-    prior_rec, curr_rec = _pair(s, "receivables")
-    prior_gp, curr_gp = _pair(s, "gross_profit")
-    prior_ta, curr_ta = _pair(s, "assets")
-    prior_ca, curr_ca = _pair(s, "current_assets")
-    prior_ppe, curr_ppe = _pair(s, "ppe_net")
-    prior_dep, curr_dep = _pair(s, "depreciation_amortization")
-    prior_sga, curr_sga = _pair(s, "sganda_expense")
-    prior_ltd, curr_ltd = _pair(s, "long_term_debt")
-    prior_cl, curr_cl = _pair(s, "current_liabilities")
-    _, curr_ni = _pair(s, "net_income")
-    _, curr_cfo = _pair(s, "cfo")
+    periods = _beneish_periods(s)
+    if periods is None:
+        return None
+    prior_rev, curr_rev = _at_beneish_periods(s, "revenue", periods)
+    prior_rec, curr_rec = _at_beneish_periods(s, "receivables", periods)
+    prior_gp, curr_gp = _at_beneish_periods(s, "gross_profit", periods)
+    prior_ta, curr_ta = _at_beneish_periods(s, "assets", periods)
+    prior_ca, curr_ca = _at_beneish_periods(s, "current_assets", periods)
+    prior_ppe, curr_ppe = _at_beneish_periods(s, "ppe_net", periods)
+    prior_dep, curr_dep = _at_beneish_periods(s, "depreciation_amortization", periods)
+    prior_sga, curr_sga = _at_beneish_periods(s, "sganda_expense", periods)
+    prior_ltd, curr_ltd = _at_beneish_periods(s, "long_term_debt", periods)
+    prior_cl, curr_cl = _at_beneish_periods(s, "current_liabilities", periods)
+    _, curr_ni = _at_beneish_periods(s, "net_income", periods)
+    _, curr_cfo = _at_beneish_periods(s, "cfo", periods)
 
     if curr_rev is None or prior_rev is None or curr_ta is None or prior_ta is None:
         return None
@@ -136,28 +180,31 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
         tata = safe_div(curr_ni - curr_cfo, curr_ta, positive_denominator=True)
 
     terms = {
-        "DSRI": (dsri, 0.920, 1.0),
-        "GMI": (gmi, 0.528, 1.0),
-        "AQI": (aqi, 0.404, 1.0),
-        "SGI": (sgi, 0.892, 1.0),
-        "DEPI": (depi, 0.115, 1.0),
-        "SGAI": (sgai, -0.172, 1.0),
-        "TATA": (tata, 4.679, 0.0),
-        "LVGI": (lvgi, -0.327, 1.0),
+        "DSRI": (dsri, 0.920),
+        "GMI": (gmi, 0.528),
+        "AQI": (aqi, 0.404),
+        "SGI": (sgi, 0.892),
+        "DEPI": (depi, 0.115),
+        "SGAI": (sgai, -0.172),
+        "TATA": (tata, 4.679),
+        "LVGI": (lvgi, -0.327),
     }
-    available = sum(1 for value, _, _ in terms.values() if value is not None)
-    if available < 6:
+    # These are eight terms of one published regression, not optional warning badges. Neutral
+    # substitution was especially dangerous for DSRI, GMI, AQI, and LVGI: an extreme input was
+    # first quarantined by ``_index`` and then quietly reintroduced as the reassuring value 1.0.
+    # If any term is missing or outside the estimation range, there is no Beneish score.
+    if any(value is None for value, _ in terms.values()):
         return None
 
     score = -4.84
-    for name, (value, coefficient, neutral) in terms.items():
-        used = neutral if value is None else value
-        components[name] = float(used)
-        score += coefficient * used
+    for name, (value, coefficient) in terms.items():
+        assert value is not None
+        components[name] = float(value)
+        score += coefficient * value
 
     components["flagged"] = float(score > -1.78)
-    components["n_components"] = float(available)
-    components["n_substituted"] = float(len(terms) - available)
+    components["n_components"] = float(len(terms))
+    components["n_substituted"] = 0.0
     return (float(score), components)
 
 
@@ -243,17 +290,21 @@ def altman_z_prime(s: SecuritySnapshot) -> float | None:
     service and retail companies; it remains disabled for financials, where none of Altman's models
     were estimated.
     """
+    from .fundamental import _altman_model_for, _latest, _ttm
+
+    if _altman_model_for(s) != "z_prime":
+        return None
     f = s.fundamentals
     if f is None:
         return None
-    total_assets = f.latest("assets")
-    total_liabilities = f.latest("liabilities")
+    total_assets = _latest(s, "assets")
+    total_liabilities = _latest(s, "liabilities")
     if not total_assets or total_assets <= 0 or not total_liabilities or total_liabilities <= 0:
         return None
-    working_capital = f.latest("working_capital")
-    retained = f.latest("retained_earnings")
-    equity = f.latest("equity")
-    ebit = f.ttm("ebit")
+    working_capital = _latest(s, "working_capital")
+    retained = _latest(s, "retained_earnings")
+    equity = _latest(s, "equity")
+    ebit = _ttm(s, "ebit")
     if working_capital is None or retained is None or ebit is None or equity is None:
         return None
 

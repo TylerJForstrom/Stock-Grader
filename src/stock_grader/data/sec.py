@@ -577,14 +577,38 @@ def _annualise_instants(series: pd.Series) -> pd.Series:
     return grouped.last().set_axis(grouped.apply(lambda s: s.index[-1])).sort_index()
 
 
-def _latest_end(fact: dict[str, Any]) -> date | None:
-    """Newest period end across a fact's records."""
-    ends = [_parse(r.get("end")) for r in _usd_records(fact)]
+def _latest_end(
+    fact: dict[str, Any],
+    *,
+    pit_mode: PitMode = PitMode.LATEST,
+    asof: date | None = None,
+) -> date | None:
+    """Newest eligible period end across a fact's records.
+
+    Under PIT, tag selection must see the same information set as value selection.  Looking at a
+    tag's records through today before filtering its values let a tag adopted years later displace
+    the tag investors actually saw on the historical date.
+    """
+    records = _usd_records(fact)
+    if pit_mode is PitMode.PIT and asof is not None:
+        records = [
+            record
+            for record in records
+            if (filed := _parse(record.get("filed"))) is not None and filed <= asof
+        ]
+    ends = [_parse(record.get("end")) for record in records]
     ends = [e for e in ends if e is not None]
     return max(ends) if ends else None
 
 
-def _select_tag(chain: tuple[str, ...], gaap: dict[str, Any], *, stale_days: int = 550) -> str | None:
+def _select_tag(
+    chain: tuple[str, ...],
+    gaap: dict[str, Any],
+    *,
+    stale_days: int = 550,
+    pit_mode: PitMode = PitMode.LATEST,
+    asof: date | None = None,
+) -> str | None:
     """Pick the preferred tag that still carries current data.
 
     Taking the first tag that merely *exists* is wrong, because filers abandon tags without
@@ -602,7 +626,16 @@ def _select_tag(chain: tuple[str, ...], gaap: dict[str, Any], *, stale_days: int
     present = [t for t in chain if t in gaap]
     if not present:
         return None
-    ends = {t: _latest_end(gaap[t]) for t in present}
+    ends = {
+        tag: _latest_end(gaap[tag], pit_mode=pit_mode, asof=asof)
+        for tag in present
+    }
+    if pit_mode is PitMode.PIT and asof is not None:
+        # A tag with no record filed by the grading date did not exist in the investor's
+        # information set.  It must not win merely because it leads the modern preference chain.
+        present = [tag for tag in present if ends[tag] is not None]
+        if not present:
+            return None
     dated = {t: e for t, e in ends.items() if e is not None}
     if not dated:
         return present[0]
@@ -635,7 +668,7 @@ def build_fundamentals(
     tag_used: dict[str, str] = {}
 
     for concept, chain in concept_chains.items():
-        tag = _select_tag(chain, gaap)
+        tag = _select_tag(chain, gaap, pit_mode=pit_mode, asof=asof)
         if tag is None:
             continue
         tag_used[concept] = tag
@@ -886,6 +919,14 @@ class SECProvider:
         refresh: bool = False,
     ) -> SecuritySnapshot:
         """Shared body for :meth:`fetch` and :meth:`fetch_by_cik`."""
+        if asof != date.today() and pit_mode is not PitMode.PIT:
+            # Keep this invariant at the lowest shared entry point. Historically fetch() enforced
+            # it while fetch_by_cik() bypassed it, so the CIK path recommended for delisted issuers
+            # silently admitted post-as-of restatements.
+            raise ValueError(
+                f"asof={asof} is ignored under PitMode.LATEST. Pass pit_mode=PitMode.PIT for "
+                "point-in-time selection, or use today's date for a latest-vintage snapshot."
+            )
         snap = SecuritySnapshot(ticker=ticker.upper(), asof=asof)
         snap.cik = cik
 
@@ -895,6 +936,13 @@ class SECProvider:
             snap.sic = subs.get("sic")
             snap.industry = subs.get("sicDescription")
             snap.sector = classify_sic(subs.get("sic"))
+            snap.meta["sic_source"] = "current_sec_submissions_metadata"
+            if asof != date.today():
+                snap.warnings.append(
+                    "historical fundamentals use the issuer's current SEC submissions SIC; "
+                    "SEC Companyfacts does not provide a dated SIC history, so historical metric "
+                    "applicability may reflect a later business classification"
+                )
 
         facts = self.client.company_facts(cik, refresh=refresh)
         if not facts:

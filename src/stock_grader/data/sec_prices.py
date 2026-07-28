@@ -43,37 +43,102 @@ from __future__ import annotations
 
 import io
 import logging
+import os
+import re
+import tempfile
+import time
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 import requests
 
 log = logging.getLogger(__name__)
 
-__all__ = ["MARKET_PRICED_CODES", "SECInsiderPriceProvider", "implied_price_from_float"]
+__all__ = [
+    "MARKET_PRICED_CODES",
+    "SECInsiderPriceProvider",
+    "calibrate_non_affiliate_fraction",
+    "calibrated_price_from_float",
+    "implied_price_from_float",
+    "resolve_price",
+]
 
 # Form 4 transaction codes that execute at the prevailing market price.
 #   S = open-market sale, P = open-market purchase, F = shares withheld at market to cover tax.
 # Deliberately excludes M (option exercise at strike), A (award), G (gift), D (disposition to issuer).
 MARKET_PRICED_CODES = frozenset({"S", "P", "F"})
 
-_DATASET_URL = (
-    "https://www.sec.gov/files/structureddata/data/insider-transactions-data-sets/{quarter}_form345.zip"
-)
+_DATASET_URL = "https://www.sec.gov/files/structureddata/data/insider-transactions-data-sets/{quarter}_form345.zip"
 _DEFAULT_CONTACT = "stock-grader (set STOCK_GRADER_CONTACT to your email)"
+_QUARTER_PATTERN = re.compile(r"^(?P<year>20\d{2})q(?P<quarter>[1-4])$")
+_PRICE_COLUMNS = ["ticker", "date", "price"]
 
 
 def _quarter_bounds(quarter: str) -> tuple[date, date]:
     """Plausible transaction-date window for a ``YYYYqN`` bundle, with a quarter of slack."""
-    year, q = int(quarter[:4]), int(quarter[-1])
+    match = _QUARTER_PATTERN.fullmatch(quarter)
+    if match is None:
+        raise ValueError(f"invalid SEC quarter identifier: {quarter!r}")
+    year, q = int(match.group("year")), int(match.group("quarter"))
     start_month = 3 * (q - 1) + 1
     start = date(year, start_month, 1)
     end_month = start_month + 2
     end = date(year, end_month, 28) + timedelta(days=4)
     end = end - timedelta(days=end.day)  # last day of the quarter's final month
     return (start - timedelta(days=95), end + timedelta(days=95))
+
+
+def _quarter_cache_path(root: Path, quarter: str) -> Path:
+    """Resolve a known-format quarter path and refuse symlink escapes."""
+    if _QUARTER_PATTERN.fullmatch(quarter) is None:
+        raise ValueError(f"invalid SEC quarter identifier: {quarter!r}")
+    root = root.resolve()
+    candidate = (root / f"{quarter}.parquet").resolve()
+    if candidate.parent != root:
+        raise ValueError("SEC insider cache path escaped its configured directory")
+    return candidate
+
+
+def _normalize_price_table(frame: pd.DataFrame, quarter: str) -> pd.DataFrame | None:
+    """Validate cached or downloaded rows before they enter the in-memory table."""
+    if not set(_PRICE_COLUMNS).issubset(frame.columns):
+        return None
+    table = frame[_PRICE_COLUMNS].copy()
+    table["ticker"] = table["ticker"].astype(str).str.upper().str.strip()
+    table["date"] = pd.to_datetime(table["date"], errors="coerce", utc=True)
+    table["date"] = table["date"].dt.tz_convert(None).dt.normalize()
+    table["price"] = pd.to_numeric(table["price"], errors="coerce")
+    table = table.dropna(subset=_PRICE_COLUMNS)
+    table = table[table["ticker"].ne("") & table["ticker"].ne("NONE") & table["price"].gt(0)]
+    low, high = _quarter_bounds(quarter)
+    table = table[table["date"].between(pd.Timestamp(low), pd.Timestamp(high), inclusive="both")]
+    if table.empty:
+        return pd.DataFrame(columns=_PRICE_COLUMNS)
+    grouped = table.groupby(["ticker", "date"], as_index=False).agg(price=("price", "median"))
+    return grouped.sort_values(["ticker", "date"]).reset_index(drop=True)
+
+
+def _atomic_parquet_write(frame: pd.DataFrame, destination: Path) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".parquet.tmp",
+            prefix=f".{destination.name}.",
+            dir=destination.parent,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+        frame.to_parquet(temporary, index=False)
+        temporary.replace(destination)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                log.debug("could not remove temporary insider cache %s", temporary)
 
 
 class SECInsiderPriceProvider:
@@ -94,15 +159,42 @@ class SECInsiderPriceProvider:
         contact: str | None = None,
         quarters: int = 4,
         timeout: float = 180.0,
+        failure_threshold: int = 2,
+        cooldown_seconds: float = 60.0,
     ) -> None:
-        import os
-
-        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader" / "insider")
+        self.cache_dir = Path(
+            cache_dir or Path.home() / ".cache" / "stock-grader" / "insider"
+        ).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.contact = contact or os.environ.get("STOCK_GRADER_CONTACT") or _DEFAULT_CONTACT
-        self.quarters = quarters
+        self.quarters = max(1, quarters)
         self.timeout = timeout
+        self.failure_threshold = max(1, failure_threshold)
+        self.cooldown_seconds = max(0.0, cooldown_seconds)
+        self._network_failures = 0
+        self._circuit_opened_at: float | None = None
+        self._tables: dict[tuple[str, ...], pd.DataFrame] = {}
+        # Kept as the most recently requested table for compatibility with integrations that
+        # inspect it, but it is no longer the cache key.
         self._table: pd.DataFrame | None = None
+
+    def _network_allowed(self) -> bool:
+        if self._circuit_opened_at is None:
+            return True
+        if time.monotonic() - self._circuit_opened_at >= self.cooldown_seconds:
+            self._network_failures = 0
+            self._circuit_opened_at = None
+            return True
+        return False
+
+    def _record_network_failure(self) -> None:
+        self._network_failures += 1
+        if self._network_failures >= self.failure_threshold:
+            self._circuit_opened_at = time.monotonic()
+
+    def _record_network_success(self) -> None:
+        self._network_failures = 0
+        self._circuit_opened_at = None
 
     # ---------------------------------------------------------------- fetching
 
@@ -124,13 +216,23 @@ class SECInsiderPriceProvider:
 
     def _load_quarter(self, quarter: str, *, refresh: bool = False) -> pd.DataFrame | None:
         """Fetch one quarter and reduce it to (ticker, date, price) rows."""
-        cache = self.cache_dir / f"{quarter}.parquet"
-        if cache.exists() and not refresh:
+        try:
+            cache = _quarter_cache_path(self.cache_dir, quarter)
+        except ValueError as exc:
+            log.warning("%s", exc)
+            return None
+        if cache.is_file() and not refresh:
             try:
-                return pd.read_parquet(cache)
+                cached = _normalize_price_table(pd.read_parquet(cache), quarter)
+                if cached is not None:
+                    return cached
+                log.warning("insider cache %s has an invalid schema; refetching", cache)
             except Exception:
                 log.debug("unreadable insider cache %s, refetching", cache)
 
+        if not self._network_allowed():
+            log.warning("SEC insider circuit breaker is open; skipping %s", quarter)
+            return None
         url = _DATASET_URL.format(quarter=quarter)
         try:
             response = requests.get(
@@ -139,24 +241,39 @@ class SECInsiderPriceProvider:
                 headers={"User-Agent": f"Stock-Grader/0.1 ({self.contact})"},
             )
         except requests.RequestException as exc:
+            self._record_network_failure()
             log.warning("insider dataset %s unreachable: %s", quarter, exc)
             return None
         if response.status_code != 200:
+            if response.status_code == 429 or response.status_code >= 500:
+                self._record_network_failure()
+            else:
+                self._record_network_success()
             log.info("insider dataset %s returned HTTP %s", quarter, response.status_code)
             return None
 
         try:
             with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
                 submissions = pd.read_csv(
-                    archive.open("SUBMISSION.tsv"), sep="\t", low_memory=False,
+                    archive.open("SUBMISSION.tsv"),
+                    sep="\t",
+                    low_memory=False,
                     usecols=["ACCESSION_NUMBER", "ISSUERTRADINGSYMBOL"],
                 )
                 transactions = pd.read_csv(
-                    archive.open("NONDERIV_TRANS.tsv"), sep="\t", low_memory=False,
-                    usecols=["ACCESSION_NUMBER", "TRANS_DATE", "TRANS_CODE",
-                             "TRANS_PRICEPERSHARE", "TRANS_SHARES"],
+                    archive.open("NONDERIV_TRANS.tsv"),
+                    sep="\t",
+                    low_memory=False,
+                    usecols=[
+                        "ACCESSION_NUMBER",
+                        "TRANS_DATE",
+                        "TRANS_CODE",
+                        "TRANS_PRICEPERSHARE",
+                        "TRANS_SHARES",
+                    ],
                 )
         except (zipfile.BadZipFile, KeyError, ValueError) as exc:
+            self._record_network_failure()
             log.warning("insider dataset %s could not be parsed: %s", quarter, exc)
             return None
 
@@ -176,41 +293,70 @@ class SECInsiderPriceProvider:
         # period covers legitimate late filings and amendments.
         low, high = _quarter_bounds(quarter)
         before = len(merged)
-        merged = merged[(merged["date"] >= pd.Timestamp(low)) & (merged["date"] <= pd.Timestamp(high))]
+        merged = merged[
+            (merged["date"] >= pd.Timestamp(low)) & (merged["date"] <= pd.Timestamp(high))
+        ]
         dropped = before - len(merged)
         if dropped:
-            log.info("insider dataset %s: dropped %d transactions dated outside %s..%s",
-                     quarter, dropped, low, high)
+            log.info(
+                "insider dataset %s: dropped %d transactions dated outside %s..%s",
+                quarter,
+                dropped,
+                low,
+                high,
+            )
 
         # One price per ticker per day: the median across that day's transactions, which is robust
         # to a single mispunched filing.
-        table = (
-            merged.groupby(["ticker", "date"])["price"]
-            .median()
-            .reset_index()
-            .sort_values(["ticker", "date"])
+        table = _normalize_price_table(
+            merged[["ticker", "date", "price"]],
+            quarter,
         )
+        if table is None:
+            self._record_network_failure()
+            log.warning("insider dataset %s did not contain the required price columns", quarter)
+            return None
+        self._record_network_success()
         try:
-            table.to_parquet(cache, index=False)
+            _atomic_parquet_write(table, cache)
         except Exception as exc:
             log.debug("could not cache insider prices for %s: %s", quarter, exc)
         return table
 
     def load(self, *, asof: date | None = None, refresh: bool = False) -> pd.DataFrame:
         """Load and concatenate the recent quarters into one price table."""
-        if self._table is not None and not refresh:
-            return self._table
         asof = asof or date.today()
+        quarter_key = tuple(self._recent_quarters(asof, self.quarters))
+        if quarter_key in self._tables and not refresh:
+            self._table = self._tables[quarter_key]
+            return self._table
+        previous = self._tables.get(quarter_key)
         frames = []
-        for quarter in self._recent_quarters(asof, self.quarters):
+        complete = True
+        for quarter in quarter_key:
             frame = self._load_quarter(quarter, refresh=refresh)
-            if frame is not None and not frame.empty:
+            if frame is None:
+                complete = False
+            elif not frame.empty:
                 frames.append(frame)
-        self._table = (
-            pd.concat(frames, ignore_index=True).sort_values(["ticker", "date"])
-            if frames
-            else pd.DataFrame(columns=["ticker", "date", "price"])
-        )
+        if not complete and previous is not None:
+            log.warning("SEC insider refresh was incomplete; retaining prior in-memory table")
+            self._table = previous
+            return self._table
+        if frames:
+            combined = pd.concat(frames, ignore_index=True)
+            self._table = combined.groupby(["ticker", "date"], as_index=False).agg(
+                price=("price", "median")
+            )
+            self._table = self._table.sort_values(["ticker", "date"]).reset_index(drop=True)
+            if complete:
+                self._tables[quarter_key] = self._table
+        else:
+            # Do not memoize a transient all-network failure. The next call may occur after the
+            # breaker cools down or after connectivity returns.
+            self._table = pd.DataFrame(columns=_PRICE_COLUMNS)
+            if complete:
+                self._tables[quarter_key] = self._table
         return self._table
 
     # ---------------------------------------------------------------- querying
@@ -244,7 +390,9 @@ class SECInsiderPriceProvider:
         observed = series.index[-1].date()
         reference = asof or date.today()
         if (reference - observed).days > max_age_days:
-            log.info("%s: newest insider price is %s, older than %d days", ticker, observed, max_age_days)
+            log.info(
+                "%s: newest insider price is %s, older than %d days", ticker, observed, max_age_days
+            )
             return None
         # Average the last few observations to damp a single unusual trade.
         window = series[series.index >= series.index[-1] - pd.Timedelta(days=10)]
@@ -296,29 +444,40 @@ def resolve_price(
         observed = insider.any_price(ticker, asof=asof)
         if observed is not None:
             price, when = observed
-            candidates.append({
-                "price": price, "source": "sec_insider", "date": when,
-                "non_affiliate_fraction": None,
-            })
+            candidates.append(
+                {
+                    "price": price,
+                    "source": "sec_insider",
+                    "date": when,
+                    "non_affiliate_fraction": None,
+                }
+            )
 
         calibrated = calibrated_price_from_float(
             float_history, shares_outstanding, insider.price_series(ticker, asof=asof)
         )
         if calibrated is not None:
             price, fraction, when = calibrated
-            candidates.append({
-                "price": price, "source": "public_float_calibrated", "date": when,
-                "non_affiliate_fraction": fraction,
-            })
+            candidates.append(
+                {
+                    "price": price,
+                    "source": "public_float_calibrated",
+                    "date": when,
+                    "non_affiliate_fraction": fraction,
+                }
+            )
 
     if not candidates and public_float and float_history is not None and not float_history.empty:
         implied = implied_price_from_float(public_float, shares_outstanding)
         if implied is not None:
-            candidates.append({
-                "price": implied, "source": "public_float_lower_bound",
-                "date": pd.Timestamp(float_history.index[-1]).date(),
-                "non_affiliate_fraction": None,
-            })
+            candidates.append(
+                {
+                    "price": implied,
+                    "source": "public_float_lower_bound",
+                    "date": pd.Timestamp(float_history.index[-1]).date(),
+                    "non_affiliate_fraction": None,
+                }
+            )
 
     if not candidates:
         return None
@@ -393,7 +552,9 @@ def calibrate_non_affiliate_fraction(
         if abs((float_date - price_date).days) > max_gap_days:
             log.debug(
                 "refusing calibration: float dated %s vs price %s (%d days apart)",
-                float_date, price_date, abs((float_date - price_date).days),
+                float_date,
+                price_date,
+                abs((float_date - price_date).days),
             )
             return None
     fraction = public_float / (known_price * shares_outstanding)
@@ -432,14 +593,18 @@ def calibrated_price_from_float(
     # Find the float observation with the closest price observation, and calibrate on that pair.
     best: tuple[int, float, date] | None = None
     for f_date, f_value in float_history.items():
-        f_day = pd.Timestamp(f_date).date()
+        f_day = pd.Timestamp(cast(Any, f_date)).date()
         nearest = min(price_history.index, key=lambda d: abs((pd.Timestamp(d).date() - f_day).days))
         gap = abs((pd.Timestamp(nearest).date() - f_day).days)
         if gap > max_gap_days:
             continue
         fraction = calibrate_non_affiliate_fraction(
-            float(f_value), shares_outstanding, float(price_history.loc[nearest]),
-            float_date=f_day, price_date=pd.Timestamp(nearest).date(), max_gap_days=max_gap_days,
+            float(f_value),
+            shares_outstanding,
+            float(price_history.loc[nearest]),
+            float_date=f_day,
+            price_date=pd.Timestamp(nearest).date(),
+            max_gap_days=max_gap_days,
         )
         if fraction is None:
             continue

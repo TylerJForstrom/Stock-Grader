@@ -7,7 +7,7 @@ set. These are not download failures — a bank does not publish a classified ba
 current ratio is not unknown, it is undefined.
 
 Treating "undefined" as "missing" would penalise the data-coverage score of every financial in the
-universe and widen its confidence interval for no reason, so the two states are kept distinct
+universe and widen its model-sensitivity range for no reason, so the two states are kept distinct
 throughout the pipeline.
 """
 

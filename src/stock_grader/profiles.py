@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .pipeline import GradeConfig, grade_universe
+from .scoring import grade_from_percentile, to_letter
 from .types import GradeReport, SecuritySnapshot
 
 __all__ = ["PROFILE_SPECS", "ConsensusResult", "consensus_grade", "get_profile", "profile_names"]
@@ -137,7 +138,11 @@ def get_profile(name: str, **overrides) -> GradeConfig:
         "metric_weighting": "equal",
         "metric_aggregator": "weighted_mean",
         "normalizer": "robust_z",
-        "curve": "hybrid",
+        # Default to an explicitly peer-relative percentile. The historical ``hybrid`` curve
+        # blended two peer-derived quantities and was incorrectly described as partly absolute.
+        # It remains available as an experimental compatibility option, but is no longer the
+        # production default.
+        "curve": "cross_sectional",
     }
     settings.update(overrides)
     return GradeConfig(**settings)
@@ -159,7 +164,11 @@ class ConsensusResult:
         self.ticker = ticker
         self.per_profile = per_profile
         scores = pd.Series(
-            {name: report.score for name, report in per_profile.items() if np.isfinite(report.score)},
+            {
+                name: report.score
+                for name, report in per_profile.items()
+                if report.graded and np.isfinite(report.score)
+            },
             dtype="float64",
         )
         self.scores = scores
@@ -171,9 +180,26 @@ class ConsensusResult:
         self.spread = float(scores.max() - scores.min())
         # 40 points of spread across profiles is total disagreement; 0 is unanimity.
         self.clarity = float(np.clip(100.0 - self.spread * 2.5, 0.0, 100.0))
-        from .scoring import to_letter
-
-        self.letter = to_letter(self.score)
+        # Keep the consensus number and letter on the same scale. Cross-sectional reports use the
+        # percentile thresholds; absolute/hybrid reports use the composite thresholds. Older
+        # callers may omit curve metadata, in which case a real included report is the safest
+        # compatibility fallback.
+        median_score = float(scores.median())
+        representative = min(
+            scores.index,
+            key=lambda name: (abs(float(scores[name]) - median_score), str(name)),
+        )
+        curves = {
+            str(per_profile[str(name)].meta.get("curve"))
+            for name in scores.index
+            if per_profile[str(name)].meta.get("curve")
+        }
+        if curves == {"cross_sectional"}:
+            self.letter = grade_from_percentile(self.score)
+        elif curves and curves <= {"absolute", "hybrid"}:
+            self.letter = to_letter(self.score)
+        else:
+            self.letter = per_profile[str(representative)].letter
         self.best_profile = str(scores.idxmax())
         self.worst_profile = str(scores.idxmin())
 
@@ -186,6 +212,20 @@ class ConsensusResult:
             f"worst as {self.worst_profile} ({self.scores.min():.0f}), "
             f"clarity {self.clarity:.0f}/100"
         )
+
+    def to_dict(self) -> dict:
+        """Machine-readable consensus, including profiles excluded as ungradeable."""
+        return {
+            "ticker": self.ticker,
+            "score": self.score,
+            "letter": self.letter,
+            "clarity": self.clarity,
+            "spread": self.spread,
+            "best_profile": self.best_profile,
+            "worst_profile": self.worst_profile,
+            "scores": {str(name): float(score) for name, score in self.scores.items()},
+            "per_profile": self.per_profile,
+        }
 
 
 def consensus_grade(

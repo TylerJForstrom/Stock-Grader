@@ -36,7 +36,8 @@ class Coverage(str, Enum):
     The distinction between ``MISSING`` and ``NOT_APPLICABLE`` is load-bearing: a bank has no
     current ratio because banks do not publish a classified balance sheet, not because the data
     failed to download. Charging a coverage penalty for the former would unfairly widen the
-    confidence interval of every financial in the universe. See docs/design/DATA-GROUND-TRUTH.md §6.
+    model-sensitivity range of every financial in the universe. See
+    docs/design/DATA-GROUND-TRUTH.md §6.
     """
 
     OK = "ok"
@@ -390,7 +391,7 @@ class PillarScore:
 
 @dataclass(slots=True)
 class GradeReport:
-    """The final artefact: a grade, why it is that grade, and how much to trust it."""
+    """The final artefact: a grade, its evidence, refusal gates, and model stability."""
 
     ticker: str
     asof: date
@@ -407,7 +408,7 @@ class GradeReport:
     weighting_method: str = ""
     normalizer: str = ""
     aggregator: str = ""
-    gates: list[str] = field(default_factory=list)  # hard gates that capped the grade
+    gates: list[str] = field(default_factory=list)  # hard gates that refuse the letter as N/A
     explain: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
@@ -417,12 +418,54 @@ class GradeReport:
         """False when coverage was too low to responsibly issue a grade."""
         return self.letter != "N/A"
 
+    @property
+    def sensitivity_interval(self) -> tuple[float, float] | None:
+        """Model-sensitivity interval, retained in :attr:`ci` for API compatibility.
+
+        The interval perturbs weights and metric inclusion. It is not a predictive interval for
+        the stock price or future return, so new interfaces should prefer this truthful name while
+        older consumers can continue reading ``ci`` unchanged.
+        """
+        return self.ci
+
+    @property
+    def letter_probabilities(self) -> dict[str, float]:
+        """Compatibility alias for letter frequencies under model perturbation scenarios."""
+        values = self.explain.get(
+            "letter_scenario_frequencies",
+            self.explain.get("letter_probabilities", {}),
+        )
+        if not isinstance(values, dict):
+            return {}
+        probabilities: dict[str, float] = {}
+        for letter, probability in values.items():
+            try:
+                probabilities[str(letter)] = float(probability)
+            except (TypeError, ValueError):
+                continue
+        return probabilities
+
     def top_contributors(self, n: int = 5, *, positive: bool = True) -> list[tuple[str, float]]:
         """Metrics that moved the grade most, signed relative to a neutral 50 score."""
+        exact = self.explain.get("metric_contributions", {})
+        if isinstance(exact, dict) and exact:
+            flat = []
+            for metric, contribution in exact.items():
+                try:
+                    value = float(contribution)
+                except (TypeError, ValueError):
+                    continue
+                if (positive and value > 0.0) or (not positive and value < 0.0):
+                    flat.append((str(metric), value))
+            flat.sort(key=lambda item: item[1], reverse=positive)
+            return flat[:n]
         flat: list[tuple[str, float]] = []
+        pillar_weights = self.effective_pillar_weights or self.pillar_weights
         for pillar, ps in self.pillars.items():
-            pw = self.pillar_weights.get(pillar, 0.0)
+            pw = pillar_weights.get(pillar, 0.0)
             for metric, contribution in ps.contributions.items():
-                flat.append((metric, contribution * pw))
+                value = contribution * pw
+                if (positive and value > 0.0) or (not positive and value < 0.0):
+                    flat.append((metric, value))
         flat.sort(key=lambda kv: kv[1], reverse=positive)
         return flat[:n]

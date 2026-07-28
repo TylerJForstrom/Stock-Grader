@@ -32,8 +32,9 @@ than the honest fallback to equal weights, which is what happens.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from itertools import permutations
 
 import numpy as np
 import pandas as pd
@@ -128,8 +129,23 @@ def fixed_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
 
 
 # Saaty's random-consistency index, indexed by matrix order n.
-_SAATY_RI = {1: 0.0, 2: 0.0, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41,
-             9: 1.45, 10: 1.49, 11: 1.51, 12: 1.48, 13: 1.56, 14: 1.57, 15: 1.59}
+_SAATY_RI = {
+    1: 0.0,
+    2: 0.0,
+    3: 0.58,
+    4: 0.90,
+    5: 1.12,
+    6: 1.24,
+    7: 1.32,
+    8: 1.41,
+    9: 1.45,
+    10: 1.49,
+    11: 1.51,
+    12: 1.48,
+    13: 1.56,
+    14: 1.57,
+    15: 1.59,
+}
 
 
 @WEIGHTINGS("ahp", needs_panel=False, needs_returns=False, fallback="equal")
@@ -325,7 +341,7 @@ def min_variance_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
         return _equal(X.columns)
     cov = _covariance(X)
     p = cov.shape[0]
-    start = np.repeat(1.0 / p, p)
+    start: np.ndarray = np.repeat(1.0 / p, p)
     result = minimize(
         lambda w: float(w @ cov @ w),
         start,
@@ -335,7 +351,9 @@ def min_variance_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
         options={"maxiter": 500, "ftol": 1e-12},
     )
     if not result.success:
-        ctx.warn(f"min_variance: optimiser did not converge ({result.message}), using inverse variance")
+        ctx.warn(
+            f"min_variance: optimiser did not converge ({result.message}), using inverse variance"
+        )
         return inverse_variance_weights(X, ctx)
     return _normalize(pd.Series(result.x, index=X.columns), X.columns)
 
@@ -375,7 +393,9 @@ def risk_parity_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
     return _normalize(pd.Series(result.x, index=X.columns), X.columns)
 
 
-@WEIGHTINGS("max_diversification", needs_panel=True, needs_returns=False, fallback="inverse_variance")
+@WEIGHTINGS(
+    "max_diversification", needs_panel=True, needs_returns=False, fallback="inverse_variance"
+)
 def max_diversification_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
     """Maximise the diversification ratio ``(w·sigma) / sqrt(w'Sigma w)``."""
     if not _usable_panel(X):
@@ -460,7 +480,8 @@ def _quasi_diagonal(links: np.ndarray, n: int) -> list[int]:
     while order.max() >= n:
         order.index = range(0, order.shape[0] * 2, 2)
         clustered = order[order >= n]
-        i, j = clustered.index, clustered.to_numpy() - n
+        i: pd.Index = clustered.index
+        j: np.ndarray = clustered.to_numpy() - n
         order[i] = links[j, 0]
         order = pd.concat([order, pd.Series(links[j, 1], index=i + 1)]).sort_index()
     return order.tolist()
@@ -594,8 +615,9 @@ def shapley_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
 
     The only method here that is fair in a game-theoretic sense: it averages a component's marginal
     contribution over *every* ordering, so two redundant metrics split the credit they jointly earn
-    instead of both claiming it. Exact enumeration is exponential, so above 10 components it
-    switches to seeded Monte-Carlo permutation sampling.
+    instead of both claiming it. Exact enumeration is exponential, so the implementation checks the
+    factorial count *before* constructing an iterator and switches to seeded Monte-Carlo sampling
+    once the configured exact-work budget would be exceeded.
     """
     returns = _forward_returns(X, ctx)
     if returns is None:
@@ -623,17 +645,32 @@ def shapley_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
 
     contributions = dict.fromkeys(columns, 0.0)
     rng = np.random.default_rng(ctx.seed)
-    n_permutations = int(ctx.config.get("shapley_permutations", 200))
+    requested_permutations = int(ctx.config.get("shapley_permutations", 200))
+    n_permutations = min(max(requested_permutations, 1), 10_000)
+    if requested_permutations != n_permutations:
+        ctx.warn(f"shapley: permutation count clamped to {n_permutations}")
+    max_exact = max(int(ctx.config.get("shapley_max_exact_permutations", 5000)), 0)
+    # Calculate p! only up to the work budget. This avoids both constructing a permutation list
+    # and allocating an enormous factorial integer for an adversarially wide panel.
+    exact_orderings = 1
+    for factor in range(2, p + 1):
+        if exact_orderings > max_exact // factor:
+            exact_orderings = max_exact + 1
+            break
+        exact_orderings *= factor
 
-    if p <= 10:
-        from itertools import permutations as iter_permutations
-
-        orderings = list(iter_permutations(columns))
-        if len(orderings) > 5000:
-            orderings = [tuple(rng.permutation(columns)) for _ in range(n_permutations)]
+    orderings: Iterator[tuple[str, ...]]
+    if exact_orderings <= max_exact:
+        orderings = permutations(columns)
+        total_orderings = exact_orderings
+        ctx.config["shapley_sampled"] = False
     else:
-        orderings = [tuple(rng.permutation(columns)) for _ in range(n_permutations)]
+        orderings = (
+            tuple(str(column) for column in rng.permutation(columns)) for _ in range(n_permutations)
+        )
+        total_orderings = n_permutations
         ctx.config["shapley_sampled"] = True
+    ctx.config["shapley_orderings_evaluated"] = total_orderings
 
     cache: dict[tuple[str, ...], float] = {}
     for ordering in orderings:
@@ -647,8 +684,9 @@ def shapley_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
             current = cache[key]
             contributions[column] += current - previous
             previous = current
-    total_orderings = max(len(orderings), 1)
-    scores = pd.Series({k: v / total_orderings for k, v in contributions.items()}).clip(lower=0.0)
+    scores = pd.Series(
+        {key: value_ / total_orderings for key, value_ in contributions.items()}
+    ).clip(lower=0.0)
     if float(scores.sum()) <= _EPS:
         ctx.warn("shapley: no component contributed positively, falling back to equal")
         return _equal(X.columns)
@@ -694,8 +732,7 @@ def rank_order_centroid_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Se
     ordered += [c for c in X.columns if c not in ordered]
     n = len(ordered)
     weights = {
-        column: sum(1.0 / k for k in range(i + 1, n + 1)) / n
-        for i, column in enumerate(ordered)
+        column: sum(1.0 / k for k in range(i + 1, n + 1)) / n for i, column in enumerate(ordered)
     }
     return _normalize(pd.Series(weights), X.columns)
 
@@ -788,7 +825,13 @@ def consensus_weights(X: pd.DataFrame, ctx: WeightingContext) -> pd.Series:
     the component-wise median across them is robust to any single method behaving pathologically on
     a particular panel — the same logic that makes the median a good estimator, applied one level up.
     """
-    methods = ctx.config.get("consensus_methods") or ["equal", "entropy", "critic", "pca", "risk_parity"]
+    methods = ctx.config.get("consensus_methods") or [
+        "equal",
+        "entropy",
+        "critic",
+        "pca",
+        "risk_parity",
+    ]
     vectors = []
     for name in methods:
         if name == "consensus":

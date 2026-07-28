@@ -25,62 +25,182 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 from scipy import stats
+from statsmodels.tsa.stattools import adfuller
 
 from ..registry import metric
 from ..types import SecuritySnapshot
 from .util import safe_div
 
 TRADING_DAYS = 252
-_MIN_FOR_STATS = 60
+_MIN_ANNUAL_OBSERVATIONS = TRADING_DAYS
+_MIN_FACTOR_OBSERVATIONS = TRADING_DAYS
+_MAX_RETURN_GAP_DAYS = 7
+_MAX_RISK_FREE_STALENESS_DAYS = 10
+
+
+def _frame_prices(frame: pd.DataFrame | None) -> pd.Series | None:
+    """Canonical positive daily price levels with one observation per sorted date."""
+    if frame is None or frame.empty:
+        return None
+    column = "adj_close" if "adj_close" in frame.columns else "close"
+    if column not in frame.columns:
+        return None
+    raw = pd.to_numeric(frame[column], errors="coerce")
+    try:
+        dates = pd.to_datetime(raw.index, errors="coerce", utc=True)
+    except (TypeError, ValueError):
+        return None
+    valid = ~dates.isna()
+    values = raw.to_numpy(dtype="float64")[valid]
+    index = pd.DatetimeIndex(dates[valid]).tz_convert(None).normalize()
+    series = pd.Series(values, index=index, dtype="float64")
+    series = series.replace([np.inf, -np.inf], np.nan).dropna()
+    series = series[series > 0.0]
+    series = series.groupby(level=0).last().sort_index()
+    return series if len(series) >= 2 else None
 
 
 def _prices(s: SecuritySnapshot) -> pd.Series | None:
     if not s.has_prices:
         return None
-    frame = s.prices
-    column = "adj_close" if "adj_close" in frame.columns else "close"
-    series = frame[column].dropna()
-    return series if len(series) >= 2 else None
+    return _frame_prices(s.prices)
+
+
+def _returns_from_prices(prices: pd.Series) -> pd.Series:
+    """Log returns from the latest contiguous segment of the price history.
+
+    Merely dropping a multi-day bridge and keeping both sides lets a 252-observation window span
+    the gap while omitting its return. That understates both cumulative performance and risk. A
+    material gap therefore starts a new segment; downstream minimum-history checks decide whether
+    enough clean post-gap data remain.
+    """
+    returns = np.log(prices / prices.shift(1))
+    gaps = prices.index.to_series().diff().dt.days
+    material_gaps = gaps > _MAX_RETURN_GAP_DAYS
+    if material_gaps.any():
+        latest_gap = material_gaps[material_gaps].index[-1]
+        returns = returns.loc[returns.index > latest_gap]
+    return returns.replace([np.inf, -np.inf], np.nan).dropna()
 
 
 def _log_returns(s: SecuritySnapshot, window: int | None = None) -> pd.Series | None:
     prices = _prices(s)
     if prices is None:
         return None
-    returns = np.log(prices / prices.shift(1)).dropna()
-    returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
+    returns = _returns_from_prices(prices)
     if window is not None:
         returns = returns.iloc[-window:]
     return returns if len(returns) >= 2 else None
+
+
+def _window_log_returns(
+    s: SecuritySnapshot,
+    days: int,
+    *,
+    skip: int = 0,
+) -> pd.Series | None:
+    """Exactly ``days`` log-return intervals ending ``skip`` intervals before the latest."""
+    returns = _log_returns(s)
+    if returns is None or len(returns) < days + skip:
+        return None
+    end = len(returns) - skip if skip else len(returns)
+    window = returns.iloc[end - days : end]
+    return window if len(window) == days else None
 
 
 def _daily_risk_free(s: SecuritySnapshot, index: pd.Index) -> pd.Series:
     """Daily risk-free rate aligned to a return index.
 
     Metrics that need this declare ``needs_risk_free`` and the engine refuses them when it is
-    absent, so reaching the zero fallback here means the caller explicitly opted in. The leading
-    gap is back-filled rather than zero-filled: a zero at the start of the window is a fabricated
-    0% rate for those days, not a missing one.
+    absent, so reaching the zero fallback here means the caller explicitly opted in. Only a rate
+    observed on or before each return date may be carried forward, for at most ten calendar days;
+    leading and stale gaps remain missing rather than importing future information or fabricating
+    a 0% rate.
     """
+    try:
+        target = pd.DatetimeIndex(pd.to_datetime(index, utc=True)).tz_convert(None).normalize()
+    except (TypeError, ValueError):
+        return pd.Series(np.nan, index=index, dtype="float64")
     if s.risk_free is None or s.risk_free.empty:
-        return pd.Series(0.0, index=index)
-    aligned = s.risk_free.reindex(index.union(s.risk_free.index)).sort_index()
-    aligned = aligned.ffill().bfill().reindex(index)
-    return aligned.fillna(0.0) / TRADING_DAYS
+        value = 0.0 if s.meta.get("assume_zero_risk_free") else np.nan
+        return pd.Series(value, index=target, dtype="float64")
+
+    raw = pd.to_numeric(s.risk_free, errors="coerce")
+    try:
+        rf_dates = pd.DatetimeIndex(
+            pd.to_datetime(raw.index, errors="coerce", utc=True)
+        ).tz_convert(None).normalize()
+    except (TypeError, ValueError):
+        return pd.Series(np.nan, index=target, dtype="float64")
+    valid_dates = ~rf_dates.isna()
+    rates = pd.Series(
+        raw.to_numpy(dtype="float64")[valid_dates],
+        index=rf_dates[valid_dates],
+        dtype="float64",
+    )
+    rates = rates.replace([np.inf, -np.inf], np.nan).dropna()
+    rates = rates[rates > -1.0].groupby(level=0).last().sort_index()
+    if rates.empty:
+        return pd.Series(np.nan, index=target, dtype="float64")
+
+    positions = rates.index.searchsorted(target, side="right") - 1
+    aligned = np.full(len(target), np.nan, dtype="float64")
+    valid = positions >= 0
+    if np.any(valid):
+        source_dates = rates.index.take(positions[valid])
+        ages = (target[valid] - source_dates).days
+        fresh = ages <= _MAX_RISK_FREE_STALENESS_DAYS
+        target_positions = np.flatnonzero(valid)[fresh]
+        selected_rates = rates.to_numpy()[positions[valid][fresh]]
+        # Returns elsewhere in this module are logarithmic, so convert an annual effective yield
+        # to the equivalent one-trading-day log rate rather than using the simple r/252 shortcut.
+        aligned[target_positions] = np.log1p(selected_rates) / TRADING_DAYS
+    return pd.Series(aligned, index=target, dtype="float64")
 
 
 def _excess(s: SecuritySnapshot, returns: pd.Series) -> pd.Series:
-    return returns - _daily_risk_free(s, returns.index)
+    return (returns - _daily_risk_free(s, returns.index)).dropna()
 
 
-def _benchmark_returns(s: SecuritySnapshot, index: pd.Index) -> pd.Series | None:
-    if s.benchmark is None or s.benchmark.empty:
+def _aligned_factor_returns(
+    s: SecuritySnapshot,
+    window: int = TRADING_DAYS * 2,
+) -> pd.DataFrame | None:
+    """Security and benchmark log returns over the exact same dated intervals.
+
+    Aligning independently calculated daily returns by their ending date pairs a one-day stock
+    return with a multi-day benchmark return whenever either feed misses a trading day.  Aligning
+    levels first and differencing the common calendar makes both sides span identical intervals.
+    """
+    security = _prices(s)
+    market = _frame_prices(s.benchmark)
+    if security is None or market is None:
         return None
-    column = "adj_close" if "adj_close" in s.benchmark.columns else "close"
-    prices = s.benchmark[column].dropna()
-    returns = np.log(prices / prices.shift(1)).dropna()
-    aligned = returns.reindex(index).dropna()
-    return aligned if len(aligned) >= 30 else None
+    levels = pd.concat(
+        [security.rename("security"), market.rename("market")],
+        axis=1,
+        join="inner",
+    ).dropna()
+    if len(levels) < _MIN_FACTOR_OBSERVATIONS + 1:
+        return None
+    levels = levels.iloc[-(window + 1) :]
+    gaps = levels.index.to_series().diff().dt.days
+    positions = pd.DataFrame(
+        {
+            "security_position": pd.Series(
+                np.arange(len(security), dtype="int64"),
+                index=security.index,
+            ).reindex(levels.index),
+            "market_position": pd.Series(
+                np.arange(len(market), dtype="int64"),
+                index=market.index,
+            ).reindex(levels.index),
+        }
+    )
+    consecutive_in_both = positions.diff().eq(1).all(axis=1)
+    returns = np.log(levels / levels.shift(1))
+    returns = returns.mask((gaps > _MAX_RETURN_GAP_DAYS) | ~consecutive_in_both).dropna()
+    return returns if len(returns) >= _MIN_FACTOR_OBSERVATIONS else None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -89,27 +209,29 @@ def _benchmark_returns(s: SecuritySnapshot, index: pd.Index) -> pd.Series | None
 
 
 @metric("annualized_return_1y", pillar="risk", direction=1, unit="ratio",
-        needs_prices=True, min_history=252, winsor=(-1.0, 5.0))
+        needs_prices=True, min_history=253, winsor=(-1.0, 5.0))
 def annualized_return_1y(s: SecuritySnapshot) -> float | None:
     """Annualised log return over the last year."""
-    returns = _log_returns(s, TRADING_DAYS)
+    returns = _window_log_returns(s, TRADING_DAYS)
     return float(returns.mean() * TRADING_DAYS) if returns is not None else None
 
 
 @metric("annualized_volatility", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, min_history=126)
+        needs_prices=True, min_history=127)
 def annualized_volatility(s: SecuritySnapshot) -> float | None:
     """Annualised standard deviation of daily log returns."""
     returns = _log_returns(s, TRADING_DAYS)
-    return float(returns.std(ddof=1) * np.sqrt(TRADING_DAYS)) if returns is not None else None
+    if returns is None or len(returns) < 126:
+        return None
+    return float(returns.std(ddof=1) * np.sqrt(TRADING_DAYS))
 
 
 @metric("downside_deviation", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, min_history=126)
+        needs_prices=True, min_history=127)
 def downside_deviation(s: SecuritySnapshot) -> float | None:
     """Annualised deviation of negative returns only — volatility that actually hurts."""
     returns = _log_returns(s, TRADING_DAYS)
-    if returns is None:
+    if returns is None or len(returns) < 126:
         return None
     negative = returns[returns < 0]
     if len(negative) < 5:
@@ -122,13 +244,15 @@ def downside_deviation(s: SecuritySnapshot) -> float | None:
 
 
 @metric("sharpe_ratio", pillar="risk", direction=1, unit="ratio",
-        needs_prices=True, needs_risk_free=True, min_history=252, winsor=(-5.0, 5.0))
+        needs_prices=True, needs_risk_free=True, min_history=253, winsor=(-5.0, 5.0))
 def sharpe_ratio(s: SecuritySnapshot) -> float | None:
     """Excess return per unit of total volatility, against the real risk-free rate."""
-    returns = _log_returns(s, TRADING_DAYS)
+    returns = _window_log_returns(s, TRADING_DAYS)
     if returns is None:
         return None
     excess = _excess(s, returns)
+    if len(excess) < _MIN_ANNUAL_OBSERVATIONS:
+        return None
     sigma = float(excess.std(ddof=1))
     if sigma <= 0:
         return None
@@ -136,13 +260,15 @@ def sharpe_ratio(s: SecuritySnapshot) -> float | None:
 
 
 @metric("sortino_ratio", pillar="risk", direction=1, unit="ratio",
-        needs_prices=True, needs_risk_free=True, min_history=252, winsor=(-5.0, 10.0))
+        needs_prices=True, needs_risk_free=True, min_history=253, winsor=(-5.0, 10.0))
 def sortino_ratio(s: SecuritySnapshot) -> float | None:
     """Excess return per unit of downside deviation."""
-    returns = _log_returns(s, TRADING_DAYS)
+    returns = _window_log_returns(s, TRADING_DAYS)
     if returns is None:
         return None
     excess = _excess(s, returns)
+    if len(excess) < _MIN_ANNUAL_OBSERVATIONS:
+        return None
     negative = excess[excess < 0]
     if len(negative) < 5:
         return None
@@ -153,7 +279,7 @@ def sortino_ratio(s: SecuritySnapshot) -> float | None:
 
 
 @metric("max_drawdown", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, min_history=252)
+        needs_prices=True, min_history=757)
 def max_drawdown(s: SecuritySnapshot) -> float | None:
     """Deepest peak-to-trough decline over three years, as a positive fraction.
 
@@ -164,18 +290,18 @@ def max_drawdown(s: SecuritySnapshot) -> float | None:
     ranking measures data availability rather than risk.
     """
     prices = _prices(s)
-    if prices is None or len(prices) < 60:
+    if prices is None or len(prices) < TRADING_DAYS * 3 + 1:
         return None
-    window = prices.iloc[-TRADING_DAYS * 3:]
+    window = prices.iloc[-(TRADING_DAYS * 3 + 1) :]
     drawdown = window / window.cummax() - 1.0
     return float(-drawdown.min())
 
 
 @metric("calmar_ratio", pillar="risk", direction=1, unit="ratio",
-        needs_prices=True, min_history=756, winsor=(-10.0, 10.0))
+        needs_prices=True, min_history=757, winsor=(-10.0, 10.0))
 def calmar_ratio(s: SecuritySnapshot) -> float | None:
     """Three-year annualised return divided by max drawdown."""
-    returns = _log_returns(s, TRADING_DAYS * 3)
+    returns = _window_log_returns(s, TRADING_DAYS * 3)
     drawdown = max_drawdown.fn(s)
     if returns is None or drawdown is None or drawdown <= 0:
         return None
@@ -183,44 +309,44 @@ def calmar_ratio(s: SecuritySnapshot) -> float | None:
 
 
 @metric("ulcer_index", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, min_history=252)
+        needs_prices=True, min_history=757)
 def ulcer_index(s: SecuritySnapshot) -> float | None:
     """Root-mean-square drawdown — penalises deep *and* long declines, unlike max drawdown."""
     prices = _prices(s)
-    if prices is None or len(prices) < 60:
+    if prices is None or len(prices) < TRADING_DAYS * 3 + 1:
         return None
-    window = prices.iloc[-TRADING_DAYS * 3:]
+    window = prices.iloc[-(TRADING_DAYS * 3 + 1) :]
     drawdown = (window / window.cummax() - 1.0) * 100.0
     return float(np.sqrt((drawdown**2).mean()))
 
 
 @metric("var_95", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, min_history=252)
+        needs_prices=True, min_history=253)
 def var_95(s: SecuritySnapshot) -> float | None:
     """Historical 95% one-day value at risk, as a positive loss magnitude."""
     returns = _log_returns(s, TRADING_DAYS * 2)
-    if returns is None or len(returns) < 100:
+    if returns is None or len(returns) < _MIN_ANNUAL_OBSERVATIONS:
         return None
-    return float(-np.percentile(returns, 5))
+    return float(max(0.0, -np.percentile(returns, 5)))
 
 
 @metric("cvar_95", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, min_history=252)
+        needs_prices=True, min_history=253)
 def cvar_95(s: SecuritySnapshot) -> float | None:
     """Expected shortfall: the mean loss *given* the worst 5% of days.
 
     More informative than VaR, which says nothing about how bad the tail gets beyond its threshold.
     """
     returns = _log_returns(s, TRADING_DAYS * 2)
-    if returns is None or len(returns) < 100:
+    if returns is None or len(returns) < _MIN_ANNUAL_OBSERVATIONS:
         return None
-    threshold = np.percentile(returns, 5)
-    tail = returns[returns <= threshold]
-    return float(-tail.mean()) if len(tail) else None
+    tail_count = max(1, int(math.ceil(0.05 * len(returns))))
+    tail = np.sort(returns.to_numpy(dtype="float64"))[:tail_count]
+    return float(max(0.0, -float(tail.mean()))) if len(tail) else None
 
 
 @metric("cornish_fisher_var", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, min_history=252)
+        needs_prices=True, min_history=253)
 def cornish_fisher_var(s: SecuritySnapshot) -> float | None:
     """VaR adjusted for skew and kurtosis via the Cornish-Fisher expansion.
 
@@ -228,7 +354,7 @@ def cornish_fisher_var(s: SecuritySnapshot) -> float | None:
     have; this corrects the quantile using the sample's own third and fourth moments.
     """
     returns = _log_returns(s, TRADING_DAYS * 2)
-    if returns is None or len(returns) < 100:
+    if returns is None or len(returns) < _MIN_ANNUAL_OBSERVATIONS:
         return None
     mu, sigma = float(returns.mean()), float(returns.std(ddof=1))
     if sigma <= 0:
@@ -249,7 +375,7 @@ def cornish_fisher_var(s: SecuritySnapshot) -> float | None:
         return None
 
     adjusted = float(_cornish_fisher(np.array([stats.norm.ppf(0.05)]), skew, kurt)[0])
-    return float(-(mu + adjusted * sigma))
+    return float(max(0.0, -(mu + adjusted * sigma)))
 
 
 def _cornish_fisher(z: np.ndarray, skew: float, kurt: float) -> np.ndarray:
@@ -323,7 +449,7 @@ def hill_tail_index(s: SecuritySnapshot) -> float | None:
 
 
 @metric("beta", pillar="risk", direction=0, unit="beta", ideal_band=(0.7, 1.15),
-        needs_prices=True, needs_benchmark=True, min_history=252, winsor=(-3.0, 5.0))
+        needs_prices=True, needs_benchmark=True, min_history=253, winsor=(-3.0, 5.0))
 def beta(s: SecuritySnapshot) -> float | None:
     """CAPM beta versus the benchmark — **non-monotonic**.
 
@@ -331,37 +457,34 @@ def beta(s: SecuritySnapshot) -> float | None:
     returns, a beta of 2.5 means it amplifies every drawdown. The ideal band sits slightly below 1,
     and scoring this monotonically would assert that the lowest-beta stock is always the best one.
     """
-    returns = _log_returns(s, TRADING_DAYS * 2)
-    if returns is None:
+    aligned = _aligned_factor_returns(s)
+    if aligned is None:
         return None
-    market = _benchmark_returns(s, returns.index)
-    if market is None:
-        return None
-    aligned = pd.concat([returns.rename("r"), market.rename("m")], axis=1).dropna()
-    if len(aligned) < 60:
-        return None
-    variance = float(aligned["m"].var(ddof=1))
+    variance = float(aligned["market"].var(ddof=1))
     if variance <= 0:
         return None
-    return float(aligned["r"].cov(aligned["m"]) / variance)
+    return float(aligned["security"].cov(aligned["market"]) / variance)
 
 
 @metric("capm_alpha", pillar="risk", direction=1, unit="ratio",
-        needs_prices=True, needs_benchmark=True, needs_risk_free=True, min_history=252, winsor=(-2.0, 2.0))
+        needs_prices=True, needs_benchmark=True, needs_risk_free=True, min_history=253, winsor=(-2.0, 2.0))
 def capm_alpha(s: SecuritySnapshot) -> float | None:
     """Annualised CAPM intercept — return unexplained by market exposure."""
-    returns = _log_returns(s, TRADING_DAYS * 2)
-    if returns is None:
-        return None
-    market = _benchmark_returns(s, returns.index)
-    if market is None:
-        return None
-    aligned = pd.concat([returns.rename("r"), market.rename("m")], axis=1).dropna()
-    if len(aligned) < 60:
+    aligned = _aligned_factor_returns(s)
+    if aligned is None:
         return None
     rf = _daily_risk_free(s, aligned.index)
-    y = (aligned["r"] - rf).to_numpy()
-    x = (aligned["m"] - rf).to_numpy()
+    regression = pd.concat(
+        [
+            (aligned["security"] - rf).rename("security_excess"),
+            (aligned["market"] - rf).rename("market_excess"),
+        ],
+        axis=1,
+    ).dropna()
+    if len(regression) < _MIN_FACTOR_OBSERVATIONS:
+        return None
+    y = regression["security_excess"].to_numpy()
+    x = regression["market_excess"].to_numpy()
     variance = float(np.var(x, ddof=1))
     if variance <= 0:
         return None
@@ -370,20 +493,14 @@ def capm_alpha(s: SecuritySnapshot) -> float | None:
 
 
 @metric("idiosyncratic_volatility", pillar="risk", direction=-1, unit="ratio",
-        needs_prices=True, needs_benchmark=True, min_history=252)
+        needs_prices=True, needs_benchmark=True, min_history=253)
 def idiosyncratic_volatility(s: SecuritySnapshot) -> float | None:
     """Annualised volatility of CAPM residuals — risk that diversification does not remove."""
-    returns = _log_returns(s, TRADING_DAYS * 2)
-    if returns is None:
+    aligned = _aligned_factor_returns(s)
+    if aligned is None:
         return None
-    market = _benchmark_returns(s, returns.index)
-    if market is None:
-        return None
-    aligned = pd.concat([returns.rename("r"), market.rename("m")], axis=1).dropna()
-    if len(aligned) < 60:
-        return None
-    x = aligned["m"].to_numpy()
-    y = aligned["r"].to_numpy()
+    x = aligned["market"].to_numpy()
+    y = aligned["security"].to_numpy()
     variance = float(np.var(x, ddof=1))
     if variance <= 0:
         return None
@@ -508,27 +625,45 @@ def return_autocorrelation(s: SecuritySnapshot) -> float | None:
     return float(value) if value is not None and np.isfinite(value) else None
 
 
-@metric("mean_reversion_half_life", pillar="risk", direction=1, unit="days",
-        needs_prices=True, min_history=504, winsor=(0.0, 500.0))
+@metric("mean_reversion_half_life", pillar="risk", direction=-1, unit="days",
+        needs_prices=True, min_history=505, winsor=(1.0, 252.0))
 def mean_reversion_half_life(s: SecuritySnapshot) -> float | None:
-    """Half-life of mean reversion from an Ornstein-Uhlenbeck fit to log price."""
+    """Half-life of statistically supported mean reversion in log price.
+
+    Ordinary equity prices are usually unit-root processes, for which an OU half-life does not
+    exist. We therefore require an augmented Dickey-Fuller rejection before fitting
+    ``x[t] = a + phi*x[t-1]`` and use the exact discrete half-life ``-log(2)/log(phi)``. The old
+    Euler approximation ``-log(2)/(phi-1)`` materially overstated fast reversion, while its
+    higher-is-better direction rewarded the slowest, least-mean-reverting series.
+    """
     prices = _prices(s)
-    if prices is None or len(prices) < 250:
+    if prices is None or len(prices) < 505:
         return None
     log_price = np.log(prices.iloc[-TRADING_DAYS * 3 :])
-    lagged = log_price.shift(1).dropna()
-    delta = (log_price - log_price.shift(1)).dropna()
-    aligned = pd.concat([delta.rename("d"), lagged.rename("l")], axis=1).dropna()
-    if len(aligned) < 100:
+    if len(log_price) < 505 or not np.all(np.isfinite(log_price.to_numpy())):
         return None
-    x = aligned["l"].to_numpy()
+    try:
+        _statistic, p_value, *_rest = adfuller(
+            log_price.to_numpy(dtype="float64"),
+            regression="c",
+            autolag="AIC",
+        )
+    except (ValueError, np.linalg.LinAlgError):
+        return None
+    if not np.isfinite(p_value) or p_value > 0.05:
+        return None
+
+    lagged = log_price.iloc[:-1].to_numpy(dtype="float64")
+    current = log_price.iloc[1:].to_numpy(dtype="float64")
+    x = lagged
     variance = float(np.var(x, ddof=1))
     if variance <= 0:
         return None
-    theta = float(np.cov(aligned["d"].to_numpy(), x, ddof=1)[0, 1] / variance)
-    if theta >= 0:
-        return None  # not mean-reverting; the concept does not apply
-    return float(-np.log(2) / theta)
+    phi = float(np.cov(current, x, ddof=1)[0, 1] / variance)
+    if not 0.0 < phi < 1.0:
+        return None
+    half_life = float(-np.log(2.0) / np.log(phi))
+    return half_life if 1.0 <= half_life <= TRADING_DAYS else None
 
 
 @metric("volatility_of_volatility", pillar="risk", direction=-1, unit="ratio",
@@ -550,14 +685,8 @@ def volatility_of_volatility(s: SecuritySnapshot) -> float | None:
 
 
 def _total_return(s: SecuritySnapshot, days: int, skip: int = 0) -> float | None:
-    prices = _prices(s)
-    if prices is None or len(prices) < days + skip + 1:
-        return None
-    end = prices.iloc[-1 - skip]
-    start = prices.iloc[-1 - skip - days]
-    if start <= 0:
-        return None
-    return float(end / start - 1.0)
+    returns = _window_log_returns(s, days, skip=skip)
+    return float(np.expm1(returns.sum())) if returns is not None else None
 
 
 @metric("short_term_reversal_1m", pillar="momentum", direction=-1, unit="ratio",
@@ -607,7 +736,12 @@ def momentum_12_1(s: SecuritySnapshot) -> float | None:
 def risk_adjusted_momentum(s: SecuritySnapshot) -> float | None:
     """12-1 momentum divided by annualised volatility."""
     momentum = momentum_12_1.fn(s)
-    volatility = annualized_volatility.fn(s)
+    formation_returns = _window_log_returns(s, 231, skip=21)
+    volatility = (
+        float(formation_returns.std(ddof=1) * np.sqrt(TRADING_DAYS))
+        if formation_returns is not None
+        else None
+    )
     if momentum is None or volatility is None or volatility <= 0:
         return None
     return float(momentum / volatility)
@@ -632,7 +766,7 @@ def information_discreteness(s: SecuritySnapshot) -> float | None:
     Momentum that arrived through many small moves persists better than the same total return
     delivered in a few jumps, because gradual information is underreacted to. Lower is better.
     """
-    returns = _log_returns(s, TRADING_DAYS)
+    returns = _window_log_returns(s, 231, skip=21)
     momentum = momentum_12_1.fn(s)
     if returns is None or momentum is None or len(returns) < 100:
         return None
