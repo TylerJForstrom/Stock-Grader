@@ -26,7 +26,7 @@ from collections.abc import Iterable
 
 from ..data.sectors import is_applicable
 from ..registry import METRICS, MetricSpec
-from ..types import Coverage, MetricResult, SecuritySnapshot
+from ..types import Coverage, MetricResult, SectorClass, SecuritySnapshot
 from .util import is_finite_number
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,29 @@ def evaluate_one(spec: MetricSpec, snapshot: SecuritySnapshot) -> MetricResult:
         direction=spec.direction,
         unit=spec.unit,
     )
+
+    if spec.name in {"altman_z", "altman_z_prime"}:
+        # Applicability depends on SIC within the broad GENERAL sector: the original Z model is
+        # for manufacturers, while Z'' is the non-manufacturer variant.  Returning None from the
+        # inactive function is not a data gap and must not reduce coverage.
+        from .fundamental import _altman_model_for
+
+        expected = {"altman_z": "z", "altman_z_prime": "z_prime"}[spec.name]
+        actual = _altman_model_for(snapshot)
+        structurally_unsupported = snapshot.sector in {
+            SectorClass.BANK,
+            SectorClass.INSURANCE,
+            SectorClass.REIT,
+            SectorClass.HOLDING,
+            SectorClass.UTILITY,
+        }
+        if actual != expected and (actual is not None or structurally_unsupported):
+            result.coverage = Coverage.NOT_APPLICABLE
+            result.note = (
+                f"inactive Altman variant for SIC {snapshot.sic or 'unknown'} "
+                f"(applicable variant: {actual or 'none'})"
+            )
+            return result
 
     if not is_applicable(spec.name, spec.pillar, snapshot.sector):
         result.coverage = Coverage.NOT_APPLICABLE

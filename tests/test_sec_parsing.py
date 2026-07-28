@@ -17,7 +17,7 @@ from stock_grader.data.sec import (
     normalize_duration_facts,
     normalize_instant_facts,
 )
-from stock_grader.types import PitMode
+from stock_grader.types import Fundamentals, PitMode
 
 
 def _duration(start: str, end: str, val: float, *, form="10-Q", filed="2025-01-01", fy=2025, fp="Q1"):
@@ -748,6 +748,74 @@ class TestStalenessEverywhere:
         }}}
         fundamentals = build_fundamentals(facts)
         assert fundamentals.ttm("fcf", asof=date(2026, 7, 25), max_age_days=400) is None
+
+    def test_fcf_requires_cfo_and_capex_from_the_same_four_quarters(self):
+        index = pd.to_datetime(
+            ["2024-12-31", "2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"]
+        )
+        quarterly = pd.DataFrame(
+            {
+                "cfo": [float("nan"), 100.0, 100.0, 100.0, 100.0],
+                "capex": [20.0, 20.0, 20.0, 20.0, float("nan")],
+            },
+            index=index,
+        )
+        fundamentals = Fundamentals(
+            quarterly=quarterly,
+            annual=pd.DataFrame(),
+            filed=pd.Series(dtype="object"),
+        )
+
+        assert fundamentals.ttm("cfo", asof=date(2026, 1, 31), max_age_days=400) == 400.0
+        assert fundamentals.ttm("capex", asof=date(2026, 1, 31), max_age_days=400) == 80.0
+        assert fundamentals.ttm("fcf", asof=date(2026, 1, 31), max_age_days=400) is None
+
+    def test_fcf_uses_one_aligned_consecutive_window(self):
+        index = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
+        quarterly = pd.DataFrame(
+            {
+                "cfo": [100.0, 110.0, 120.0, 130.0],
+                "capex": [20.0, 25.0, 30.0, 35.0],
+            },
+            index=index,
+        )
+        fundamentals = Fundamentals(
+            quarterly=quarterly,
+            annual=pd.DataFrame(),
+            filed=pd.Series(dtype="object"),
+        )
+
+        assert fundamentals.ttm("fcf", asof=date(2026, 1, 31), max_age_days=400) == 350.0
+
+    def test_fcf_rejects_four_rows_that_cover_only_half_a_year(self):
+        index = pd.to_datetime(["2025-01-01", "2025-02-25", "2025-04-21", "2025-06-15"])
+        quarterly = pd.DataFrame(
+            {"cfo": [100.0] * 4, "capex": [20.0] * 4},
+            index=index,
+        )
+        fundamentals = Fundamentals(
+            quarterly=quarterly,
+            annual=pd.DataFrame(),
+            filed=pd.Series(dtype="object"),
+        )
+
+        assert fundamentals.ttm("fcf", asof=date(2025, 7, 1), max_age_days=400) is None
+
+    def test_pit_helpers_exclude_a_row_filed_after_asof(self):
+        index = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
+        quarterly = pd.DataFrame(
+            {"revenue": [10.0] * 4, "assets": [1.0, 2.0, 3.0, 4.0]},
+            index=index,
+        )
+        fundamentals = Fundamentals(
+            quarterly=quarterly,
+            annual=pd.DataFrame(),
+            filed=pd.Series({date(2025, 12, 31): date(2026, 3, 15)}, dtype="object"),
+            pit_mode=PitMode.PIT,
+        )
+
+        assert fundamentals.ttm("revenue", asof=date(2026, 2, 1), max_age_days=400) is None
+        assert fundamentals.latest("assets", asof=date(2026, 2, 1), max_age_days=400) == 3.0
 
     def test_derivation_fills_gaps_not_only_absent_columns(self):
         """Costco, Amazon and Target all still carry a GrossProfit column whose last value is

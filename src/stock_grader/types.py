@@ -10,11 +10,13 @@ the metric, weighting and grading layers can be unit-tested against hand-built o
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
 from typing import Any, ClassVar
 
+import numpy as np
 import pandas as pd
 
 __all__ = [
@@ -110,11 +112,10 @@ class Fundamentals:
     currency: str = "USD"
     averaged: set[str] = field(default_factory=set)
 
-    # Concepts that are arithmetic combinations of others. Summing a per-period derived column is
-    # not equivalent to combining the components' own trailing sums, because each component has its
-    # own missingness pattern: a quarter where D&A was reported but EBIT was not drops out of a
-    # per-row EBITDA entirely. Simon Property Group's EBITDA came out *below* its EBIT that way.
-    # Composing at the trailing-twelve-month level uses each component's best available window.
+    # Concepts that are arithmetic combinations of others. Each composite must use one exact
+    # four-quarter window shared by every component. Independently selected trailing windows can
+    # describe different fiscal periods, while a per-row derived column can silently drop quarters
+    # with asymmetric missingness; both produce a number with no coherent reporting basis.
     _COMPOSITES: ClassVar[dict[str, tuple[tuple[str, int], ...]]] = {
         "ebitda": (("ebit", 1), ("depreciation_amortization", 1)),
         "fcf": (("cfo", 1), ("capex", -1)),
@@ -148,21 +149,28 @@ class Fundamentals:
         Defaults to unbounded so existing callers are unaffected; the metric layer passes ~400 days.
         """
         if concept in self._COMPOSITES:
+            components = [component for component, _ in self._COMPOSITES[concept]]
+            aligned = self.aligned_quarterly(
+                components,
+                periods=4,
+                asof=asof,
+                max_age_days=max_age_days,
+            )
+            if aligned is None:
+                return None
             total = 0.0
             for component, sign in self._COMPOSITES[concept]:
-                # The bound must recurse: ebitda resolves ebit and depreciation separately, so
-                # checking only the composite would let a stale component through unnoticed.
-                part = self.ttm(component, asof=asof, max_age_days=max_age_days)
-                if part is None:
-                    return None
+                part = (
+                    float(aligned[component].mean())
+                    if component in self.averaged
+                    else float(aligned[component].sum())
+                )
                 # No abs(): capex is filed as a positive outflow (0 negatives in 1,547 sampled
                 # records), so a negative here is a derivation failure that must stay visible.
                 total += sign * part
             return float(total)
-        if concept not in self.quarterly.columns:
-            return None
-        series = self.quarterly[concept].dropna()
-        if series.empty:
+        series = self._dated_series(self.quarterly, concept, asof=asof)
+        if series is None:
             return None
         if self._too_old(series.index[-1], asof, max_age_days):
             return None
@@ -194,13 +202,143 @@ class Fundamentals:
         ``dropna`` collapses gaps, so the last four *available* values may be scattered across
         different years — which is exactly what happened to a derived EBITDA column whose inputs
         had different missingness patterns, producing an EBITDA below its own EBIT. Requiring the
-        window to span roughly twelve months turns that silent corruption into an honest ``None``.
+        window to span roughly twelve months, with plausible quarter-to-quarter gaps, turns that
+        silent corruption into an honest ``None``.
         """
         try:
-            span = (pd.Timestamp(window.index[-1]) - pd.Timestamp(window.index[0])).days
+            index = pd.DatetimeIndex(pd.to_datetime(window.index)).sort_values()
+            span = int((index[-1] - index[0]).days)
+            gaps = index.to_series().diff().dt.days.dropna()
         except (TypeError, ValueError):
             return True  # non-date index: nothing to check
-        return 240 <= span <= 400
+        return 240 <= span <= 400 and bool(gaps.between(55, 135).all())
+
+    def _clean_dated_frame(
+        self,
+        frame: pd.DataFrame,
+        concepts: list[str],
+        *,
+        asof: date | None,
+        require_complete: bool = True,
+    ) -> pd.DataFrame | None:
+        """Numeric rows on normalized dates, optionally bounded by publication and analysis date."""
+        if not concepts or any(concept not in frame.columns for concept in concepts):
+            return None
+        selected = frame[concepts].copy()
+        parsed = pd.to_datetime(selected.index, errors="coerce", utc=True)
+        valid = np.asarray(parsed.notna(), dtype=bool)
+        selected = selected.loc[valid]
+        selected.index = parsed[valid].tz_convert(None).normalize()
+        selected = selected[~selected.index.duplicated(keep="last")].sort_index()
+        if asof is not None:
+            selected = selected[selected.index <= pd.Timestamp(asof)]
+            # Production PIT ingestion already removes records filed after ``asof``. Repeating the
+            # row-level check here protects hand-built/imported PIT frames. Missing filing dates
+            # remain admissible because instant concepts do not currently populate ``filed``;
+            # per-concept filing provenance is added separately by the evidence-schema work.
+            if self.pit_mode is PitMode.PIT and not self.filed.empty:
+                filed = self.filed.copy()
+                filed_index = pd.to_datetime(filed.index, errors="coerce", utc=True)
+                valid_filed_index = np.asarray(filed_index.notna(), dtype=bool)
+                filed = filed.loc[valid_filed_index]
+                filed.index = filed_index[valid_filed_index].tz_convert(None).normalize()
+                filed = filed[~filed.index.duplicated(keep="last")].sort_index()
+                filed_dates = pd.to_datetime(filed, errors="coerce", utc=True)
+                filed_dates = filed_dates.dt.tz_convert(None).dt.normalize()
+                aligned_filed = filed_dates.reindex(selected.index)
+                selected = selected[aligned_filed.isna() | (aligned_filed <= pd.Timestamp(asof))]
+        selected = selected.apply(pd.to_numeric, errors="coerce")
+        selected = selected.replace([np.inf, -np.inf], np.nan)
+        selected = selected.dropna(how="any" if require_complete else "all")
+        return selected if not selected.empty else None
+
+    def _dated_series(
+        self,
+        frame: pd.DataFrame,
+        concept: str,
+        *,
+        asof: date | None,
+    ) -> pd.Series | None:
+        """One finite concept series with the same date and PIT filtering used by aligners."""
+        selected = self._clean_dated_frame(frame, [concept], asof=asof)
+        if selected is None:
+            return None
+        return selected[concept]
+
+    def aligned_quarterly(
+        self,
+        concepts: Iterable[str],
+        *,
+        periods: int = 4,
+        asof: date | None = None,
+        max_age_days: int | None = None,
+    ) -> pd.DataFrame | None:
+        """Exact shared consecutive quarterly rows for multi-concept flow calculations."""
+        if periods < 1:
+            raise ValueError("periods must be positive")
+        names = list(dict.fromkeys(concepts))
+        frame = self._clean_dated_frame(self.quarterly, names, asof=asof)
+        if frame is None or len(frame) < periods:
+            return None
+        window = frame.iloc[-periods:]
+        if self._too_old(window.index[-1], asof, max_age_days):
+            return None
+        if periods > 1:
+            gaps = window.index.to_series().diff().dt.days.dropna()
+            if not bool(gaps.between(55, 135).all()):
+                return None
+            if periods == 4:
+                span = int((window.index[-1] - window.index[0]).days)
+                if not 240 <= span <= 400:
+                    return None
+        return window
+
+    def aligned_annual(
+        self,
+        concepts: Iterable[str],
+        *,
+        periods: int = 2,
+        asof: date | None = None,
+        max_age_days: int | None = None,
+        required_periods: Mapping[str, int] | None = None,
+    ) -> pd.DataFrame | None:
+        """Consecutive fiscal rows satisfying each concept's actual lookback requirement.
+
+        ``required_periods`` avoids inventing requirements for a model's unused cells. For
+        example, Ohlson needs two years of net income but only the current year's balance-sheet
+        and cash-flow inputs. Omitted concepts default to all ``periods``.
+        """
+        if periods < 1:
+            raise ValueError("periods must be positive")
+        names = list(dict.fromkeys(concepts))
+        requirements = {name: periods for name in names}
+        if required_periods is not None:
+            unknown = set(required_periods) - set(names)
+            if unknown:
+                raise ValueError(f"requirements reference unknown concepts: {sorted(unknown)}")
+            requirements.update(required_periods)
+        if any(count < 1 or count > periods for count in requirements.values()):
+            raise ValueError("required period counts must be between 1 and periods")
+
+        frame = self._clean_dated_frame(
+            self.annual,
+            names,
+            asof=asof,
+            require_complete=False,
+        )
+        if frame is None or len(frame) < periods:
+            return None
+        window = frame.iloc[-periods:]
+        if self._too_old(window.index[-1], asof, max_age_days):
+            return None
+        if periods > 1:
+            gaps = window.index.to_series().diff().dt.days.dropna()
+            if not bool(gaps.between(270, 460).all()):
+                return None
+        for concept, count in requirements.items():
+            if window[concept].iloc[-count:].isna().any():
+                return None
+        return window
 
     # Balance-sheet concepts assembled from components. Resolved from each component's own most
     # recent observation rather than row-wise, because filers tag the pieces in different quarters:
@@ -249,18 +387,16 @@ class Fundamentals:
             return float(sum(parts))  # type: ignore[arg-type]
         return None
 
-    @staticmethod
     def _latest_direct(
+        self,
         frame: pd.DataFrame,
         concept: str,
         asof: date | None,
         max_age_days: int | None,
     ) -> float | None:
         """Last value of a stored column, subject to the age bound."""
-        if concept not in frame.columns:
-            return None
-        series = frame[concept].dropna()
-        if series.empty:
+        series = self._dated_series(frame, concept, asof=asof)
+        if series is None:
             return None
         if asof is not None and max_age_days is not None:
             try:
@@ -466,16 +602,16 @@ class GradeReport:
         """Metrics that moved the grade most, signed relative to a neutral 50 score."""
         exact = self.explain.get("metric_contributions", {})
         if isinstance(exact, dict) and exact:
-            flat = []
+            exact_contributions: list[tuple[str, float]] = []
             for metric, contribution in exact.items():
                 try:
                     value = float(contribution)
                 except (TypeError, ValueError):
                     continue
                 if (positive and value > 0.0) or (not positive and value < 0.0):
-                    flat.append((str(metric), value))
-            flat.sort(key=lambda item: item[1], reverse=positive)
-            return flat[:n]
+                    exact_contributions.append((str(metric), value))
+            exact_contributions.sort(key=lambda item: item[1], reverse=positive)
+            return exact_contributions[:n]
         flat: list[tuple[str, float]] = []
         pillar_weights = self.effective_pillar_weights or self.pillar_weights
         for pillar, ps in self.pillars.items():

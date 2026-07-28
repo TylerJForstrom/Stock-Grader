@@ -77,7 +77,7 @@ SECTOR_DISABLED_METRICS: dict[SectorClass, frozenset[str]] = {
         "price_to_fcf", "ev_to_ebitda", "ev_to_ebit", "ev_to_sales", "ev_to_fcf",
         "net_debt_to_ebitda", "debt_to_equity", "interest_coverage", "altman_z",
         "free_cash_flow_margin", "fcf_to_debt", "operating_margin", "ebitda_margin",
-        "altman_z_prime", "beneish_m_score",
+        "altman_z_prime", "ohlson_o_score", "beneish_m_score",
         "acquirers_multiple", "croic", "reinvestment_rate",
     }),
     SectorClass.INSURANCE: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset({
@@ -85,18 +85,20 @@ SECTOR_DISABLED_METRICS: dict[SectorClass, frozenset[str]] = {
         "days_inventory_outstanding", "cash_conversion_cycle", "gross_margin",
         "gross_profit_to_assets", "capex_intensity", "altman_z", "ev_to_ebitda",
         "ev_to_ebit", "net_debt_to_ebitda", "interest_coverage", "acquirers_multiple",
-        "altman_z_prime",
+        "altman_z_prime", "ohlson_o_score",
     }),
     SectorClass.REIT: BANK_ONLY_METRICS | frozenset({
         "current_ratio", "quick_ratio", "cash_ratio", "inventory_turnover",
         "days_inventory_outstanding", "cash_conversion_cycle", "gross_margin",
         "gross_profit_to_assets", "asset_turnover", "altman_z",
+        "altman_z_prime",
         # Depreciation dominates REIT earnings, so EPS-based valuation is actively misleading.
         "pe_trailing", "pe_forward", "peg_ratio", "earnings_yield", "graham_number",
     }),
     SectorClass.HOLDING: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset({
         "current_ratio", "quick_ratio", "inventory_turnover", "gross_margin",
         "asset_turnover", "capex_intensity", "cash_conversion_cycle", "altman_z",
+        "altman_z_prime",
         "days_inventory_outstanding", "days_sales_outstanding",
     }),
     SectorClass.UTILITY: BANK_ONLY_METRICS | REIT_ONLY_METRICS | frozenset({

@@ -30,6 +30,26 @@ def _f(snapshot: SecuritySnapshot):
 MAX_BALANCE_AGE_DAYS = 400
 
 
+def _aligned_annual_model_frame(
+    snapshot: SecuritySnapshot,
+    concepts: tuple[str, ...],
+    *,
+    periods: int,
+    required_periods: dict[str, int] | None = None,
+) -> pd.DataFrame | None:
+    """Shared, consecutive, current fiscal rows for published accounting models."""
+    fundamentals = _f(snapshot)
+    if fundamentals is None:
+        return None
+    return fundamentals.aligned_annual(
+        concepts,
+        periods=periods,
+        asof=snapshot.asof,
+        max_age_days=MAX_BALANCE_AGE_DAYS,
+        required_periods=required_periods,
+    )
+
+
 def _ttm(snapshot: SecuritySnapshot, concept: str) -> float | None:
     """Trailing-twelve-month value, age-bounded, falling back to the annual frame.
 
@@ -74,13 +94,9 @@ def _ttm_with_period_end(
 
     value = f.ttm(concept, asof=snapshot.asof, max_age_days=MAX_BALANCE_AGE_DAYS)
     if value is not None:
-        if concept in f.quarterly.columns:
-            series = f.quarterly[concept].dropna()
-            if not series.empty:
-                try:
-                    return (float(value), pd.Timestamp(series.index[-1]))
-                except (TypeError, ValueError):
-                    return (float(value), None)
+        series = f._dated_series(f.quarterly, concept, asof=snapshot.asof)
+        if series is not None:
+            return (float(value), pd.Timestamp(series.index[-1]))
         return (float(value), None)
 
     value = f.latest(
@@ -91,13 +107,9 @@ def _ttm_with_period_end(
     )
     if value is None:
         return (None, None)
-    if concept in f.annual.columns:
-        series = f.annual[concept].dropna()
-        if not series.empty:
-            try:
-                return (float(value), pd.Timestamp(series.index[-1]))
-            except (TypeError, ValueError):
-                pass
+    series = f._dated_series(f.annual, concept, asof=snapshot.asof)
+    if series is not None:
+        return (float(value), pd.Timestamp(series.index[-1]))
     return (float(value), None)
 
 
@@ -657,17 +669,29 @@ def altman_z(s: SecuritySnapshot) -> float | None:
     """
     if _altman_model_for(s) != "z":
         return None
-    assets = _latest(s, "assets")
-    if assets is None or assets <= 0:
+    frame = _aligned_annual_model_frame(
+        s,
+        (
+            "assets",
+            "working_capital",
+            "retained_earnings",
+            "ebit",
+            "liabilities",
+            "revenue",
+        ),
+        periods=1,
+    )
+    if frame is None:
         return None
-    working_capital = _latest(s, "working_capital")
-    retained = _latest(s, "retained_earnings")
-    ebit = _ttm(s, "ebit")
-    liabilities = _latest(s, "liabilities")
-    sales = _ttm(s, "revenue")
+    current = frame.iloc[-1]
+    assets = float(current["assets"])
+    working_capital = float(current["working_capital"])
+    retained = float(current["retained_earnings"])
+    ebit = float(current["ebit"])
+    liabilities = float(current["liabilities"])
+    sales = float(current["revenue"])
     cap = s.market_cap
-    if (working_capital is None or retained is None or ebit is None
-            or liabilities is None or sales is None or cap is None or liabilities <= 0):
+    if assets <= 0 or liabilities <= 0 or cap is None:
         return None
     return float(
         1.2 * (working_capital / assets)
@@ -679,90 +703,109 @@ def altman_z(s: SecuritySnapshot) -> float | None:
 
 
 @metric("piotroski_f_score", pillar="health", direction=1, unit="score")
-def piotroski_f_score(s: SecuritySnapshot) -> float | None:
+def piotroski_f_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     """Piotroski F-score: nine binary financial-strength tests, 0-9.
 
     Profitability (4): positive ROA, positive CFO, rising ROA, CFO exceeding net income (accrual
     quality). Leverage/liquidity (3): falling long-term debt ratio, rising current ratio, no share
     issuance. Efficiency (2): rising gross margin, rising asset turnover.
     """
-    f = _f(s)
-    if f is None:
+    frame = _aligned_annual_model_frame(
+        s,
+        (
+            "assets",
+            "net_income",
+            "cfo",
+            "long_term_debt",
+            "current_assets",
+            "current_liabilities",
+            "shares_diluted",
+            "gross_profit",
+            "revenue",
+        ),
+        periods=3,
+        required_periods={
+            "assets": 3,
+            "net_income": 2,
+            "cfo": 1,
+            "long_term_debt": 2,
+            "current_assets": 2,
+            "current_liabilities": 2,
+            "shares_diluted": 2,
+            "gross_profit": 2,
+            "revenue": 2,
+        },
+    )
+    if frame is None:
         return None
-    annual = f.annual
-    if annual.empty or len(annual) < 2:
+    opening = frame.iloc[0]
+    prior = frame.iloc[1]
+    current = frame.iloc[2]
+
+    opening_assets = float(opening["assets"])
+    prev_assets, curr_assets = float(prior["assets"]), float(current["assets"])
+    prev_income, curr_income = float(prior["net_income"]), float(current["net_income"])
+    curr_cfo = float(current["cfo"])
+    if opening_assets <= 0 or prev_assets <= 0 or curr_assets <= 0:
         return None
 
-    def series(concept: str):
-        return annual[concept].dropna() if concept in annual.columns else None
+    # Piotroski defines ROA, CFO, and asset turnover over beginning-of-year assets. Leverage uses
+    # average assets for each fiscal year. Computing both year-over-year signals therefore needs
+    # three asset observations even though the income-statement comparison spans two years.
+    roa_curr = safe_div(curr_income, prev_assets, positive_denominator=True)
+    roa_prev = safe_div(prev_income, opening_assets, positive_denominator=True)
+    cfo_roa = safe_div(curr_cfo, prev_assets, positive_denominator=True)
+    avg_assets_curr = (prev_assets + curr_assets) / 2.0
+    avg_assets_prev = (opening_assets + prev_assets) / 2.0
+    if any(value is None for value in (roa_curr, roa_prev, cfo_roa)):
+        return None
+    assert roa_curr is not None and roa_prev is not None and cfo_roa is not None
 
-    def pair(concept: str):
-        values = series(concept)
-        if values is None or len(values) < 2:
-            return (None, None)
-        return (float(values.iloc[-2]), float(values.iloc[-1]))
-
-    points = 0
-    counted = 0
-
-    def test(condition: bool | None) -> None:
-        nonlocal points, counted
-        if condition is None:
-            return
-        counted += 1
-        points += int(bool(condition))
-
-    prev_assets, curr_assets = pair("assets")
-    prev_income, curr_income = pair("net_income")
-    _prev_cfo, curr_cfo = pair("cfo")
-
-    roa_curr = safe_div(curr_income, curr_assets, positive_denominator=True)
-    roa_prev = safe_div(prev_income, prev_assets, positive_denominator=True)
-    test(None if roa_curr is None else roa_curr > 0)
-    test(None if curr_cfo is None else curr_cfo > 0)
-    test(None if (roa_curr is None or roa_prev is None) else roa_curr > roa_prev)
-    test(None if (curr_cfo is None or curr_income is None) else curr_cfo > curr_income)
-
-    prev_debt, curr_debt = pair("long_term_debt")
-    debt_curr = safe_div(curr_debt, curr_assets, positive_denominator=True)
-    debt_prev = safe_div(prev_debt, prev_assets, positive_denominator=True)
-    test(None if (debt_curr is None or debt_prev is None) else debt_curr < debt_prev)
-
-    prev_ca, curr_ca = pair("current_assets")
-    prev_cl, curr_cl = pair("current_liabilities")
+    prev_debt = float(prior["long_term_debt"])
+    curr_debt = float(current["long_term_debt"])
+    debt_curr = safe_div(curr_debt, avg_assets_curr, positive_denominator=True)
+    debt_prev = safe_div(prev_debt, avg_assets_prev, positive_denominator=True)
+    prev_ca, curr_ca = float(prior["current_assets"]), float(current["current_assets"])
+    prev_cl = float(prior["current_liabilities"])
+    curr_cl = float(current["current_liabilities"])
     cr_curr = safe_div(curr_ca, curr_cl, positive_denominator=True)
     cr_prev = safe_div(prev_ca, prev_cl, positive_denominator=True)
-    test(None if (cr_curr is None or cr_prev is None) else cr_curr > cr_prev)
-
-    prev_shares, curr_shares = pair("shares_diluted")
-    test(None if (prev_shares is None or curr_shares is None) else curr_shares <= prev_shares * 1.01)
-
-    prev_gp, curr_gp = pair("gross_profit")
-    prev_rev, curr_rev = pair("revenue")
+    prev_shares = float(prior["shares_diluted"])
+    curr_shares = float(current["shares_diluted"])
+    prev_gp, curr_gp = float(prior["gross_profit"]), float(current["gross_profit"])
+    prev_rev, curr_rev = float(prior["revenue"]), float(current["revenue"])
     gm_curr = safe_div(curr_gp, curr_rev, positive_denominator=True)
     gm_prev = safe_div(prev_gp, prev_rev, positive_denominator=True)
-    test(None if (gm_curr is None or gm_prev is None) else gm_curr > gm_prev)
+    at_curr = safe_div(curr_rev, prev_assets, positive_denominator=True)
+    at_prev = safe_div(prev_rev, opening_assets, positive_denominator=True)
+    ratios = (debt_curr, debt_prev, cr_curr, cr_prev, gm_curr, gm_prev, at_curr, at_prev)
+    if any(value is None for value in ratios):
+        return None
+    assert debt_curr is not None and debt_prev is not None
+    assert cr_curr is not None and cr_prev is not None
+    assert gm_curr is not None and gm_prev is not None
+    assert at_curr is not None and at_prev is not None
 
-    at_curr = safe_div(curr_rev, curr_assets, positive_denominator=True)
-    at_prev = safe_div(prev_rev, prev_assets, positive_denominator=True)
-    test(None if (at_curr is None or at_prev is None) else at_curr > at_prev)
-
-    if counted < 5:
-        return None  # too few components to be a meaningful F-score
-
-    # NOT points * 9 / counted. That linear rescale let a company with only five testable
-    # components that passed all five score exactly 9.0 — indistinguishable from one that passed
-    # all nine, despite a variance inflated by sqrt(9/5) = 1.34x and a probability of a perfect
-    # score of p^5 rather than p^9 (7.8% versus 1.0% at p = 0.6).
-    #
-    # The pass *proportion* is shrunk toward 0.5 by counted/(counted + k), so a sparse company is
-    # pulled toward the middle rather than allowed to reach either extreme. k = 3 is a judgement
-    # call: it costs a full-data company almost nothing (9 of 9 still scores 8.4) while capping a
-    # five-component company at 7.9.
-    shrink_k = 3.0
-    proportion = points / counted
-    shrunk = 0.5 + (proportion - 0.5) * (counted / (counted + shrink_k))
-    return float(shrunk * 9.0)
+    components = {
+        "positive_roa": int(roa_curr > 0),
+        "positive_cfo": int(curr_cfo > 0),
+        "rising_roa": int(roa_curr > roa_prev),
+        "cfo_exceeds_net_income": int(cfo_roa > roa_curr),
+        "falling_leverage": int(debt_curr < debt_prev),
+        "rising_current_ratio": int(cr_curr > cr_prev),
+        "no_share_issuance": int(curr_shares <= prev_shares),
+        "rising_gross_margin": int(gm_curr > gm_prev),
+        "rising_asset_turnover": int(at_curr > at_prev),
+    }
+    score = int(sum(components.values()))
+    raw_inputs: dict[str, object] = {
+        **components,
+        "n_components": 9,
+        "opening_fiscal_period": frame.index[0].date().isoformat(),
+        "prior_fiscal_period": frame.index[1].date().isoformat(),
+        "current_fiscal_period": frame.index[2].date().isoformat(),
+    }
+    return (float(score), raw_inputs)
 
 
 # ---------------------------------------------------------------------------------------------

@@ -5,9 +5,8 @@ worthless if the coefficients are wrong. They are written out here explicitly wi
 each component is exposed in ``raw_inputs`` so a flagged company can be inspected rather than merely
 accused.
 
-All three need **two consecutive annual periods**, and return ``None`` rather than a partial score
-when only one is available — a manipulation score computed against a missing prior year is not a
-conservative estimate, it is a fabricated one.
+Beneish and Ohlson need **two consecutive annual periods**; Altman needs one complete annual row.
+Each returns ``None`` rather than mixing independently selected periods or emitting a partial score.
 """
 
 from __future__ import annotations
@@ -15,64 +14,44 @@ from __future__ import annotations
 import math
 
 import numpy as np
-import pandas as pd
 
 from ..registry import metric
 from ..types import SecuritySnapshot
+from .fundamental import _aligned_annual_model_frame
 from .util import safe_div
 
 __all__ = ["altman_z_prime", "beneish_m_score", "ohlson_o_score"]
 
 
-def _pair(s: SecuritySnapshot, concept: str) -> tuple[float | None, float | None]:
-    """(prior year, current year) for an annual concept."""
-    f = s.fundamentals
-    if f is None or f.annual.empty or concept not in f.annual.columns:
-        return (None, None)
-    series = f.annual[concept].dropna()
-    if len(series) < 2:
-        return (None, None)
-    return (float(series.iloc[-2]), float(series.iloc[-1]))
+_BENEISH_CONCEPTS = (
+    "revenue",
+    "receivables",
+    "gross_profit",
+    "assets",
+    "current_assets",
+    "ppe_net",
+    "depreciation_amortization",
+    "sganda_expense",
+    "long_term_debt",
+    "current_liabilities",
+    "net_income",
+    "cfo",
+)
 
+_OHLSON_CONCEPTS = (
+    "assets",
+    "liabilities",
+    "working_capital",
+    "current_liabilities",
+    "current_assets",
+    "net_income",
+    "cfo",
+)
 
-def _beneish_periods(s: SecuritySnapshot) -> tuple[object, object] | None:
-    """Two consecutive fiscal ends shared by Beneish's required anchor concepts."""
-    f = s.fundamentals
-    if f is None or f.annual.empty:
-        return None
-    if "revenue" not in f.annual.columns or "assets" not in f.annual.columns:
-        return None
-    anchors = f.annual[["revenue", "assets"]].dropna().sort_index()
-    if len(anchors) < 2:
-        return None
-    periods = (anchors.index[-2], anchors.index[-1])
-    try:
-        gap_days = (pd.Timestamp(periods[1]) - pd.Timestamp(periods[0])).days
-    except (TypeError, ValueError):
-        return None
-    return periods if 270 <= gap_days <= 460 else None
-
-
-def _at_beneish_periods(
-    s: SecuritySnapshot,
-    concept: str,
-    periods: tuple[object, object],
-) -> tuple[float | None, float | None]:
-    """Values at the exact reference fiscal ends, never an independently selected pair."""
-    f = s.fundamentals
-    if f is None or concept not in f.annual.columns:
-        return (None, None)
-    series = f.annual[concept]
-    try:
-        values = series.reindex(list(periods))
-    except (TypeError, ValueError):
-        return (None, None)
-    if len(values) != 2 or values.isna().any():
-        return (None, None)
-    prior, current = float(values.iloc[0]), float(values.iloc[1])
-    if not np.isfinite(prior) or not np.isfinite(current):
-        return (None, None)
-    return (prior, current)
+_BENEISH_REQUIRED_PERIODS = {"net_income": 1, "cfo": 1}
+_OHLSON_REQUIRED_PERIODS = {
+    concept: (2 if concept == "net_income" else 1) for concept in _OHLSON_CONCEPTS
+}
 
 
 # Beneish's indices are year-over-year ratios of ratios, so a real company sits near 1.0 — in the
@@ -104,29 +83,36 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     TATA (total accruals to total assets), which is the same accrual signal Sloan documented —
     earnings arriving as accounting estimates rather than cash.
 
-    Direction is -1: a higher M-score is worse. The score is only as good as its inputs, so any
-    company missing more than a couple of the eight indices returns ``None``.
+    Direction is -1: a higher M-score is worse. All eight published indices must resolve from the
+    same consecutive fiscal-year pair; otherwise the model returns ``None``.
     """
-    periods = _beneish_periods(s)
-    if periods is None:
+    frame = _aligned_annual_model_frame(
+        s,
+        _BENEISH_CONCEPTS,
+        periods=2,
+        required_periods=_BENEISH_REQUIRED_PERIODS,
+    )
+    if frame is None:
         return None
-    prior_rev, curr_rev = _at_beneish_periods(s, "revenue", periods)
-    prior_rec, curr_rec = _at_beneish_periods(s, "receivables", periods)
-    prior_gp, curr_gp = _at_beneish_periods(s, "gross_profit", periods)
-    prior_ta, curr_ta = _at_beneish_periods(s, "assets", periods)
-    prior_ca, curr_ca = _at_beneish_periods(s, "current_assets", periods)
-    prior_ppe, curr_ppe = _at_beneish_periods(s, "ppe_net", periods)
-    prior_dep, curr_dep = _at_beneish_periods(s, "depreciation_amortization", periods)
-    prior_sga, curr_sga = _at_beneish_periods(s, "sganda_expense", periods)
-    prior_ltd, curr_ltd = _at_beneish_periods(s, "long_term_debt", periods)
-    prior_cl, curr_cl = _at_beneish_periods(s, "current_liabilities", periods)
-    _, curr_ni = _at_beneish_periods(s, "net_income", periods)
-    _, curr_cfo = _at_beneish_periods(s, "cfo", periods)
+    prior = frame.iloc[0]
+    current = frame.iloc[1]
+    prior_rev, curr_rev = float(prior["revenue"]), float(current["revenue"])
+    prior_rec, curr_rec = float(prior["receivables"]), float(current["receivables"])
+    prior_gp, curr_gp = float(prior["gross_profit"]), float(current["gross_profit"])
+    prior_ta, curr_ta = float(prior["assets"]), float(current["assets"])
+    prior_ca, curr_ca = float(prior["current_assets"]), float(current["current_assets"])
+    prior_ppe, curr_ppe = float(prior["ppe_net"]), float(current["ppe_net"])
+    prior_dep = float(prior["depreciation_amortization"])
+    curr_dep = float(current["depreciation_amortization"])
+    prior_sga, curr_sga = float(prior["sganda_expense"]), float(current["sganda_expense"])
+    prior_ltd = float(prior["long_term_debt"])
+    curr_ltd = float(current["long_term_debt"])
+    prior_cl = float(prior["current_liabilities"])
+    curr_cl = float(current["current_liabilities"])
+    curr_ni = float(current["net_income"])
+    curr_cfo = float(current["cfo"])
 
-    if curr_rev is None or prior_rev is None or curr_ta is None or prior_ta is None:
-        return None
-
-    components: dict[str, float] = {}
+    components: dict[str, object] = {}
 
     # Days sales in receivables index — receivables growing faster than sales.
     dsri = _index(
@@ -205,6 +191,8 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     components["flagged"] = float(score > -1.78)
     components["n_components"] = float(len(terms))
     components["n_substituted"] = 0.0
+    components["prior_fiscal_period"] = frame.index[0].date().isoformat()
+    components["current_fiscal_period"] = frame.index[1].date().isoformat()
     return (float(score), components)
 
 
@@ -226,43 +214,44 @@ def ohlson_o_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     only thing this grader uses — unchanged. The absolute probability is therefore approximate and
     the shift is recorded in ``raw_inputs``.
     """
-    f = s.fundamentals
-    if f is None:
+    frame = _aligned_annual_model_frame(
+        s,
+        _OHLSON_CONCEPTS,
+        periods=2,
+        required_periods=_OHLSON_REQUIRED_PERIODS,
+    )
+    if frame is None:
         return None
-    prior_ni, curr_ni = _pair(s, "net_income")
-    total_assets = f.latest("assets")
-    total_liabilities = f.latest("liabilities")
-    working_capital = f.latest("working_capital")
-    current_liabilities = f.latest("current_liabilities")
-    current_assets = f.latest("current_assets")
-    pretax = f.ttm("pretax_income")
-    depreciation = f.ttm("depreciation_amortization")
+    prior = frame.iloc[0]
+    current = frame.iloc[1]
+    prior_ni = float(prior["net_income"])
+    curr_ni = float(current["net_income"])
+    total_assets = float(current["assets"])
+    total_liabilities = float(current["liabilities"])
+    working_capital = float(current["working_capital"])
+    current_liabilities = float(current["current_liabilities"])
+    current_assets = float(current["current_assets"])
+    cfo = float(current["cfo"])
 
-    if total_assets is None or total_liabilities is None or curr_ni is None:
-        return None
-    if total_assets <= 0:
-        return None
-    if total_liabilities <= 0:
+    if total_assets <= 0 or total_liabilities <= 0 or current_assets <= 0:
         return None
 
     GNP_INDEX = 100.0  # constant stand-in; shifts all scores equally, ranking is unaffected
 
     size = -0.407 * math.log(total_assets / GNP_INDEX)
     tlta = 6.03 * (total_liabilities / total_assets)
-    wcta = -1.43 * ((working_capital or 0.0) / total_assets)
-    clca = 0.0
-    if current_assets and current_assets > 0 and current_liabilities is not None:
-        clca = 0.0757 * (current_liabilities / current_assets)
+    wcta = -1.43 * (working_capital / total_assets)
+    clca = 0.0757 * (current_liabilities / current_assets)
     oeneg = -1.72 * (1.0 if total_liabilities > total_assets else 0.0)
     nita = -2.37 * (curr_ni / total_assets)
-    ffo = (pretax or 0.0) + (depreciation or 0.0)
-    futl = -1.83 * (ffo / total_liabilities)
-    intwo = 0.285 * (1.0 if (curr_ni < 0 and (prior_ni is not None and prior_ni < 0)) else 0.0)
-    chin = 0.0
-    if prior_ni is not None:
-        denominator = abs(curr_ni) + abs(prior_ni)
-        if denominator > 0:
-            chin = -0.521 * ((curr_ni - prior_ni) / denominator)
+    # ``Funds provided by operations`` is represented by the project's canonical CFO concept,
+    # matching the metric contract and avoiding an undocumented pretax-income + D&A proxy.
+    futl = -1.83 * (cfo / total_liabilities)
+    intwo = 0.285 * (1.0 if (curr_ni < 0 and prior_ni < 0) else 0.0)
+    denominator = abs(curr_ni) + abs(prior_ni)
+    if denominator <= 0:
+        return None
+    chin = -0.521 * ((curr_ni - prior_ni) / denominator)
 
     score = -1.32 + size + tlta + wcta + clca + oeneg + nita + futl + intwo + chin
     probability = 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, score))))
@@ -273,13 +262,16 @@ def ohlson_o_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
             "NITA": nita, "FUTL": futl, "INTWO": intwo, "CHIN": chin,
             "bankruptcy_probability": probability,
             "gnp_index_constant": GNP_INDEX,
+            "funds_from_operations_proxy": "cash_from_operations",
+            "prior_fiscal_period": frame.index[0].date().isoformat(),
+            "current_fiscal_period": frame.index[1].date().isoformat(),
         },
     )
 
 
 @metric("altman_z_prime", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0),
         description="Altman Z'' for non-manufacturers — no market value or sales-to-assets term")
-def altman_z_prime(s: SecuritySnapshot) -> float | None:
+def altman_z_prime(s: SecuritySnapshot) -> tuple[float, dict[str, float]] | None:
     """Altman Z'' (1993), the four-variable revision for non-manufacturers.
 
     ``Z'' = 6.56 WC/TA + 3.26 RE/TA + 6.72 EBIT/TA + 1.05 BV/TL``
@@ -290,22 +282,32 @@ def altman_z_prime(s: SecuritySnapshot) -> float | None:
     service and retail companies; it remains disabled for financials, where none of Altman's models
     were estimated.
     """
-    from .fundamental import _altman_model_for, _latest, _ttm
+    from .fundamental import _altman_model_for
 
     if _altman_model_for(s) != "z_prime":
         return None
-    f = s.fundamentals
-    if f is None:
+    frame = _aligned_annual_model_frame(
+        s,
+        (
+            "assets",
+            "liabilities",
+            "working_capital",
+            "retained_earnings",
+            "equity",
+            "ebit",
+        ),
+        periods=1,
+    )
+    if frame is None:
         return None
-    total_assets = _latest(s, "assets")
-    total_liabilities = _latest(s, "liabilities")
-    if not total_assets or total_assets <= 0 or not total_liabilities or total_liabilities <= 0:
-        return None
-    working_capital = _latest(s, "working_capital")
-    retained = _latest(s, "retained_earnings")
-    equity = _latest(s, "equity")
-    ebit = _ttm(s, "ebit")
-    if working_capital is None or retained is None or ebit is None or equity is None:
+    current = frame.iloc[-1]
+    total_assets = float(current["assets"])
+    total_liabilities = float(current["liabilities"])
+    working_capital = float(current["working_capital"])
+    retained = float(current["retained_earnings"])
+    equity = float(current["equity"])
+    ebit = float(current["ebit"])
+    if total_assets <= 0 or total_liabilities <= 0:
         return None
 
     # Retained earnings over assets is unbounded above, and under US GAAP treasury stock is

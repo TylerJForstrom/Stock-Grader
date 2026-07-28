@@ -14,11 +14,12 @@ from stock_grader.metrics.fundamental import (
     asset_turnover,
     book_value_cagr_5y,
     graham_number_ratio,
+    piotroski_f_score,
     roa,
     roe,
     roic,
 )
-from stock_grader.metrics.models import altman_z_prime, beneish_m_score
+from stock_grader.metrics.models import altman_z_prime, beneish_m_score, ohlson_o_score
 from stock_grader.metrics.sector_specific import ffo_to_assets, net_interest_income_to_assets
 from stock_grader.registry import METRICS
 from stock_grader.types import Coverage, Fundamentals, SectorClass, SecuritySnapshot
@@ -163,6 +164,30 @@ class TestAverageBalanceReturns:
         assert ffo_result is not None
         assert ffo_result[0] == pytest.approx(150.0 / 400.0)
 
+    def test_future_flow_row_cannot_move_the_selected_period_end(self):
+        quarterly = pd.DataFrame(
+            {
+                "net_income": [np.nan, 10.0, 10.0, 10.0, 10.0, 999.0],
+                "assets": [100.0, 150.0, 200.0, 250.0, 300.0, 10_000.0],
+            },
+            index=pd.to_datetime(
+                [
+                    "2024-12-31",
+                    "2025-03-31",
+                    "2025-06-30",
+                    "2025-09-30",
+                    "2025-12-31",
+                    "2026-06-30",
+                ]
+            ),
+        )
+        annual = pd.DataFrame(
+            {"net_income": [20.0, 40.0], "assets": [100.0, 300.0]},
+            index=pd.to_datetime(["2024-12-31", "2025-12-31"]),
+        )
+
+        assert roa.fn(_snapshot(annual, quarterly=quarterly)) == pytest.approx(40.0 / 200.0)
+
 
 def _stable_beneish_frame() -> pd.DataFrame:
     index = pd.to_datetime(["2024-12-31", "2025-12-31"])
@@ -213,6 +238,129 @@ class TestBeneishPeriodIntegrity:
         frame = _stable_beneish_frame().drop(columns=["long_term_debt"])
         assert beneish_m_score.fn(_snapshot(frame)) is None
 
+    def test_prior_net_income_and_cfo_are_not_invented_requirements(self):
+        frame = _stable_beneish_frame()
+        expected = beneish_m_score.fn(_snapshot(frame))
+        frame.loc[frame.index[0], ["net_income", "cfo"]] = np.nan
+        assert beneish_m_score.fn(_snapshot(frame)) == expected
+
+    def test_stale_or_nonconsecutive_fiscal_pairs_are_rejected(self):
+        stale = _stable_beneish_frame()
+        stale.index = pd.to_datetime(["2019-12-31", "2020-12-31"])
+        assert beneish_m_score.fn(_snapshot(stale)) is None
+
+        gapped = _stable_beneish_frame()
+        gapped.index = pd.to_datetime(["2023-12-31", "2025-12-31"])
+        assert beneish_m_score.fn(_snapshot(gapped)) is None
+
+    def test_future_fiscal_rows_are_not_visible(self):
+        future = _stable_beneish_frame()
+        future.index = pd.to_datetime(["2026-12-31", "2027-12-31"])
+        assert beneish_m_score.fn(_snapshot(future)) is None
+
+
+def _ohlson_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "assets": [900.0, 1_000.0],
+            "liabilities": [500.0, 600.0],
+            "working_capital": [180.0, 200.0],
+            "current_liabilities": [220.0, 250.0],
+            "current_assets": [400.0, 500.0],
+            "net_income": [50.0, 80.0],
+            "cfo": [70.0, 100.0],
+        },
+        index=pd.to_datetime(["2024-12-31", "2025-12-31"]),
+    )
+
+
+class TestOhlsonPeriodIntegrity:
+    def test_complete_aligned_inputs_reproduce_the_declared_equation(self):
+        result = ohlson_o_score.fn(_snapshot(_ohlson_frame()))
+        assert result is not None
+        score, raw = result
+        expected = (
+            -1.32
+            - 0.407 * np.log(1_000.0 / 100.0)
+            + 6.03 * (600.0 / 1_000.0)
+            - 1.43 * (200.0 / 1_000.0)
+            + 0.0757 * (250.0 / 500.0)
+            - 2.37 * (80.0 / 1_000.0)
+            - 1.83 * (100.0 / 600.0)
+            - 0.521 * ((80.0 - 50.0) / (80.0 + 50.0))
+        )
+        assert score == pytest.approx(expected)
+        assert raw["funds_from_operations_proxy"] == "cash_from_operations"
+
+    @pytest.mark.parametrize("missing", list(_ohlson_frame().columns))
+    def test_every_declared_component_is_required(self, missing):
+        assert ohlson_o_score.fn(_snapshot(_ohlson_frame().drop(columns=[missing]))) is None
+
+    def test_only_prior_net_income_is_required_from_the_prior_year(self):
+        frame = _ohlson_frame()
+        expected = ohlson_o_score.fn(_snapshot(frame))
+        frame.loc[frame.index[0], frame.columns.difference(["net_income"])] = np.nan
+        assert ohlson_o_score.fn(_snapshot(frame)) == expected
+
+    def test_stale_and_gapped_pairs_are_rejected(self):
+        stale = _ohlson_frame()
+        stale.index = pd.to_datetime(["2019-12-31", "2020-12-31"])
+        assert ohlson_o_score.fn(_snapshot(stale)) is None
+
+        gapped = _ohlson_frame()
+        gapped.index = pd.to_datetime(["2023-12-31", "2025-12-31"])
+        assert ohlson_o_score.fn(_snapshot(gapped)) is None
+
+
+def _piotroski_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "assets": [1_000.0, 1_000.0, 1_000.0],
+            "net_income": [np.nan, 50.0, 100.0],
+            "cfo": [np.nan, np.nan, 150.0],
+            "long_term_debt": [np.nan, 300.0, 200.0],
+            "current_assets": [np.nan, 400.0, 500.0],
+            "current_liabilities": [np.nan, 200.0, 180.0],
+            "shares_diluted": [np.nan, 100.0, 99.0],
+            "gross_profit": [np.nan, 300.0, 400.0],
+            "revenue": [np.nan, 800.0, 900.0],
+        },
+        index=pd.to_datetime(["2023-12-31", "2024-12-31", "2025-12-31"]),
+    )
+
+
+class TestPiotroskiCanonicalContract:
+    def test_requires_all_nine_components_and_returns_integer_score(self):
+        frame = _piotroski_frame()
+        result = piotroski_f_score.fn(_snapshot(frame))
+        assert result is not None
+        score, raw = result
+        assert score == 9.0
+        assert raw["n_components"] == 9
+
+        assert piotroski_f_score.fn(_snapshot(frame.drop(columns=["long_term_debt"]))) is None
+
+    def test_stale_and_nonconsecutive_pairs_are_rejected(self):
+        frame = _piotroski_frame()
+        frame.index = pd.to_datetime(["2018-12-31", "2019-12-31", "2020-12-31"])
+        assert piotroski_f_score.fn(_snapshot(frame)) is None
+        frame.index = pd.to_datetime(["2022-12-31", "2023-12-31", "2025-12-31"])
+        assert piotroski_f_score.fn(_snapshot(frame)) is None
+
+    def test_published_asset_denominators_drive_change_signals(self):
+        frame = _piotroski_frame()
+        frame["assets"] = [100.0, 1_000.0, 100.0]
+        frame["net_income"] = [np.nan, 10.0, 20.0]
+        frame["long_term_debt"] = [np.nan, 100.0, 50.0]
+        frame["revenue"] = [np.nan, 100.0, 200.0]
+        frame["gross_profit"] = [np.nan, 40.0, 80.0]
+        result = piotroski_f_score.fn(_snapshot(frame))
+        assert result is not None
+        _score, raw = result
+        assert raw["rising_roa"] == 0
+        assert raw["rising_asset_turnover"] == 0
+        assert raw["falling_leverage"] == 1
+
 
 def _altman_frame() -> pd.DataFrame:
     index = pd.to_datetime(["2024-12-31", "2025-12-31"])
@@ -260,3 +408,65 @@ class TestAltmanVariantExclusivity:
         snapshot = _snapshot(_altman_frame(), sic=None)
         assert altman_z.fn(snapshot) is None
         assert altman_z_prime.fn(snapshot) is None
+
+    def test_statement_inputs_must_share_one_fiscal_period(self):
+        frame = _altman_frame().iloc[[1]].copy()
+        earlier = frame.copy()
+        earlier.index = pd.to_datetime(["2025-03-31"])
+        earlier[["assets", "liabilities", "working_capital", "retained_earnings", "equity"]] = np.nan
+        frame[["ebit", "revenue"]] = np.nan
+        mixed = pd.concat([earlier, frame]).sort_index()
+
+        assert altman_z.fn(_snapshot(mixed, sic="3571")) is None
+        assert altman_z_prime.fn(_snapshot(mixed, sic="5331")) is None
+
+    def test_hand_calculated_variants_use_the_same_annual_row(self):
+        frame = _altman_frame()
+        manufacturer = _snapshot(frame, sic="3571")
+        retailer = _snapshot(frame, sic="5331")
+
+        z = altman_z.fn(manufacturer)
+        assert z == pytest.approx(
+            1.2 * 220.0 / 1_000.0
+            + 1.4 * 120.0 / 1_000.0
+            + 3.3 * 90.0 / 1_000.0
+            + 0.6 * manufacturer.market_cap / 600.0
+            + 1_100.0 / 1_000.0
+        )
+        z_prime = altman_z_prime.fn(retailer)
+        assert z_prime is not None
+        score, _raw = z_prime
+        assert score == pytest.approx(
+            6.56 * 220.0 / 1_000.0
+            + 3.26 * 120.0 / 1_000.0
+            + 6.72 * 90.0 / 1_000.0
+            + 1.05 * 400.0 / 600.0
+        )
+
+    def test_inactive_variant_is_not_applicable_not_missing(self):
+        manufacturer = _snapshot(_altman_frame(), sic="3571")
+        retailer = _snapshot(_altman_frame(), sic="5331")
+
+        assert evaluate_one(METRICS.get("altman_z"), manufacturer).coverage is Coverage.OK
+        assert (
+            evaluate_one(METRICS.get("altman_z_prime"), manufacturer).coverage
+            is Coverage.NOT_APPLICABLE
+        )
+        assert (
+            evaluate_one(METRICS.get("altman_z"), retailer).coverage
+            is Coverage.NOT_APPLICABLE
+        )
+        assert evaluate_one(METRICS.get("altman_z_prime"), retailer).coverage is Coverage.OK
+
+    @pytest.mark.parametrize("sic", [None, "", "not-a-sic"])
+    def test_unknown_sic_is_missing_classification_not_structural_na(self, sic):
+        snapshot = _snapshot(_altman_frame(), sic=sic)
+        assert evaluate_one(METRICS.get("altman_z"), snapshot).coverage is Coverage.MISSING
+        assert evaluate_one(METRICS.get("altman_z_prime"), snapshot).coverage is Coverage.MISSING
+
+
+def test_ohlson_is_not_applicable_to_financial_business_models():
+    for sector in (SectorClass.BANK, SectorClass.INSURANCE):
+        snapshot = _snapshot(_ohlson_frame(), sector=sector)
+        result = evaluate_one(METRICS.get("ohlson_o_score"), snapshot)
+        assert result.coverage is Coverage.NOT_APPLICABLE

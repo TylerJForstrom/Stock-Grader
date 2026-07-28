@@ -387,19 +387,14 @@ def test_cornish_fisher_refuses_outside_its_domain():
     assert value is None or value > 0
 
 
-def test_piotroski_sparse_data_cannot_reach_a_perfect_score():
-    """``points * 9 / counted`` let five-of-five score exactly 9.0 — same as nine-of-nine.
-
-    The variance of the sparse estimate is inflated by sqrt(9/5) = 1.34x and the chance of a
-    perfect score is p^5 rather than p^9 (7.8% versus 1.0% at p = 0.6), so the two were not
-    remotely the same claim.
-    """
+def test_piotroski_requires_all_nine_published_components():
+    """A partial proxy must not masquerade as the canonical integer 0–9 F-score."""
     from datetime import date as _date
 
     from stock_grader.metrics.fundamental import piotroski_f_score
     from stock_grader.types import Fundamentals, SecuritySnapshot
 
-    years = pd.to_datetime(["2024-12-31", "2025-12-31"])
+    years = pd.to_datetime(["2023-12-31", "2024-12-31", "2025-12-31"])
 
     def snapshot(columns: dict) -> SecuritySnapshot:
         frame = pd.DataFrame(columns, index=years)
@@ -410,28 +405,28 @@ def test_piotroski_sparse_data_cannot_reach_a_perfect_score():
 
     # Only the four profitability tests are computable, and all four pass.
     sparse = snapshot({
-        "assets": [1000.0, 1000.0],
-        "net_income": [50.0, 100.0],
-        "cfo": [80.0, 150.0],
+        "assets": [1000.0, 1000.0, 1000.0],
+        "net_income": [float("nan"), 50.0, 100.0],
+        "cfo": [float("nan"), float("nan"), 150.0],
     })
     # Every test computable, and all nine pass.
     full = snapshot({
-        "assets": [1000.0, 1000.0],
-        "net_income": [50.0, 100.0],
-        "cfo": [80.0, 150.0],
-        "long_term_debt": [300.0, 200.0],
-        "current_assets": [400.0, 500.0],
-        "current_liabilities": [200.0, 180.0],
-        "shares_diluted": [100.0, 99.0],
-        "gross_profit": [300.0, 400.0],
-        "revenue": [800.0, 900.0],
+        "assets": [1000.0, 1000.0, 1000.0],
+        "net_income": [float("nan"), 50.0, 100.0],
+        "cfo": [float("nan"), float("nan"), 150.0],
+        "long_term_debt": [float("nan"), 300.0, 200.0],
+        "current_assets": [float("nan"), 400.0, 500.0],
+        "current_liabilities": [float("nan"), 200.0, 180.0],
+        "shares_diluted": [float("nan"), 100.0, 99.0],
+        "gross_profit": [float("nan"), 300.0, 400.0],
+        "revenue": [float("nan"), 800.0, 900.0],
     })
     sparse_score = piotroski_f_score.fn(sparse)
     full_score = piotroski_f_score.fn(full)
-    if sparse_score is not None:
-        assert sparse_score < 9.0, "sparse data must not reach a perfect score"
-        if full_score is not None:
-            assert full_score > sparse_score, "more confirming evidence must score higher"
+    assert sparse_score is None
+    assert full_score is not None
+    assert full_score[0] == 9.0
+    assert full_score[1]["n_components"] == 9
 
 
 def test_linear_trend_refuses_a_non_finite_series():
