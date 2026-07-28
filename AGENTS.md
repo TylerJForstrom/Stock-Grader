@@ -1,5 +1,15 @@
 # Instructions for coding agents working in this repo
 
+## Ecosystem
+
+This repo is one member of a multi-project ecosystem. The contract — roles,
+artifact rules, data-flow DAG, sequencing — lives in the Stock-Data repo:
+**https://github.com/TylerJForstrom/Stock-Data/blob/main/ECOSYSTEM.md**.
+Read it before any cross-project work. Key rules: integrate via published
+datasets with manifests (never code imports); this repo is the system of
+record for grading methodology; data enters only through the Stock-Data
+foundry.
+
 ## Authoritative plan
 
 The implementation plan for this project is **docs/REVISED_PLAN.md** (a reviewed and
