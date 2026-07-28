@@ -5,6 +5,31 @@ Maintained by the Claude reviewer session. Newest entries first. Items marked
 
 ---
 
+## 2026-07-28 13:05 — ecosystem contract + queued work
+
+The ecosystem contract now lives at
+https://github.com/TylerJForstrom/Stock-Data/blob/main/ECOSYSTEM.md (linked
+from AGENTS.md). Two queued items for after §1:
+
+1. **FoundryProvider adapter** (revised plan step 2): consume Stock-Data's
+   published artifacts — `data/symbols/current/*.jsonl` (universe + exchange
+   filter) and `data/corporate_actions/dividends.parquet` + `splits.jsonl`
+   (shareholder-yield inputs, split validation) — via their `manifest.json`
+   contract (refuse unknown schema_version). Filesystem path or
+   raw.githubusercontent URL, config-keyed. ~150 lines + tests.
+2. **§6 shortcut — harvest, don't rewrite**: the Stock Market Simulation repo
+   (Desktop) contains a dependency-free, well-tested statistics stack that
+   ports nearly verbatim for the backtest program when §6 starts:
+   `src/sms/analytics/significance.py` (PSR/Deflated Sharpe/expected-max-
+   Sharpe/block-bootstrap CI + tests), `research_manifest.py` (append-only
+   trial ledger with SHA-256 integrity), the purge/boundary logic and
+   `rank_ic` from `supervised.py`, and the positive/negative-control test
+   pattern in its tests (planted signal must be found; pure noise must show
+   nothing) — which satisfies the plan's rejection-test requirement. Port the
+   files and tests; do NOT port the Candle-coupled fold engines.
+
+---
+
 ## 2026-07-28 11:45 — suite status update
 
 Full suite run by the reviewer after `pip install -e ".[dev]"`: **456 passed,
