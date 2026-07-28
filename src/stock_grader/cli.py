@@ -14,20 +14,25 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 from rich.console import Console
+from rich.markdown import Markdown
 
 # Importing these modules is what populates the registries.
 from . import __version__, aggregate, normalize, weighting  # noqa: F401
+from .backtest import BacktestConfig, backtest_to_markdown, evaluate_walk_forward
 from .data.prices import (
     BenchmarkProvider,
     ChainedPriceProvider,
     CSVPriceProvider,
+    PriceProvider,
     RiskFreeProvider,
+    TiingoPriceProvider,
     YahooPriceProvider,
 )
 from .data.sec import SECClient, SECProvider
@@ -35,10 +40,21 @@ from .data.sec_prices import SECInsiderPriceProvider, resolve_price
 from .data.stockanalysis import StockAnalysisPriceProvider
 from .data.synthetic import generate_prices
 from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
+from .peers import explicit_peers, select_peers
 from .pipeline import GradeConfig, grade_universe
 from .profiles import consensus_grade, get_profile, profile_names
 from .registry import AGGREGATORS, METRICS, NORMALIZERS, WEIGHTINGS
-from .report import render_consensus, render_ranking, render_report, to_json, to_markdown
+from .report import (
+    rank_reports,
+    render_consensus,
+    render_ranking,
+    render_report,
+    to_consensus_markdown,
+    to_json,
+    to_markdown,
+    to_ranking_markdown,
+)
+from .research import build_research_report, research_to_json, research_to_markdown
 from .types import PitMode, SecuritySnapshot
 from .weighting import WEIGHT_METHOD_INFO
 
@@ -46,6 +62,23 @@ console = Console()
 # Progress, warnings and errors go to stderr so `--format json` yields a parseable document on
 # stdout. A JSON mode that emits a banner first is not a JSON mode.
 status_console = Console(stderr=True)
+
+CLI_NORMALIZERS = [
+    name for name in NORMALIZERS.names() if name not in {"piecewise", "double_sigmoid"}
+]
+CLI_WEIGHTINGS = [
+    name
+    for name in WEIGHTINGS.names()
+    if not WEIGHT_METHOD_INFO.get(name, {}).get("needs_returns", False)
+    and name not in {"fixed", "ahp", "rank_order_centroid"}
+]
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def _default_universe_path() -> Path | None:
@@ -109,6 +142,51 @@ def _resolve_peers(args: argparse.Namespace, tickers: list[str]) -> list[str]:
     return peers
 
 
+def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
+    """Build the dense-price chain without hiding which source the user selected.
+
+    ``auto`` preserves the historical CSV/opt-in StockAnalysis/Yahoo behavior and now makes the
+    already-shipped Tiingo provider reachable when ``TIINGO_API_KEY`` is configured.
+    """
+    mode = getattr(args, "price_provider", "auto")
+    price_dir = getattr(args, "price_dir", None)
+    stockanalysis = bool(getattr(args, "stockanalysis", False))
+    no_network = bool(getattr(args, "no_network", False))
+
+    if price_dir and mode not in ("auto", "csv"):
+        raise ValueError("--price-dir requires --price-provider auto or csv")
+    if stockanalysis and mode not in ("auto", "stockanalysis"):
+        raise ValueError("--stockanalysis cannot be combined with another explicit price provider")
+    if mode == "csv" and not price_dir:
+        raise ValueError("--price-provider csv requires --price-dir")
+    if mode == "sec" and not bool(getattr(args, "sec_prices", True)):
+        raise ValueError("--price-provider sec conflicts with --no-sec-prices")
+    if no_network and mode in ("tiingo", "stockanalysis", "yahoo"):
+        raise ValueError(f"--price-provider {mode} conflicts with --no-network")
+
+    providers: list[PriceProvider] = []
+    if mode == "auto":
+        if price_dir:
+            providers.append(CSVPriceProvider(price_dir))
+        if stockanalysis and not no_network:
+            # Opt-in: an undocumented endpoint of a commercial site. See that module's docstring.
+            providers.append(
+                StockAnalysisPriceProvider(cache_dir=args.cache_dir, contact=args.contact)
+            )
+        if not no_network:
+            providers.extend((TiingoPriceProvider(), YahooPriceProvider()))
+    elif mode == "csv":
+        providers.append(CSVPriceProvider(price_dir))
+    elif mode == "tiingo":
+        providers.append(TiingoPriceProvider())
+    elif mode == "stockanalysis":
+        providers.append(StockAnalysisPriceProvider(cache_dir=args.cache_dir, contact=args.contact))
+    elif mode == "yahoo":
+        providers.append(YahooPriceProvider())
+    # ``sec`` supplies only a sparse scalar below; ``none`` disables the dense price chain.
+    return providers
+
+
 def _build_snapshots(
     tickers: list[str],
     args: argparse.Namespace,
@@ -116,24 +194,19 @@ def _build_snapshots(
     provider: SECProvider,
 ) -> list[SecuritySnapshot]:
     """Fetch fundamentals for each ticker and attach prices where available."""
-    price_providers = []
-    if args.price_dir:
-        price_providers.append(CSVPriceProvider(args.price_dir))
-    if args.stockanalysis and not args.no_network:
-        # Opt-in: an undocumented endpoint of a commercial site. See that module's docstring.
-        price_providers.append(
-            StockAnalysisPriceProvider(cache_dir=args.cache_dir, contact=args.contact)
-        )
-    if not args.no_network:
-        price_providers.append(YahooPriceProvider())
+    price_providers = _price_providers_from_args(args)
     prices = ChainedPriceProvider(price_providers) if price_providers else None
 
     risk_free = None
     benchmark = None
     if not args.no_network:
-        risk_free = RiskFreeProvider().get("3m")
+        risk_free = RiskFreeProvider(cache_dir=args.cache_dir).get(
+            "3m", refresh=args.refresh
+        )
         # Without this, beta / capm_alpha / idiosyncratic_volatility can never fire at all.
-        benchmark = BenchmarkProvider(cache_dir=args.cache_dir).get(args.benchmark)
+        benchmark = BenchmarkProvider(cache_dir=args.cache_dir).get(
+            args.benchmark, refresh=args.refresh
+        )
 
     # SEC insider-transaction prices: the only price source reachable without an API key.
     # Sparse (a few dates per quarter), which is enough for valuation but not for the daily
@@ -164,7 +237,19 @@ def _build_snapshots(
         if status:
             status.update(f"[dim]loading {ticker} ({i}/{len(tickers)})…[/dim]")
         try:
-            snapshot = provider.fetch(ticker, asof=asof, pit_mode=pit_mode, refresh=args.refresh)
+            identifier = ticker.removeprefix("CIK:")
+            if identifier.isdigit():
+                snapshot = provider.fetch_by_cik(
+                    identifier,
+                    ticker=ticker,
+                    asof=asof,
+                    pit_mode=pit_mode,
+                    refresh=args.refresh,
+                )
+            else:
+                snapshot = provider.fetch(
+                    ticker, asof=asof, pit_mode=pit_mode, refresh=args.refresh
+                )
         except Exception as exc:
             status_console.print(f"[yellow]{ticker}: skipped ({type(exc).__name__}: {exc})[/yellow]")
             continue
@@ -293,7 +378,7 @@ def cmd_grade(args: argparse.Namespace) -> int:
     else:
         for report in selected.values():
             render_report(report, console, explain=args.explain)
-    return 0
+    return 0 if any(report.graded for report in selected.values()) else 3
 
 
 def cmd_rank(args: argparse.Namespace) -> int:
@@ -304,12 +389,22 @@ def cmd_rank(args: argparse.Namespace) -> int:
         console.print("[red]universe file is empty[/red]")
         return 2
     snapshots = _build_snapshots(tickers, args, provider=provider)
+    if not snapshots:
+        console.print("[red]no securities could be loaded[/red]")
+        return 2
     reports = grade_universe(snapshots, _config_from_args(args))
+    if not reports:
+        console.print("[red]grading produced no reports[/red]")
+        return 2
+    ordered = rank_reports(reports, top=args.top)
+    limited = {report.ticker: report for report in ordered}
     if args.format == "json":
-        print(to_json(reports))
+        print(to_json(limited))
+    elif args.format == "md":
+        print(to_ranking_markdown(reports, top=args.top))
     else:
         render_ranking(reports, console, top=args.top)
-    return 0
+    return 0 if any(report.graded for report in reports.values()) else 3
 
 
 def cmd_consensus(args: argparse.Namespace) -> int:
@@ -328,23 +423,157 @@ def cmd_consensus(args: argparse.Namespace) -> int:
         overrides["pillar_weights"] = {}
     if args.normalizer:
         overrides["normalizer"] = args.normalizer
+    if args.aggregator:
+        overrides["pillar_aggregator"] = args.aggregator
     if args.sector_neutral:
         overrides["sector_neutral"] = True
     if args.curve:
         overrides["curve"] = args.curve
+    if args.rho is not None:
+        overrides["aggregator_kwargs"] = {"rho": args.rho}
     results = consensus_grade(snapshots, **overrides)
     selected = {t: results[t] for t in tickers if t in results}
-    render_consensus(selected, console)
-    for result in selected.values():
-        if not len(result.scores):
-            report = next(iter(result.per_profile.values()), None)
-            reason = next(iter(report.warnings), "no metrics could be computed") if report else ""
-            console.print(f"\n[bold]{result.ticker}[/bold]: [yellow]not gradeable[/yellow] — {reason}")
-            continue
-        console.print(f"\n[bold]{result.ticker}[/bold] by profile:")
-        for name, score in result.scores.sort_values(ascending=False).items():
-            report = result.per_profile[name]
-            console.print(f"  {name:18} {report.letter:>3}  {score:5.1f}")
+    if not selected:
+        console.print("[red]consensus produced no requested results[/red]")
+        return 2
+    if args.format == "json":
+        payload = selected if len(selected) != 1 else next(iter(selected.values()))
+        print(to_json(payload))
+    elif args.format == "md":
+        print(to_consensus_markdown(selected))
+    else:
+        render_consensus(selected, console)
+        for result in selected.values():
+            if not len(result.scores):
+                report = next(iter(result.per_profile.values()), None)
+                reason = (
+                    next(iter(report.warnings), "no metrics could be computed") if report else ""
+                )
+                console.print(
+                    f"\n[bold]{result.ticker}[/bold]: "
+                    f"[yellow]not gradeable[/yellow] — {reason}"
+                )
+                continue
+            console.print(f"\n[bold]{result.ticker}[/bold] by profile:")
+            ordered_profiles = sorted(
+                result.per_profile.items(),
+                key=lambda item: (
+                    not item[1].graded,
+                    -item[1].score if math.isfinite(item[1].score) else 1e9,
+                    item[0],
+                ),
+            )
+            for name, report in ordered_profiles:
+                score = f"{report.score:5.1f}" if math.isfinite(report.score) else "    —"
+                excluded = "  [dim](excluded from consensus)[/dim]" if not report.graded else ""
+                console.print(f"  {name:18} {report.letter:>3}  {score}{excluded}")
+    return 0 if any(len(result.scores) for result in selected.values()) else 3
+
+
+def cmd_research(args: argparse.Namespace) -> int:
+    """Build one evidence-rich analyst dossier with an explicit peer manifest."""
+
+    provider = SECProvider(
+        SECClient(
+            cache_dir=args.cache_dir,
+            contact=args.contact,
+            offline=args.no_network,
+        )
+    )
+    ticker = args.ticker.upper()
+    peer_identifiers = _resolve_peers(args, [ticker])
+    identifiers = list(dict.fromkeys([ticker, *peer_identifiers]))
+    snapshots = _build_snapshots(identifiers, args, provider=provider)
+    by_ticker = {snapshot.ticker.upper(): snapshot for snapshot in snapshots}
+    target = by_ticker.get(ticker)
+    if target is None:
+        console.print(f"[red]{ticker} could not be loaded[/red]")
+        return 2
+
+    candidates = [snapshot for snapshot in snapshots if snapshot is not target]
+    universe_label = (
+        f"explicit:{Path(args.universe).name}"
+        if args.universe
+        else "none"
+        if args.no_peers
+        else "bundled_current_survivor_universe"
+    )
+    if args.peer_mode == "explicit":
+        peers, selection = explicit_peers(
+            target,
+            candidates,
+            candidate_universe=universe_label,
+        )
+    else:
+        peers, selection = select_peers(
+            target,
+            candidates,
+            minimum=args.peer_min,
+            maximum=args.peer_max,
+            size_band_multiple=args.size_band,
+            candidate_universe=universe_label,
+        )
+
+    dossier = build_research_report(
+        target,
+        peers,
+        selection,
+        _config_from_args(args),
+        valuation_growth_rates=tuple(args.dcf_growth),
+        valuation_discount_rate=args.discount_rate,
+        valuation_terminal_growth=args.terminal_growth,
+    )
+    if args.format == "json":
+        print(research_to_json(dossier))
+    else:
+        markdown = research_to_markdown(dossier)
+        if args.format == "md":
+            print(markdown)
+        else:
+            console.print(Markdown(markdown))
+    return 0 if dossier.grade.graded else 3
+
+
+def cmd_backtest(args: argparse.Namespace) -> int:
+    """Evaluate a caller-supplied, frozen point-in-time score panel."""
+
+    path = Path(args.panel)
+    if not path.exists():
+        raise ValueError(f"panel does not exist: {path}")
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        panel = pd.read_parquet(path)
+    else:
+        panel = pd.read_csv(path)
+    report = evaluate_walk_forward(
+        panel,
+        BacktestConfig(
+            quantiles=args.quantiles,
+            min_cross_section=args.min_cross_section,
+            periods_per_year=args.periods_per_year,
+            transaction_cost_bps=args.transaction_cost_bps,
+            bootstrap_samples=args.bootstrap_samples,
+            bootstrap_block_periods=args.bootstrap_block_periods,
+            seed=args.seed,
+        ),
+    )
+    failed_contract = [
+        name for name, passed in report.input_contract.items() if not passed
+    ]
+    if failed_contract and not args.allow_unverified_panel:
+        raise ValueError(
+            "panel fails the strict input contract ("
+            + ", ".join(failed_contract)
+            + "); add the documented attestation/identifier columns or pass "
+            "--allow-unverified-panel for an explicitly caveated exploratory run"
+        )
+    if args.format == "json":
+        print(to_json(report))
+    else:
+        markdown = backtest_to_markdown(report)
+        if args.format == "md":
+            print(markdown)
+        else:
+            console.print(Markdown(markdown))
     return 0
 
 
@@ -407,11 +636,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     def common(p: argparse.ArgumentParser, *, needs_universe: bool = False) -> None:
         p.add_argument("--profile", default="all_weather", choices=profile_names())
-        p.add_argument("--weighting", choices=WEIGHTINGS.names(), help="weighting method at both levels")
-        p.add_argument("--normalizer", choices=NORMALIZERS.names())
+        p.add_argument(
+            "--weighting",
+            choices=CLI_WEIGHTINGS,
+            help="operational unsupervised weighting method at both levels",
+        )
+        p.add_argument("--normalizer", choices=CLI_NORMALIZERS)
         p.add_argument("--aggregator", choices=AGGREGATORS.names())
         p.add_argument("--rho", type=float, help="CES compensation parameter (1=mean, 0=geometric)")
-        p.add_argument("--curve", choices=["absolute", "cross_sectional", "hybrid"])
+        p.add_argument(
+            "--curve",
+            choices=["absolute", "cross_sectional", "hybrid"],
+            help=(
+                "score presentation; cross_sectional is the production default. absolute and "
+                "hybrid are experimental peer-derived compatibility modes, not intrinsic values"
+            ),
+        )
         p.add_argument("--sector-neutral", action="store_true", help="score within sector")
         p.add_argument("--universe", required=needs_universe, help="file of tickers, one per line")
         p.add_argument("--no-peers", action="store_true",
@@ -424,6 +664,16 @@ def build_parser() -> argparse.ArgumentParser:
                        help="manual price, TICKER=123.45 (repeatable); enables valuation metrics "
                             "with no market-data feed")
         p.add_argument("--price-dir", help="directory of TICKER.csv price files")
+        p.add_argument(
+            "--price-provider",
+            default="auto",
+            choices=["auto", "csv", "tiingo", "stockanalysis", "yahoo", "sec", "none"],
+            help=(
+                "daily-price source (default auto: CSV when supplied, optional StockAnalysis, "
+                "then Tiingo when configured, then Yahoo). 'sec' uses only sparse SEC-derived "
+                "scalar prices; 'none' disables the daily-price chain"
+            ),
+        )
         p.add_argument("--synthetic-prices", action="store_true",
                        help="fabricate a price series where none is available; clearly labelled "
                             "in the report and never real market history")
@@ -433,9 +683,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--max-price-age", type=int, default=400,
                        help="refuse any SEC-derived price older than this many days (default 400)")
         p.add_argument("--stockanalysis", action="store_true",
-                       help="fetch daily adjusted OHLCV from stockanalysis.com, enabling the 40 "
-                            "risk/momentum/liquidity metrics. An undocumented endpoint of a "
-                            "commercial site, not a licensed feed — read their ToS first")
+                       help="opt-in StockAnalysis in the auto chain (equivalent to "
+                            "--price-provider stockanalysis when used alone). It is an undocumented "
+                            "commercial endpoint, not a licensed feed — read their ToS first")
         p.add_argument("--benchmark", default="SP500",
                        help="FRED index for beta/alpha (SP500, NASDAQ, DJIA); price-only, so alpha "
                             "is overstated by roughly beta x the index dividend yield")
@@ -452,7 +702,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_grade.set_defaults(func=cmd_grade)
 
     p_rank = sub.add_parser("rank", help="rank a universe")
-    p_rank.add_argument("--top", type=int)
+    p_rank.add_argument("--top", type=_positive_int)
     common(p_rank, needs_universe=True)
     p_rank.set_defaults(func=cmd_rank)
 
@@ -460,6 +710,61 @@ def build_parser() -> argparse.ArgumentParser:
     p_cons.add_argument("tickers", nargs="+")
     common(p_cons)
     p_cons.set_defaults(func=cmd_consensus)
+
+    p_research = sub.add_parser(
+        "research",
+        help="build an auditable peer, trend, metric, and scenario-valuation dossier",
+    )
+    p_research.add_argument("ticker")
+    p_research.add_argument(
+        "--peer-mode",
+        choices=["auto", "explicit"],
+        default="auto",
+        help="auto selects by SIC/business model/size; explicit retains --universe members",
+    )
+    p_research.add_argument("--peer-min", type=_positive_int, default=8)
+    p_research.add_argument("--peer-max", type=_positive_int, default=30)
+    p_research.add_argument(
+        "--size-band",
+        type=float,
+        default=5.0,
+        help="prefer peers within this market-cap multiple (default 5)",
+    )
+    p_research.add_argument(
+        "--dcf-growth",
+        nargs=3,
+        type=float,
+        metavar=("BEAR", "BASE", "BULL"),
+        default=(-0.02, 0.05, 0.12),
+        help="illustrative annual cash-flow growth assumptions as decimals",
+    )
+    p_research.add_argument("--discount-rate", type=float, default=0.10)
+    p_research.add_argument("--terminal-growth", type=float, default=0.025)
+    common(p_research)
+    p_research.set_defaults(func=cmd_research)
+
+    p_backtest = sub.add_parser(
+        "backtest",
+        help="evaluate a frozen point-in-time score panel against later total returns",
+    )
+    p_backtest.add_argument("panel", help="CSV or Parquet score panel")
+    p_backtest.add_argument("--quantiles", type=_positive_int, default=5)
+    p_backtest.add_argument("--min-cross-section", type=_positive_int, default=20)
+    p_backtest.add_argument("--periods-per-year", type=_positive_int, default=12)
+    p_backtest.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    p_backtest.add_argument("--bootstrap-samples", type=int, default=1_000)
+    p_backtest.add_argument("--bootstrap-block-periods", type=_positive_int, default=3)
+    p_backtest.add_argument("--seed", type=int, default=0)
+    p_backtest.add_argument(
+        "--allow-unverified-panel",
+        action="store_true",
+        help=(
+            "run despite missing PIT-universe, total-return, delisting, filing-cutoff, or "
+            "permanent-identifier evidence; the report will retain those caveats"
+        ),
+    )
+    p_backtest.add_argument("--format", default="text", choices=["text", "json", "md"])
+    p_backtest.set_defaults(func=cmd_backtest)
 
     p_methods = sub.add_parser("methods", help="list weighting methods, normalizers, aggregators")
     p_methods.set_defaults(func=cmd_methods)
@@ -474,6 +779,50 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "no_network", False) and getattr(args, "refresh", False):
+        parser.error("--refresh cannot be combined with --no-network")
+    if getattr(args, "asof", None):
+        try:
+            requested_asof = date.fromisoformat(args.asof)
+        except ValueError:
+            parser.error("--asof must be an ISO date (YYYY-MM-DD)")
+        if requested_asof != date.today() and not getattr(args, "pit", False):
+            parser.error("historical --asof requires --pit")
+    if getattr(args, "command", None) == "research":
+        if args.peer_mode == "explicit" and not args.universe:
+            parser.error("--peer-mode explicit requires --universe")
+        if args.peer_max < args.peer_min:
+            parser.error("--peer-max must be greater than or equal to --peer-min")
+        if not math.isfinite(args.size_band) or args.size_band <= 1.0:
+            parser.error("--size-band must be finite and greater than 1")
+        if not all(math.isfinite(value) for value in args.dcf_growth):
+            parser.error("--dcf-growth values must be finite")
+        if any(value <= -1.0 for value in args.dcf_growth):
+            parser.error("--dcf-growth values must be greater than -1")
+        if not math.isfinite(args.discount_rate) or not math.isfinite(args.terminal_growth):
+            parser.error("valuation rates must be finite")
+        if args.discount_rate <= -1.0 or args.terminal_growth <= -1.0:
+            parser.error("valuation rates must be greater than -1")
+        if args.discount_rate <= args.terminal_growth:
+            parser.error("--discount-rate must be greater than --terminal-growth")
+    if (
+        getattr(args, "rho", None) is not None
+        and getattr(args, "aggregator", None) not in (None, "ces")
+    ):
+        parser.error("--rho applies only when the pillar aggregator is ces")
+    if getattr(args, "rho", None) is not None and (
+        not math.isfinite(args.rho) or not -20.0 <= args.rho <= 20.0
+    ):
+        parser.error("--rho must be finite and in [-20, 20]")
+    if getattr(args, "command", None) == "backtest":
+        if args.quantiles < 2:
+            parser.error("--quantiles must be at least 2")
+        if args.min_cross_section < args.quantiles * 2:
+            parser.error("--min-cross-section must be at least twice --quantiles")
+        if not math.isfinite(args.transaction_cost_bps) or args.transaction_cost_bps < 0:
+            parser.error("--transaction-cost-bps must be finite and non-negative")
+        if args.bootstrap_samples < 0:
+            parser.error("--bootstrap-samples must be non-negative")
     logging.basicConfig(
         level=logging.INFO if getattr(args, "verbose", False) else logging.ERROR,
         format="[%(levelname)s] %(message)s",

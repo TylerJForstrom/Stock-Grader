@@ -13,9 +13,12 @@ __version__ = "0.1.0"
 
 # Order matters only in that every module must be imported; each registers by decorator.
 from . import aggregate, normalize, weighting  # noqa: F401
+from .backtest import BacktestConfig, BacktestReport, backtest_to_markdown, evaluate_walk_forward
 from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
+from .peers import PeerSelection, explicit_peers, select_peers
 from .pipeline import GradeConfig, grade_universe
 from .profiles import consensus_grade, get_profile, profile_names
+from .research import ResearchReport, build_research_report
 from .registry import (
     AGGREGATORS,
     METRICS,
@@ -23,9 +26,13 @@ from .registry import (
     WEIGHTINGS,
 )
 from .types import Coverage, GradeReport, PitMode, SecuritySnapshot
+from .valuation import DCFScenario, ValuationAnalysis, build_valuation_analysis
 
 __all__ = [
     "AGGREGATORS",
+    "BacktestConfig",
+    "BacktestReport",
+    "DCFScenario",
     "METRICS",
     "NORMALIZERS",
     "WEIGHTINGS",
@@ -33,10 +40,19 @@ __all__ = [
     "GradeConfig",
     "GradeReport",
     "PitMode",
+    "PeerSelection",
+    "ResearchReport",
     "SecuritySnapshot",
+    "ValuationAnalysis",
     "__version__",
+    "build_research_report",
+    "build_valuation_analysis",
+    "backtest_to_markdown",
     "consensus_grade",
+    "evaluate_walk_forward",
+    "explicit_peers",
     "get_profile",
     "grade_universe",
     "profile_names",
+    "select_peers",
 ]
