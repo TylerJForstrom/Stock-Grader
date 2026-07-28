@@ -124,5 +124,35 @@ MVP (daily symbol-directory scraper + heartbeat + manifest format + grader
 adapter) is about a focused week and is **time-sensitive** — the PIT archive
 only covers the period after it starts. Everything else ships incrementally:
 corporate actions (1–2 weeks, the keystone), then mechanical forecasts, then
-text signals. The one thing no computation fixes: delisted prices before the
-archive began.
+text signals.
+
+## What backfills instantly vs. what only accrues forward
+
+Backfills TODAY (the sources are themselves archives): fundamentals + PIT
+vintages to 2009 (companyfacts `filed` dates; FSDS as-published quarterly zips),
+dividends/splits to ~2009 (XBRL reconstruction), filing text to 1993, prices
+for LIVE tickers (Stooq/Tiingo deep history), FINRA short interest to 2014,
+and historical universe membership (EDGAR filing indexes + Forms 25/15 exits).
+
+Forward-only: daily-granularity universe snapshots, and prices of FUTURE
+delistings.
+
+## Historical delisted prices — free reconstruction (quarterly granularity)
+
+Three EDGAR-native sources recover most of the survivorship gap retroactively:
+
+1. **Terminal-price resolution**: most delistings are acquisitions at a known
+   deal price (8-K item 2.01 / merger proxy, archived forever); bankruptcies
+   terminate ≈ 0; only for-cause/going-dark residue needs Shumway-style
+   imputation (−30%/−55%) with a sensitivity band.
+2. **13F implied prices**: each holding's value ÷ shares = implied quarter-end
+   price for any institutionally-held stock back to 2013, INCLUDING later-dead
+   companies (build-time check: value units changed thousands→dollars ~2023).
+   N-PORT gives the same monthly from 2019.
+3. **Insider Form 4 prices** (already implemented in the grader's sparse-price
+   path) — retroactive for delisted names.
+
+Combined: a quarterly, delisted-inclusive total-return panel at $0. This matches
+the quarterly ceiling the XBRL dividend reconstruction already imposes (no
+ex-dates), so a quarterly survivorship-aware backtest is internally consistent
+free; paid data is only needed if daily-granularity validation is ever required.
