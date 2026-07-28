@@ -56,6 +56,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from .cache import default_cache_dir
+
 log = logging.getLogger(__name__)
 
 __all__ = [
@@ -164,9 +166,7 @@ class SECInsiderPriceProvider:
         failure_threshold: int = 2,
         cooldown_seconds: float = 60.0,
     ) -> None:
-        self.cache_dir = Path(
-            cache_dir or Path.home() / ".cache" / "stock-grader" / "insider"
-        ).resolve()
+        self.cache_dir = Path(cache_dir or default_cache_dir("insider")).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.contact = contact or os.environ.get("STOCK_GRADER_CONTACT") or _DEFAULT_CONTACT
         self.quarters = max(1, quarters)

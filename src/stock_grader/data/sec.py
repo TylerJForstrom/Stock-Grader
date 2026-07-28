@@ -30,6 +30,7 @@ import pandas as pd
 import requests
 
 from ..types import Fundamentals, PitMode, SecuritySnapshot
+from .cache import default_cache_dir, safe_cache_path
 from .concepts import AVERAGED_CONCEPTS, DEI_CONCEPTS, PERIOD_TYPES, chains_for
 from .sectors import classify_sic
 
@@ -81,7 +82,7 @@ class SECClient:
         timeout: float = 45.0,
         offline: bool = False,
     ) -> None:
-        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader")
+        self.cache_dir = Path(cache_dir or default_cache_dir())
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.contact = contact or os.environ.get("STOCK_GRADER_CONTACT") or _DEFAULT_CONTACT
         self.ttl = timedelta(hours=ttl_hours)
@@ -99,8 +100,7 @@ class SECClient:
         })
 
     def _cache_path(self, key: str) -> Path:
-        safe = key.replace("/", "_").replace(":", "_")
-        return self.cache_dir / f"{safe}.json"
+        return safe_cache_path(self.cache_dir, "", key, ".json")
 
     def get_json(self, url: str, key: str, *, refresh: bool = False) -> dict[str, Any] | None:
         """Fetch JSON, serving from cache when fresh. Returns ``None`` on unrecoverable failure."""

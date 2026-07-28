@@ -51,6 +51,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from .cache import default_cache_dir, safe_cache_path
 from .prices import PriceProvider
 
 log = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ class StockAnalysisPriceProvider(PriceProvider):
         rate: float = 2.0,
         ttl_hours: float = 24.0,
     ) -> None:
-        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader" / "sa")
+        self.cache_dir = Path(cache_dir or default_cache_dir("sa"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.contact = contact or os.environ.get("STOCK_GRADER_CONTACT") or "stock-grader"
         self.range_ = range_
@@ -99,8 +100,12 @@ class StockAnalysisPriceProvider(PriceProvider):
             self._last = time.monotonic()
 
     def _cache_path(self, ticker: str) -> Path:
-        safe = ticker.upper().replace("/", "_")
-        return self.cache_dir / f"{safe}_{self.range_}.parquet"
+        return safe_cache_path(
+            self.cache_dir,
+            "",
+            f"{ticker.upper()}_{self.range_}",
+            ".parquet",
+        )
 
     def _fetch(self, ticker: str, *, start: date | None, end: date | None) -> pd.DataFrame | None:
         cache = self._cache_path(ticker)

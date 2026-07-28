@@ -17,7 +17,6 @@ Consequences baked into this module:
 
 from __future__ import annotations
 
-import hashlib
 import io
 import logging
 import os
@@ -35,6 +34,9 @@ from urllib.parse import quote as url_quote
 import numpy as np
 import pandas as pd
 import requests
+
+from .cache import default_cache_dir
+from .cache import safe_cache_path as _safe_cache_path
 
 log = logging.getLogger(__name__)
 
@@ -154,21 +156,6 @@ def _utc_epoch(day: date) -> int:
     """UTC midnight epoch for a calendar date, independent of the host timezone."""
     instant = datetime.combine(day, datetime_time.min, tzinfo=UTC)
     return int(instant.timestamp())
-
-
-def _safe_cache_path(root: Path, namespace: str, identifier: str, suffix: str) -> Path:
-    """Build a cache path that cannot escape ``root`` through input or an existing symlink."""
-    root = root.resolve()
-    raw = str(identifier).strip()
-    if _SAFE_IDENTIFIER.fullmatch(raw) and ".." not in raw:
-        component = raw
-    else:
-        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
-        component = f"id-{digest}"
-    candidate = (root / f"{namespace}_{component}{suffix}").resolve()
-    if candidate.parent != root:
-        raise ValueError("cache path escaped its configured directory")
-    return candidate
 
 
 def _atomic_csv_write(frame: pd.DataFrame | pd.Series, destination: Path) -> None:
@@ -808,7 +795,7 @@ class RiskFreeProvider:
         timeout: float = 20.0,
         ttl_hours: float = 24.0,
     ) -> None:
-        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader").resolve()
+        self.cache_dir = Path(cache_dir or default_cache_dir()).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
         self.ttl_hours = ttl_hours
@@ -893,7 +880,7 @@ class BenchmarkProvider:
         timeout: float = 20.0,
         ttl_hours: float = 24.0,
     ) -> None:
-        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "stock-grader").resolve()
+        self.cache_dir = Path(cache_dir or default_cache_dir()).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
         self.ttl_hours = ttl_hours

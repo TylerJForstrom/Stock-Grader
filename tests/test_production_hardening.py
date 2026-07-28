@@ -11,6 +11,8 @@ import pytest
 import requests
 
 from stock_grader import weighting
+from stock_grader.data import cache as cache_paths
+from stock_grader.data.cache import default_cache_dir
 from stock_grader.data.prices import (
     AdjustedPriceStatus,
     BenchmarkProvider,
@@ -24,7 +26,54 @@ from stock_grader.data.prices import (
     _utc_epoch,
     validate_price_frame,
 )
+from stock_grader.data.sec import SECClient
 from stock_grader.data.sec_prices import SECInsiderPriceProvider
+from stock_grader.data.stockanalysis import StockAnalysisPriceProvider
+
+
+class TestPlatformCachePaths:
+    def test_windows_defaults_use_local_app_data_for_every_provider(self, tmp_path, monkeypatch):
+        local = tmp_path / "LocalAppData"
+        monkeypatch.setattr(cache_paths, "_is_windows", lambda: True)
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "wrong-platform"))
+
+        root = local / "stock-grader"
+        assert default_cache_dir() == root
+        assert SECClient(offline=True).cache_dir == root
+        assert RiskFreeProvider().cache_dir == root.resolve()
+        assert BenchmarkProvider().cache_dir == root.resolve()
+        assert SECInsiderPriceProvider().cache_dir == (root / "insider").resolve()
+        assert StockAnalysisPriceProvider().cache_dir == root / "sa"
+
+    def test_unix_defaults_honor_xdg_cache_home(self, tmp_path, monkeypatch):
+        xdg = tmp_path / "xdg"
+        monkeypatch.setattr(cache_paths, "_is_windows", lambda: False)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(xdg))
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "wrong-platform"))
+
+        assert default_cache_dir("prices") == xdg / "stock-grader" / "prices"
+
+    def test_windows_backslashes_cannot_escape_sec_or_stockanalysis_cache(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(cache_paths, "_is_windows", lambda: True)
+        sec = SECClient(cache_dir=tmp_path, offline=True)
+        stockanalysis = StockAnalysisPriceProvider(cache_dir=tmp_path)
+
+        sec_path = sec._cache_path(r"..\outside")
+        stockanalysis_path = stockanalysis._cache_path(r"..\outside")
+        assert sec_path.parent == tmp_path.resolve()
+        assert stockanalysis_path.parent == tmp_path.resolve()
+        assert sec_path.name.startswith("id-")
+        assert stockanalysis_path.name.startswith("id-")
+
+    def test_safe_cache_identifiers_keep_stable_filenames(self, tmp_path):
+        sec = SECClient(cache_dir=tmp_path, offline=True)
+        stockanalysis = StockAnalysisPriceProvider(cache_dir=tmp_path, range_="10y")
+
+        assert sec._cache_path("facts_0000320193").name == "facts_0000320193.json"
+        assert stockanalysis._cache_path("BRK.B").name == "BRK.B_10y.parquet"
 
 
 class TestDensePriceValidation:
