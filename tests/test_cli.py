@@ -192,6 +192,106 @@ def test_price_provider_selection_exposes_tiingo_and_validates_conflicts() -> No
         cli._price_providers_from_args(missing_csv)
 
 
+def test_public_float_lower_bound_is_evidence_not_snapshot_price() -> None:
+    snapshot = SecuritySnapshot(ticker="XYZ", asof=date(2026, 7, 28))
+    cli._apply_resolved_price(
+        snapshot,
+        {
+            "price": 25.0,
+            "source": "public_float_lower_bound",
+            "date": date(2026, 6, 30),
+            "age_days": 28,
+            "non_affiliate_fraction": None,
+            "valuation_eligible": False,
+        },
+    )
+
+    assert snapshot.price is None
+    assert snapshot.meta["price_lower_bound"] == pytest.approx(25.0)
+    assert snapshot.meta["valuation_price_rejected"] == "public_float_lower_bound"
+    assert any("all exact valuation metrics are N/A" in item for item in snapshot.warnings)
+
+
+def test_historical_yahoo_price_is_quarantined_when_split_basis_is_unverified() -> None:
+    snapshot = SecuritySnapshot(
+        ticker="XYZ",
+        asof=date(2020, 7, 28),
+        price=20.0,
+    )
+    cli._apply_yahoo_basis_gate(
+        snapshot,
+        {
+            "status": "not_contradicted",
+            "public_to_total_share_ratio": 1.0,
+        },
+        historical_asof=True,
+        basis_reconciled=False,
+    )
+
+    assert snapshot.price is None
+    assert snapshot.meta["rejected_dense_price"] == pytest.approx(20.0)
+    assert snapshot.meta["valuation_price_rejected"] == "split_basis_unverified"
+    assert any("exact valuation metrics are N/A" in item for item in snapshot.warnings)
+
+
+def test_current_yahoo_price_is_quarantined_without_split_event_evidence() -> None:
+    snapshot = SecuritySnapshot(
+        ticker="XYZ",
+        asof=date(2026, 7, 28),
+        price=20.0,
+    )
+    cli._apply_yahoo_basis_gate(
+        snapshot,
+        {"status": "not_contradicted"},
+        historical_asof=False,
+        basis_reconciled=False,
+    )
+
+    assert snapshot.price is None
+    assert snapshot.meta["valuation_price_rejected"] == "split_basis_unverified"
+
+
+def test_current_yahoo_split_events_rebase_dated_dei_shares() -> None:
+    snapshot = SecuritySnapshot(
+        ticker="XYZ",
+        asof=date(2026, 7, 28),
+        price=20.0,
+        shares_outstanding=1e9,
+        meta={
+            "shares_date": pd.Timestamp("2025-01-15"),
+            "shares_history": pd.Series(
+                [1e9],
+                index=pd.to_datetime(["2025-01-15"]),
+            ),
+        },
+    )
+    frame = pd.DataFrame(
+        {"close": [18.0, 20.0]},
+        index=pd.to_datetime(["2024-12-31", "2026-07-28"]),
+    )
+    frame.attrs["split_events"] = [
+        {"date": "2025-06-01", "factor": 4.0, "ratio": "4:1"}
+    ]
+
+    reconciled = cli._reconcile_current_yahoo_share_basis(
+        snapshot,
+        frame,
+        historical_asof=False,
+    )
+
+    assert reconciled
+    assert snapshot.shares_outstanding == pytest.approx(4e9)
+    assert snapshot.meta["shares_split_rebased_factor"] == pytest.approx(4.0)
+    assert snapshot.meta["shares_history_price_basis"].iloc[0] == pytest.approx(4e9)
+    cli._apply_yahoo_basis_gate(
+        snapshot,
+        {"status": "not_contradicted"},
+        historical_asof=False,
+        basis_reconciled=True,
+    )
+    assert snapshot.price == pytest.approx(20.0)
+
+
 def test_parser_rejects_non_positive_top_and_accepts_explicit_price_provider() -> None:
     parser = cli.build_parser()
 
@@ -206,24 +306,23 @@ def test_backtest_cli_requires_and_reports_a_verifiable_input_contract(
     tmp_path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    rows = []
-    for month in (1, 2):
-        for index in range(10):
-            rows.append(
-                {
-                    "signal_date": f"2025-{month:02d}-25",
-                    "filed_through": f"2025-{month:02d}-25",
-                    "return_start": f"2025-{month:02d}-26",
-                    "return_end": f"2025-{month + 1:02d}-25",
-                    "ticker": f"T{index}",
-                    "cik": f"{index + 1:010d}",
-                    "score": index,
-                    "forward_return": index / 1_000,
-                    "universe_is_pit": True,
-                    "return_is_total": True,
-                    "delisting_return_included": True,
-                }
-            )
+    rows = [
+        {
+            "signal_date": f"2025-{month:02d}-25",
+            "filed_through": f"2025-{month:02d}-25",
+            "return_start": f"2025-{month:02d}-26",
+            "return_end": f"2025-{month + 1:02d}-25",
+            "ticker": f"T{index}",
+            "cik": f"{index + 1:010d}",
+            "score": index,
+            "forward_return": index / 1_000,
+            "universe_is_pit": True,
+            "return_is_total": True,
+            "delisting_return_included": True,
+        }
+        for month in (1, 2)
+        for index in range(10)
+    ]
     path = tmp_path / "panel.csv"
     pd.DataFrame(rows).to_csv(path, index=False)
     args = Namespace(

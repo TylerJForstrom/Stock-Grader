@@ -358,6 +358,13 @@ def build_research_report(
         "price_source": target.meta.get("price_source"),
         "price_date": target.meta.get("price_date"),
         "price_age_days": target.meta.get("price_age_days"),
+        "price_lower_bound": target.meta.get("price_lower_bound"),
+        "valuation_price_rejected": target.meta.get("valuation_price_rejected"),
+        "price_share_basis_check": _json_safe(target.meta.get("price_share_basis_check")),
+        "yahoo_share_basis_reconciliation": _json_safe(
+            target.meta.get("yahoo_share_basis_reconciliation")
+        ),
+        "price_rejections": _json_safe(target.meta.get("price_rejections", [])),
         "price_is_adjusted": bool(target.meta.get("price_is_adjusted", False)),
         "shares_source": target.meta.get("shares_source", "SEC cover page"),
         "shares_date": _json_safe(target.meta.get("shares_date")),
@@ -439,9 +446,11 @@ def research_to_markdown(report: ResearchReport) -> str:
     lines = [
         f"# {company['ticker']} — quantitative research dossier",
         "",
-        f"**{company.get('name') or company['ticker']}** · "
-        f"{company.get('industry') or company.get('business_model')} · "
-        f"as of {report.provenance.get('asof')}",
+        (
+            f"**{company.get('name') or company['ticker']}** · "
+            f"{company.get('industry') or company.get('business_model')} · "
+            f"as of {report.provenance.get('asof')}"
+        ),
         "",
         f"> {report.interpretation}. This is a research screen, not investment advice.",
         "",

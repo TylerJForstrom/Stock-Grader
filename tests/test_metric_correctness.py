@@ -8,17 +8,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from stock_grader.metrics.engine import evaluate_metrics, evaluate_one
 from stock_grader.metrics.fundamental import (
     altman_z,
     asset_turnover,
     book_value_cagr_5y,
+    graham_number_ratio,
     roa,
     roe,
     roic,
 )
 from stock_grader.metrics.models import altman_z_prime, beneish_m_score
 from stock_grader.metrics.sector_specific import ffo_to_assets, net_interest_income_to_assets
-from stock_grader.types import Fundamentals, SectorClass, SecuritySnapshot
+from stock_grader.registry import METRICS
+from stock_grader.types import Coverage, Fundamentals, SectorClass, SecuritySnapshot
 
 
 def _snapshot(
@@ -82,6 +85,35 @@ class TestBookValuePerShareGrowth:
             index=index,
         )
         assert book_value_cagr_5y.fn(_snapshot(annual)) is None
+
+
+def test_public_float_lower_bound_is_never_an_exact_valuation_input():
+    annual = pd.DataFrame(
+        {
+            "net_income": [100.0],
+            "equity": [1_000.0],
+        },
+        index=pd.to_datetime(["2025-12-31"]),
+    )
+    snapshot = _snapshot(annual)
+    snapshot.meta["price_source"] = "public_float_lower_bound"
+    snapshot.meta["price_lower_bound"] = 10.0
+    snapshot.meta["valuation_price_rejected"] = "public_float_lower_bound"
+
+    assert snapshot.valuation_price is None
+    assert snapshot.market_cap is None
+    assert graham_number_ratio.fn(snapshot) is None
+    result = evaluate_one(METRICS.get("pe_trailing"), snapshot)
+    assert result.coverage is Coverage.MISSING
+    assert "only a lower bound" in result.note
+    assert result.raw_inputs["price_lower_bound"] == pytest.approx(10.0)
+    valuation_names = [name for name, spec in METRICS.items() if spec.pillar == "valuation"]
+    valuation_results = evaluate_metrics(snapshot, names=valuation_names)
+    assert not any(item.coverage is Coverage.OK for item in valuation_results.values())
+    for item in valuation_results.values():
+        if item.coverage is Coverage.MISSING:
+            assert "only a lower bound" in item.note
+            assert item.raw_inputs["valuation_price_rejected"] == "public_float_lower_bound"
 
 
 class TestAverageBalanceReturns:

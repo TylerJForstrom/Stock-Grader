@@ -996,8 +996,10 @@ class SECProvider:
             if concept == "shares_outstanding":
                 snap.shares_outstanding = float(series.iloc[-1])
                 snap.meta["shares_date"] = series.index[-1]
+                snap.meta["shares_history"] = series
             elif concept == "public_float":
                 snap.public_float = float(series.iloc[-1])
+                snap.meta["public_float_date"] = series.index[-1]
                 # The full dated history, not just the latest value: pricing from public float
                 # needs a float and a market price measured on the *same* date to solve the
                 # affiliate share, and only the history offers a choice of dates to match against.

@@ -52,6 +52,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -62,6 +63,7 @@ __all__ = [
     "SECInsiderPriceProvider",
     "calibrate_non_affiliate_fraction",
     "calibrated_price_from_float",
+    "check_price_share_basis",
     "implied_price_from_float",
     "resolve_price",
 ]
@@ -415,6 +417,8 @@ class SECInsiderPriceProvider:
     def coverage(self, *, asof: date | None = None) -> int:
         """How many distinct tickers currently carry a price."""
         table = self.load(asof=asof)
+        if asof is not None and not table.empty:
+            table = table[table["date"] <= pd.Timestamp(asof)]
         return 0 if table.empty else int(table["ticker"].nunique())
 
 
@@ -450,6 +454,7 @@ def resolve_price(
                     "source": "sec_insider",
                     "date": when,
                     "non_affiliate_fraction": None,
+                    "valuation_eligible": True,
                 }
             )
 
@@ -464,6 +469,7 @@ def resolve_price(
                     "source": "public_float_calibrated",
                     "date": when,
                     "non_affiliate_fraction": fraction,
+                    "valuation_eligible": True,
                 }
             )
 
@@ -476,6 +482,7 @@ def resolve_price(
                     "source": "public_float_lower_bound",
                     "date": pd.Timestamp(float_history.index[-1]).date(),
                     "non_affiliate_fraction": None,
+                    "valuation_eligible": False,
                 }
             )
 
@@ -487,6 +494,84 @@ def resolve_price(
     if best["age_days"] > max_age_days:
         return None
     return best
+
+
+def check_price_share_basis(
+    price_history: pd.Series | None,
+    float_history: pd.Series | None,
+    shares_history: pd.Series | None,
+    *,
+    max_price_gap_days: int = 10,
+    max_share_gap_days: int = 200,
+    max_public_to_total_ratio: float = 1.25,
+) -> dict[str, Any] | None:
+    """Check whether split-adjusted prices and historical DEI shares use compatible units.
+
+    Yahoo rewrites old closes onto today's split basis, while point-in-time DEI cover-page share
+    counts remain on the historical basis.  On the public-float measurement date,
+    ``public_float / price`` is an implied *public* share count and therefore cannot materially
+    exceed total DEI shares.  A ratio above the conservative bound is a unit contradiction, so
+    callers should retain the series for return calculations but quarantine the scalar price from
+    market-cap and multiple calculations.
+
+    ``None`` means that no float observation had both a nearby prior trading bar and a nearby DEI
+    share observation, so the available data could not support the check.
+    """
+    if price_history is None or float_history is None or shares_history is None:
+        return None
+    if price_history.empty or float_history.empty or shares_history.empty:
+        return None
+
+    def clean(series: pd.Series) -> pd.Series:
+        values = pd.to_numeric(series, errors="coerce")
+        index = pd.to_datetime(values.index, errors="coerce", utc=True)
+        valid = np.asarray(index.notna(), dtype=bool)
+        values = values.loc[valid]
+        values.index = index[valid].tz_convert(None).normalize()
+        return values[~values.index.duplicated(keep="last")].dropna().sort_index()
+
+    prices = clean(price_history)
+    floats = clean(float_history)
+    shares = clean(shares_history)
+    if prices.empty or floats.empty or shares.empty:
+        return None
+
+    for float_timestamp in reversed(floats.index):
+        price_candidates = prices.loc[:float_timestamp]
+        if price_candidates.empty:
+            continue
+        price_timestamp = price_candidates.index[-1]
+        if int((float_timestamp - price_timestamp).days) > max_price_gap_days:
+            continue
+
+        share_offsets = np.abs((shares.index - float_timestamp).days)
+        share_position = int(np.argmin(share_offsets))
+        share_timestamp = shares.index[share_position]
+        if int(abs((share_timestamp - float_timestamp).days)) > max_share_gap_days:
+            continue
+
+        price = float(price_candidates.iloc[-1])
+        public_float = float(floats.loc[float_timestamp])
+        total_shares = float(shares.iloc[share_position])
+        if not all(
+            np.isfinite(value) and value > 0 for value in (price, public_float, total_shares)
+        ):
+            continue
+        implied_public_shares = public_float / price
+        ratio = implied_public_shares / total_shares
+        return {
+            # A low ratio does not prove compatibility: a large affiliate stake can mask a split
+            # factor exactly.  This check can prove a contradiction, never prove equivalence.
+            "status": "mismatch" if ratio > max_public_to_total_ratio else "not_contradicted",
+            "public_to_total_share_ratio": float(ratio),
+            "implied_public_shares": float(implied_public_shares),
+            "dei_total_shares": total_shares,
+            "price_date": price_timestamp.date().isoformat(),
+            "public_float_date": float_timestamp.date().isoformat(),
+            "shares_date": share_timestamp.date().isoformat(),
+            "max_public_to_total_ratio": float(max_public_to_total_ratio),
+        }
+    return None
 
 
 def implied_price_from_float(

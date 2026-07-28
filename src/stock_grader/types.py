@@ -333,6 +333,22 @@ class SecuritySnapshot:
         return self.prices is not None and not self.prices.empty
 
     @property
+    def valuation_price(self) -> float | None:
+        """Return a price that is safe to use as an exact valuation input.
+
+        A price inferred from unadjusted public float is only a lower bound because affiliate
+        holdings are excluded.  Basis contradictions are also quarantined.  The raw observation
+        remains available in metadata for audit, but it must not feed market cap or multiples.
+        """
+        if self.meta.get("price_source") == "public_float_lower_bound":
+            return None
+        if self.meta.get("valuation_price_rejected"):
+            return None
+        if self.price is None or self.price <= 0:
+            return None
+        return self.price
+
+    @property
     def market_cap(self) -> float | None:
         """Price times shares, or ``None`` if either is not a usable positive number.
 
@@ -341,11 +357,12 @@ class SecuritySnapshot:
         than its numerator, the result was a clean 0.0 — the best possible score — at full
         reported coverage.
         """
-        if self.price is None or self.shares_outstanding is None:
+        price = self.valuation_price
+        if price is None or self.shares_outstanding is None:
             return None
-        if self.price <= 0 or self.shares_outstanding <= 0:
+        if self.shares_outstanding <= 0:
             return None
-        return self.price * self.shares_outstanding
+        return price * self.shares_outstanding
 
     @property
     def synthetic_prices(self) -> bool:

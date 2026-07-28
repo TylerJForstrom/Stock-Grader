@@ -1038,6 +1038,13 @@ def grade_universe(
                 "price_source": snapshot.meta.get("price_source"),
                 "price_date": snapshot.meta.get("price_date"),
                 "price_age_days": snapshot.meta.get("price_age_days"),
+                "price_lower_bound": snapshot.meta.get("price_lower_bound"),
+                "valuation_price_rejected": snapshot.meta.get("valuation_price_rejected"),
+                "price_share_basis_check": snapshot.meta.get("price_share_basis_check"),
+                "yahoo_share_basis_reconciliation": snapshot.meta.get(
+                    "yahoo_share_basis_reconciliation"
+                ),
+                "price_rejections": snapshot.meta.get("price_rejections", []),
                 "price_is_adjusted": bool(snapshot.meta.get("price_is_adjusted", False)),
                 "shares_source": snapshot.meta.get("shares_source", "SEC cover page"),
                 "shares_date": snapshot.meta.get("shares_date"),

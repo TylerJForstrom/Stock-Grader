@@ -51,6 +51,29 @@ def evaluate_one(spec: MetricSpec, snapshot: SecuritySnapshot) -> MetricResult:
         result.note = f"not defined for {snapshot.sector.value}"
         return result
 
+    valuation_rejection = snapshot.meta.get("valuation_price_rejected")
+    if spec.pillar == "valuation" and valuation_rejection:
+        result.coverage = Coverage.MISSING
+        result.note = {
+            "public_float_lower_bound": (
+                "exact valuation unavailable: SEC public-float price is only a lower bound"
+            ),
+            "split_basis_mismatch": (
+                "exact valuation unavailable: price and share count use incompatible split bases"
+            ),
+            "split_basis_unverified": (
+                "exact valuation unavailable: historical price/share split basis is unverified"
+            ),
+        }.get(str(valuation_rejection), f"valuation price rejected: {valuation_rejection}")
+        result.raw_inputs = {
+            "valuation_price_rejected": valuation_rejection,
+            "price_source": snapshot.meta.get("price_source"),
+            "price_lower_bound": snapshot.meta.get("price_lower_bound"),
+            "rejected_dense_price": snapshot.meta.get("rejected_dense_price"),
+            "price_share_basis_check": snapshot.meta.get("price_share_basis_check"),
+        }
+        return result
+
     if spec.needs_prices and not snapshot.has_prices:
         result.coverage = Coverage.MISSING
         result.note = "no price history available"

@@ -9,7 +9,6 @@ from stock_grader.valuation import (
     equity_cash_flow_value,
     implied_growth_rate,
 )
-
 from test_pipeline import _universe
 
 
@@ -81,3 +80,18 @@ def test_snapshot_valuation_exposes_every_assumption():
     assert [item.scenario.name for item in analysis.scenarios] == ["bear", "base", "bull"]
     assert analysis.assumptions["growth_rates"] == [-0.05, 0.03, 0.08]
     assert analysis.assumptions["interpretation"] == "illustrative_scenarios_not_analyst_forecasts"
+
+
+def test_public_float_lower_bound_is_omitted_from_dcf_comparisons():
+    snapshot = _universe(1)[0]
+    snapshot.price = None
+    snapshot.meta["price_source"] = "public_float_lower_bound"
+    snapshot.meta["price_lower_bound"] = 2.0
+    snapshot.meta["valuation_price_rejected"] = "public_float_lower_bound"
+
+    analysis = build_valuation_analysis(snapshot)
+
+    assert analysis.available
+    assert analysis.current_price is None
+    assert analysis.assumptions["comparison_price_status"] == "lower_bound_omitted"
+    assert any("public-float lower bound" in warning for warning in analysis.warnings)

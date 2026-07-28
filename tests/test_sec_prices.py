@@ -24,6 +24,7 @@ from stock_grader.data.sec_prices import (
     _quarter_bounds,
     calibrate_non_affiliate_fraction,
     calibrated_price_from_float,
+    check_price_share_basis,
     implied_price_from_float,
     resolve_price,
 )
@@ -193,12 +194,48 @@ class TestResolvePrice:
         )
         assert found is not None
         assert found["source"] == "public_float_lower_bound"
+        assert found["valuation_eligible"] is False
 
     def test_returns_none_with_nothing_available(self):
         assert resolve_price(
             "X", asof=date(2026, 7, 24), insider=_FakeInsider(None), public_float=None,
             float_history=None, shares_outstanding=1e9,
         ) is None
+
+
+class TestPriceShareBasis:
+    def test_detects_split_basis_contradiction(self):
+        prices = pd.Series({pd.Timestamp("2020-06-30"): 20.0})
+        floats = pd.Series({pd.Timestamp("2020-06-30"): 80e9})
+        shares = pd.Series({pd.Timestamp("2020-07-15"): 1e9})
+
+        result = check_price_share_basis(prices, floats, shares)
+
+        assert result is not None
+        assert result["status"] == "mismatch"
+        assert result["public_to_total_share_ratio"] == pytest.approx(4.0)
+
+    def test_accepts_compatible_price_and_share_units(self):
+        prices = pd.Series({pd.Timestamp("2020-06-30"): 100.0})
+        floats = pd.Series({pd.Timestamp("2020-06-30"): 80e9})
+        shares = pd.Series({pd.Timestamp("2020-07-15"): 1e9})
+
+        result = check_price_share_basis(prices, floats, shares)
+
+        assert result is not None
+        assert result["status"] == "not_contradicted"
+        assert result["public_to_total_share_ratio"] == pytest.approx(0.8)
+
+    def test_low_public_float_cannot_prove_split_basis_compatibility(self):
+        prices = pd.Series({pd.Timestamp("2020-06-30"): 20.0})
+        floats = pd.Series({pd.Timestamp("2020-06-30"): 20e9})
+        shares = pd.Series({pd.Timestamp("2020-07-15"): 1e9})
+
+        result = check_price_share_basis(prices, floats, shares)
+
+        assert result is not None
+        assert result["status"] == "not_contradicted"
+        assert result["public_to_total_share_ratio"] == pytest.approx(1.0)
 
 
 class TestBenchmark:

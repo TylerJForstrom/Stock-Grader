@@ -54,6 +54,7 @@ __all__ = [
 ]
 
 OHLCV_COLUMNS = ["open", "high", "low", "close", "adj_close", "volume"]
+_YAHOO_MAX_DAILY_LOOKBACK_DAYS = 3653
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -406,11 +407,12 @@ class PriceProvider:
             return None
         if self.last_diagnostics.stale:
             log.warning(
-                "%s price data for %s is stale (%s)",
+                "%s price data for %s is stale (%s); refusing the frame",
                 self.name,
                 ticker,
                 self.last_diagnostics.last_observation,
             )
+            return None
         return df if not df.empty and self.last_diagnostics.usable_price_rows > 0 else None
 
     def _fetch(self, ticker: str, *, start: date | None, end: date | None) -> pd.DataFrame | None:
@@ -489,6 +491,14 @@ class YahooPriceProvider(PriceProvider):
         if start is not None or end is not None:
             request_end = end or date.today()
             request_start = start or (request_end - timedelta(days=3653))
+            if (request_end - request_start).days > _YAHOO_MAX_DAILY_LOOKBACK_DAYS:
+                log.warning(
+                    "yahoo daily history beyond 10 years is unreliable; refusing %s..%s for %s",
+                    request_start,
+                    request_end,
+                    ticker,
+                )
+                return None
             params = {
                 "interval": "1d",
                 "period1": _utc_epoch(request_start),
@@ -551,6 +561,38 @@ class YahooPriceProvider(PriceProvider):
         if adjusted is not None:
             columns["adj_close"] = adjusted
         frame = pd.DataFrame(columns, index=pd.to_datetime(stamps, unit="s").normalize())
+        split_events: list[dict[str, object]] = []
+        raw_splits = (result.get("events") or {}).get("splits") or {}
+        if isinstance(raw_splits, dict):
+            for raw in raw_splits.values():
+                if not isinstance(raw, dict):
+                    continue
+                raw_date = raw.get("date")
+                raw_numerator = raw.get("numerator")
+                raw_denominator = raw.get("denominator")
+                if raw_date is None or raw_numerator is None or raw_denominator is None:
+                    continue
+                try:
+                    split_date = pd.to_datetime(raw_date, unit="s", utc=True, errors="raise").date()
+                    numerator = float(raw_numerator)
+                    denominator = float(raw_denominator)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if (
+                    not np.isfinite(numerator)
+                    or not np.isfinite(denominator)
+                    or numerator <= 0
+                    or denominator <= 0
+                ):
+                    continue
+                split_events.append(
+                    {
+                        "date": split_date.isoformat(),
+                        "factor": numerator / denominator,
+                        "ratio": raw.get("splitRatio"),
+                    }
+                )
+        frame.attrs["split_events"] = sorted(split_events, key=lambda item: str(item["date"]))
         return frame.dropna(how="all")
 
 
@@ -709,6 +751,7 @@ class ChainedPriceProvider(PriceProvider):
         self.providers = providers
         self.last_source: str | None = None
         self.last_diagnostics: PriceQualityDiagnostics | None = None
+        self.last_rejections: list[dict[str, object]] = []
 
     def get(
         self,
@@ -717,14 +760,24 @@ class ChainedPriceProvider(PriceProvider):
         start: date | None = None,
         end: date | None = None,
     ) -> pd.DataFrame | None:
+        self.last_rejections = []
+        last_diagnostics: PriceQualityDiagnostics | None = None
         for provider in self.providers:
             frame = provider.get(ticker, start=start, end=end)
             if frame is not None and not frame.empty:
                 self.last_source = provider.name
                 self.last_diagnostics = provider.last_diagnostics
                 return frame
+            if provider.last_diagnostics is not None:
+                last_diagnostics = provider.last_diagnostics
+                self.last_rejections.append(
+                    {
+                        "provider": provider.name,
+                        "price_quality": provider.last_diagnostics.as_dict(),
+                    }
+                )
         self.last_source = None
-        self.last_diagnostics = None
+        self.last_diagnostics = last_diagnostics
         log.warning(
             "no price provider could supply %s (tried: %s)",
             ticker,

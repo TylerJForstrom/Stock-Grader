@@ -36,7 +36,7 @@ from .data.prices import (
     YahooPriceProvider,
 )
 from .data.sec import SECClient, SECProvider
-from .data.sec_prices import SECInsiderPriceProvider, resolve_price
+from .data.sec_prices import SECInsiderPriceProvider, check_price_share_basis, resolve_price
 from .data.stockanalysis import StockAnalysisPriceProvider
 from .data.synthetic import generate_prices
 from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
@@ -187,6 +187,148 @@ def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
     return providers
 
 
+def _apply_resolved_price(snapshot: SecuritySnapshot, found: dict) -> None:
+    """Attach a sparse-price result without promoting a lower bound to an exact price."""
+    snapshot.meta["price_source"] = found["source"]
+    snapshot.meta["price_date"] = found["date"].isoformat()
+    snapshot.meta["price_age_days"] = found["age_days"]
+    if found.get("valuation_eligible", True):
+        snapshot.price = found["price"]
+        snapshot.meta.pop("valuation_price_rejected", None)
+    else:
+        snapshot.price = None
+        snapshot.meta["price_lower_bound"] = found["price"]
+        snapshot.meta["valuation_price_rejected"] = "public_float_lower_bound"
+    fraction = found.get("non_affiliate_fraction")
+    if fraction is not None:
+        snapshot.meta["non_affiliate_fraction"] = round(fraction, 4)
+    if found["age_days"] > 60:
+        snapshot.warnings.append(
+            f"price is {found['age_days']} days old ({found['source']}, "
+            f"{found['date']}); valuation metrics are stale by that much"
+        )
+    if found["source"] == "public_float_lower_bound":
+        snapshot.warnings.append(
+            "SEC public float implies only a LOWER-BOUND price because affiliate holdings are "
+            "excluded; the bound is evidence only and all exact valuation metrics are N/A"
+        )
+
+
+def _apply_yahoo_basis_gate(
+    snapshot: SecuritySnapshot,
+    basis_check: dict | None,
+    *,
+    historical_asof: bool,
+    basis_reconciled: bool,
+) -> None:
+    """Quarantine a Yahoo scalar unless its split basis is safe for the requested date.
+
+    The public-float check can prove a contradiction but cannot prove compatibility because a
+    large affiliate stake can mask a split factor.  Yahoo historical closes are on today's split
+    basis, so a historical scalar remains unverified even when no contradiction is visible.
+    """
+    if basis_check is not None:
+        snapshot.meta["price_share_basis_check"] = basis_check
+    mismatch = basis_check is not None and basis_check["status"] == "mismatch"
+    if not mismatch and not historical_asof and basis_reconciled:
+        return
+    rejected_price = snapshot.price
+    snapshot.price = None
+    reason = "split_basis_mismatch" if mismatch else "split_basis_unverified"
+    snapshot.meta["valuation_price_rejected"] = reason
+    snapshot.meta["rejected_dense_price"] = rejected_price
+    if mismatch:
+        snapshot.warnings.append(
+            "Yahoo price and historical DEI shares are on incompatible split bases; daily "
+            "history is retained for return metrics, but valuation metrics are unavailable"
+        )
+    elif historical_asof:
+        snapshot.warnings.append(
+            "Yahoo historical closes use today's split basis and the point-in-time DEI share "
+            "basis could not be affirmatively reconciled; daily history is retained for return "
+            "metrics, but exact valuation metrics are N/A"
+        )
+    else:
+        snapshot.warnings.append(
+            "Yahoo's current price could not be reconciled to the dated DEI share basis with "
+            "explicit split events; daily history is retained for return metrics, but exact "
+            "valuation metrics are N/A"
+        )
+
+
+def _reconcile_current_yahoo_share_basis(
+    snapshot: SecuritySnapshot,
+    frame: pd.DataFrame,
+    *,
+    historical_asof: bool,
+) -> bool:
+    """Rebase current-run DEI shares with Yahoo's explicit intervening split events."""
+    if historical_asof:
+        return False
+    raw_events = frame.attrs.get("split_events")
+    shares_date = snapshot.meta.get("shares_date")
+    shares = snapshot.shares_outstanding
+    if not isinstance(raw_events, list) or shares_date is None or shares is None or shares <= 0:
+        return False
+    try:
+        observed = pd.Timestamp(shares_date).normalize()
+        first_bar = pd.Timestamp(frame.index.min()).normalize()
+    except (TypeError, ValueError):
+        return False
+    if first_bar > observed:
+        return False
+
+    events: list[tuple[pd.Timestamp, float]] = []
+    for raw in raw_events:
+        if not isinstance(raw, dict):
+            return False
+        try:
+            event_date = pd.Timestamp(raw["date"]).normalize()
+            factor = float(raw["factor"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not math.isfinite(factor) or factor <= 0:
+            return False
+        events.append((event_date, factor))
+
+    factor_since_observation = math.prod(
+        factor for event_date, factor in events if event_date > observed
+    )
+    if not math.isfinite(factor_since_observation) or not 0.001 <= factor_since_observation <= 1_000:
+        return False
+    if factor_since_observation != 1.0:
+        snapshot.shares_outstanding = float(shares * factor_since_observation)
+        snapshot.meta["shares_split_rebased_factor"] = factor_since_observation
+        snapshot.warnings.append(
+            "DEI shares were rebased onto Yahoo's current split basis using explicit split events"
+        )
+
+    history = snapshot.meta.get("shares_history")
+    if isinstance(history, pd.Series) and not history.empty:
+        adjusted = history.copy().astype("float64")
+        for history_date in adjusted.index:
+            timestamp = pd.Timestamp(history_date).normalize()
+            factor = math.prod(
+                event_factor
+                for event_date, event_factor in events
+                if event_date > timestamp
+            )
+            adjusted.loc[history_date] = float(adjusted.loc[history_date]) * factor
+        snapshot.meta["shares_history_price_basis"] = adjusted
+
+    snapshot.meta["yahoo_share_basis_reconciliation"] = {
+        "status": "reconciled",
+        "shares_observation_date": observed.date().isoformat(),
+        "cumulative_split_factor": factor_since_observation,
+        "split_events_considered": [
+            {"date": event_date.date().isoformat(), "factor": factor}
+            for event_date, factor in events
+            if event_date > observed
+        ],
+    }
+    return True
+
+
 def _build_snapshots(
     tickers: list[str],
     args: argparse.Namespace,
@@ -194,6 +336,8 @@ def _build_snapshots(
     provider: SECProvider,
 ) -> list[SecuritySnapshot]:
     """Fetch fundamentals for each ticker and attach prices where available."""
+    asof = date.fromisoformat(args.asof) if args.asof else date.today()
+    pit_mode = PitMode.PIT if args.pit else PitMode.LATEST
     price_providers = _price_providers_from_args(args)
     prices = ChainedPriceProvider(price_providers) if price_providers else None
 
@@ -215,8 +359,10 @@ def _build_snapshots(
     if args.sec_prices and not args.no_network:
         insider = SECInsiderPriceProvider(cache_dir=args.cache_dir, contact=args.contact)
         with console.status("[dim]loading SEC insider-transaction prices…[/dim]"):
-            insider.load(asof=date.fromisoformat(args.asof) if args.asof else None)
-        status_console.print(f"[dim]SEC insider prices: {insider.coverage()} tickers[/dim]")
+            insider.load(asof=asof)
+        status_console.print(
+            f"[dim]SEC insider prices: {insider.coverage(asof=asof)} tickers[/dim]"
+        )
 
     manual_prices = {}
     for entry in args.price or []:
@@ -225,9 +371,6 @@ def _build_snapshots(
             manual_prices[ticker.strip().upper()] = float(value)
         elif len(tickers) == 1:
             manual_prices[tickers[0]] = float(entry)
-
-    asof = date.fromisoformat(args.asof) if args.asof else date.today()
-    pit_mode = PitMode.PIT if args.pit else PitMode.LATEST
 
     snapshots: list[SecuritySnapshot] = []
     status = status_console.status("[dim]loading securities…[/dim]") if len(tickers) > 1 else None
@@ -273,6 +416,40 @@ def _build_snapshots(
                         "no raw close available; market cap uses the adjusted close and is "
                         "understated by cumulative dividends"
                     )
+                if prices.last_source == "yahoo":
+                    historical_asof = asof != date.today()
+                    basis_reconciled = _reconcile_current_yahoo_share_basis(
+                        snapshot,
+                        frame,
+                        historical_asof=historical_asof,
+                    )
+                    basis_check = check_price_share_basis(
+                        frame[column],
+                        snapshot.meta.get("public_float_history"),
+                        snapshot.meta.get(
+                            "shares_history_price_basis",
+                            snapshot.meta.get("shares_history"),
+                        ),
+                    )
+                    _apply_yahoo_basis_gate(
+                        snapshot,
+                        basis_check,
+                        historical_asof=historical_asof,
+                        basis_reconciled=basis_reconciled,
+                    )
+            elif prices.last_rejections:
+                snapshot.meta["price_rejections"] = prices.last_rejections
+                stale_sources: list[str] = []
+                for rejection in prices.last_rejections:
+                    quality = rejection.get("price_quality")
+                    if isinstance(quality, dict) and quality.get("stale"):
+                        stale_sources.append(str(rejection.get("provider")))
+                if stale_sources:
+                    snapshot.warnings.append(
+                        "stale dense price history refused from "
+                        + ", ".join(stale_sources)
+                        + "; no stale close was used as the current valuation price"
+                    )
         if args.synthetic_prices and snapshot.prices is None:
             snapshot.prices = generate_prices(
                 ticker, n_days=1300, end=pd.Timestamp(asof), synthetic=True
@@ -291,26 +468,11 @@ def _build_snapshots(
                 max_age_days=args.max_price_age,
             )
             if found is not None:
-                snapshot.price = found["price"]
-                snapshot.meta["price_source"] = found["source"]
-                snapshot.meta["price_date"] = found["date"].isoformat()
-                snapshot.meta["price_age_days"] = found["age_days"]
-                fraction = found.get("non_affiliate_fraction")
-                if fraction is not None:
-                    snapshot.meta["non_affiliate_fraction"] = round(fraction, 4)
-                if found["age_days"] > 60:
-                    snapshot.warnings.append(
-                        f"price is {found['age_days']} days old ({found['source']}, "
-                        f"{found['date']}); valuation metrics are stale by that much"
-                    )
-                if found["source"] == "public_float_lower_bound":
-                    snapshot.warnings.append(
-                        "price implied from SEC public float with no affiliate correction — a "
-                        "LOWER bound, so valuation may make this look cheaper than it is"
-                    )
+                _apply_resolved_price(snapshot, found)
         if ticker in manual_prices:
             snapshot.price = manual_prices[ticker]
             snapshot.meta["price_source"] = "manual"
+            snapshot.meta.pop("valuation_price_rejected", None)
         snapshot.risk_free = risk_free
         if benchmark is not None:
             snapshot.benchmark = benchmark

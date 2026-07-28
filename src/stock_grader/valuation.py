@@ -274,6 +274,23 @@ def _comparison_price(
 ) -> tuple[float | None, str, str | None]:
     """Return only a point price suitable for upside and reverse-DCF comparisons."""
 
+    source = snapshot.meta.get("price_source")
+    rejection = snapshot.meta.get("valuation_price_rejected")
+    if source == "public_float_lower_bound" or rejection == "public_float_lower_bound":
+        return (
+            None,
+            "lower_bound_omitted",
+            "price is only a public-float lower bound; reverse DCF and upside are omitted",
+        )
+    if rejection in {"split_basis_mismatch", "split_basis_unverified"}:
+        return (
+            None,
+            str(rejection),
+            (
+                "historical price/share split basis is not valuation-safe; reverse DCF and upside "
+                "are omitted"
+            ),
+        )
     if snapshot.price is None:
         return None, "unavailable", "current price unavailable; reverse DCF and upside are omitted"
     try:
@@ -285,13 +302,6 @@ def _comparison_price(
             "current price is not positive and finite; reverse DCF and upside are omitted",
         )
 
-    source = snapshot.meta.get("price_source")
-    if source == "public_float_lower_bound":
-        return (
-            None,
-            "lower_bound_omitted",
-            "price is only a public-float lower bound; reverse DCF and upside are omitted",
-        )
     if snapshot.meta.get("price_is_adjusted", False):
         return (
             None,

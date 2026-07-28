@@ -14,6 +14,7 @@ from stock_grader import weighting
 from stock_grader.data.prices import (
     AdjustedPriceStatus,
     BenchmarkProvider,
+    ChainedPriceProvider,
     CSVPriceProvider,
     RiskFreeProvider,
     StooqPriceProvider,
@@ -83,6 +84,31 @@ class TestDensePriceValidation:
         frame, diagnostics = validate_price_frame(raw, asof=date(2026, 1, 2))
         assert diagnostics.future_date_rows == 1
         assert frame["close"].tolist() == [100.0]
+
+    def test_provider_refuses_a_stale_dense_frame(self, tmp_path):
+        (tmp_path / "DELISTED.csv").write_text(
+            "date,close\n2020-01-02,10.0\n",
+            encoding="utf-8",
+        )
+        provider = CSVPriceProvider(tmp_path)
+
+        assert provider.get("DELISTED", end=date(2026, 1, 2)) is None
+        assert provider.last_diagnostics is not None
+        assert provider.last_diagnostics.stale
+
+    def test_chain_preserves_stale_rejection_diagnostics(self, tmp_path):
+        (tmp_path / "DELISTED.csv").write_text(
+            "date,close\n2020-01-02,10.0\n",
+            encoding="utf-8",
+        )
+        chain = ChainedPriceProvider([CSVPriceProvider(tmp_path)])
+
+        assert chain.get("DELISTED", end=date(2026, 1, 2)) is None
+        assert chain.last_diagnostics is not None
+        assert chain.last_rejections[0]["provider"] == "csv"
+        quality = chain.last_rejections[0]["price_quality"]
+        assert isinstance(quality, dict)
+        assert quality["stale"] is True
 
 
 class TestPathAndCacheSafety:
@@ -156,6 +182,72 @@ class TestNetworkRequestHardening:
         assert captured["period1"] == _utc_epoch(requested_end - timedelta(days=3653))
         assert captured["period2"] == _utc_epoch(requested_end + timedelta(days=1))
         assert "range" not in captured
+        assert captured["events"] == "div,split"
+
+    def test_yahoo_refuses_unreliable_daily_ranges_beyond_ten_years(self):
+        provider = YahooPriceProvider()
+        provider._session.get = lambda *args, **kwargs: pytest.fail(  # type: ignore[method-assign]
+            "an unsupported range must be refused before a network request"
+        )
+
+        assert (
+            provider._fetch(
+                "AAPL",
+                start=date(2000, 1, 1),
+                end=date(2026, 1, 1),
+            )
+            is None
+        )
+
+    def test_yahoo_preserves_explicit_split_events_for_share_basis_reconciliation(self):
+        provider = YahooPriceProvider()
+        stamp = _utc_epoch(date(2026, 1, 2))
+
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "chart": {
+                        "result": [
+                            {
+                                "timestamp": [stamp],
+                                "indicators": {
+                                    "quote": [
+                                        {
+                                            "open": [100.0],
+                                            "high": [101.0],
+                                            "low": [99.0],
+                                            "close": [100.0],
+                                            "volume": [1_000.0],
+                                        }
+                                    ],
+                                    "adjclose": [{"adjclose": [100.0]}],
+                                },
+                                "events": {
+                                    "splits": {
+                                        str(stamp): {
+                                            "date": stamp,
+                                            "numerator": 4.0,
+                                            "denominator": 1.0,
+                                            "splitRatio": "4:1",
+                                        }
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                }
+
+        provider._session.get = lambda *args, **kwargs: Response()  # type: ignore[method-assign]
+
+        frame = provider._fetch("AAPL", start=None, end=None)
+
+        assert frame is not None
+        assert frame.attrs["split_events"] == [
+            {"date": "2026-01-02", "factor": 4.0, "ratio": "4:1"}
+        ]
 
     def test_yahoo_circuit_breaker_stops_repeated_rate_limit_calls(self):
         provider = YahooPriceProvider(failure_threshold=2, cooldown_seconds=3600)
@@ -237,6 +329,19 @@ class TestSECInsiderCacheScoping:
 
         provider.load(asof=date(2026, 2, 20), refresh=True)
         assert loaded[-1] == "2025q4"
+
+    def test_historical_coverage_excludes_rows_after_asof(self, tmp_path, monkeypatch):
+        provider = SECInsiderPriceProvider(cache_dir=tmp_path, quarters=1)
+        table = pd.DataFrame(
+            {
+                "ticker": ["KNOWN", "FUTURE"],
+                "date": pd.to_datetime(["2025-12-15", "2026-01-15"]),
+                "price": [100.0, 200.0],
+            }
+        )
+        monkeypatch.setattr(provider, "load", lambda *, asof=None, refresh=False: table)
+
+        assert provider.coverage(asof=date(2025, 12, 31)) == 1
 
     def test_invalid_quarter_cannot_escape_cache(self, tmp_path, monkeypatch):
         provider = SECInsiderPriceProvider(cache_dir=tmp_path)

@@ -11,7 +11,6 @@ from stock_grader.research import (
     research_to_json,
     research_to_markdown,
 )
-
 from test_pipeline import _universe
 
 
@@ -23,6 +22,8 @@ def test_research_bundle_contains_grade_peers_raw_evidence_and_provenance():
     target.sic = "3571"
     target.industry = "Electronic Computers"
     target.meta["price_source"] = "fixture"
+    target.meta["price_lower_bound"] = 8.5
+    target.meta["price_share_basis_check"] = {"status": "not_contradicted"}
     for candidate in snapshots[1:]:
         candidate.sic = "3572"
 
@@ -34,6 +35,8 @@ def test_research_bundle_contains_grade_peers_raw_evidence_and_provenance():
     assert encoded["company"]["cik"] == "0000000001"
     assert encoded["peer_selection"]["members"] == selection.members
     assert encoded["provenance"]["price_source"] == "fixture"
+    assert encoded["provenance"]["price_lower_bound"] == 8.5
+    assert encoded["provenance"]["price_share_basis_check"]["status"] == "not_contradicted"
     assert encoded["metrics"]
     assert {"raw_value", "normalized_score", "metric_weight", "contribution"} <= set(
         encoded["metrics"][0]

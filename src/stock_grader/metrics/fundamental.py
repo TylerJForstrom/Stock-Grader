@@ -15,7 +15,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..registry import metric
-from ..types import SecuritySnapshot, SectorClass
+from ..types import SectorClass, SecuritySnapshot
 from .util import cagr, consistency, linear_trend, r_squared_loglinear, safe_div
 
 # Multiples above these are arithmetically true but analytically meaningless; clamping stops a
@@ -338,7 +338,8 @@ def graham_number_ratio(s: SecuritySnapshot) -> float | None:
     across securities rather than being a dollar figure.
     """
     f = _f(s)
-    if f is None or s.price is None or s.shares_outstanding in (None, 0):
+    price = s.valuation_price
+    if f is None or price is None or s.shares_outstanding in (None, 0):
         return None
     eps = _ttm(s, "net_income")
     equity = _latest(s, "equity")
@@ -347,7 +348,7 @@ def graham_number_ratio(s: SecuritySnapshot) -> float | None:
     eps_ps = eps / s.shares_outstanding
     bvps = equity / s.shares_outstanding
     fair = (22.5 * eps_ps * bvps) ** 0.5
-    return safe_div(fair, s.price, positive_denominator=True)
+    return safe_div(fair, price, positive_denominator=True)
 
 
 # ---------------------------------------------------------------------------------------------
