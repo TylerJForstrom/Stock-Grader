@@ -1,52 +1,74 @@
 # Changelog
 
-All notable changes to this project are documented here.
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
 ### Added
-- Bank-native metrics (efficiency ratio, net interest income to assets, fee income share,
-  deposits/assets, loans/deposits, allowance coverage, provision burden, tangible common equity)
-  and REIT FFO reconstruction with `price_to_ffo`. Banks previously got 36 of 65 price-free
-  metrics with the efficiency pillar entirely empty.
-- Daily adjusted OHLCV via `--stockanalysis`, bringing coverage to 100% and enabling all 40
-  risk, momentum and liquidity metrics. Opt-in; see the module docstring for the caveat.
-- Share prices derived from SEC filings — insider transaction prices (~4,000 tickers) with
-  public-float fallback calibrated for affiliate holdings.
-- FRED benchmark provider, so `beta`, `capm_alpha` and `idiosyncratic_volatility` can fire at all.
-- `scripts/validate_distress.py` — measures AUC against real SEC outcome labels (going-concern
-  opinions, bankruptcies, restatements) without needing any price data.
-- `scripts/calibrate_intervals.py` — measures whether the reported 90% interval covers 90%.
-- `fetch_by_cik` for historical work; the ticker map is survivor-filtered and reuses tickers.
-- Letter-grade probability distribution alongside the point grade.
-- Effective pillar weights and lost weight, distinct from the profile's nominal weights.
-- `py.typed`, CI across Python 3.11-3.13, ruff and mypy configuration.
+
+- `stock_grader.peers`: deterministic comparable-company selection with same-business-model,
+  SIC, reporting-currency, and market-cap rules plus a fingerprinted selection manifest.
+- `stock_grader.research` and `stock-grader research`: a versioned analyst evidence bundle
+  containing the grade, explicit or automatically selected peers, raw and normalized metric
+  evidence, peer distributions, fiscal trends, provenance, valuation scenarios, and warnings.
+- `stock_grader.valuation`: transparent bear/base/bull and reverse-DCF APIs based on an explicitly
+  labelled levered cash-flow proxy. The API refuses business models for which that proxy is
+  inappropriate.
+- `stock_grader.backtest` and `stock-grader backtest`: validation of point-in-time panel
+  contracts, cross-sectional rank IC, equal-weight quantile spreads, turnover and fixed transaction
+  costs, moving-block intervals, drawdown, and purged chronological split helpers. The CLI
+  requires filing-cutoff, PIT-universe, total-return, delisting, and permanent-identifier evidence
+  unless an exploratory override is explicit.
+- Explicit `--price-provider auto|csv|tiingo|stockanalysis|yahoo|sec|none` selection. The existing
+  Tiingo provider is now reachable from the CLI when `TIINGO_API_KEY` is configured.
+- JSON and Markdown support for rankings and profile consensus, with `--top` applied consistently
+  across ranking formats.
+- Machine-readable `sensitivity_interval`, letter scenario frequencies, effective pillar
+  weights, lost weight, gates, and consensus inclusion details.
+- Price-frame validation and diagnostics for adjusted-price status, invalid observations,
+  duplicate dates, stale or sparse histories, and OHLC consistency.
+- Bank-oriented metrics, REIT FFO reconstruction, SEC-derived scalar price support, FRED
+  benchmark/risk-free inputs, CIK-based historical fetching, and point-in-time filing selection.
+
+### Changed
+
+- Named profiles default to a peer-relative cross-sectional curve.
+- Reports call the 5th–95th model-perturbation range a **model-sensitivity interval**, not a
+  statistical confidence interval. The compatibility field `ci` remains in serialized reports.
+- Documentation now treats every peer-normalized composite—including both components of the
+  optional hybrid curve—as universe-dependent.
+- Supervised weighting is rejected in the same cross-section by default; historical callers must
+  fit only on information available before the test period.
+- Consensus excludes `N/A` profile reports and preserves the grading curve used by its included
+  reports.
+- Metric contribution reporting uses effective rather than merely nominal weights when data gaps
+  remove pillars.
 
 ### Fixed
-Each of these produced a confidently wrong number rather than an error.
-- Stale tag selection: Lowe's read as 92% debt-free from a tag abandoned in 2009
-  (debt/assets 0.08 against a true 0.72). 85 substitutions across 40 companies.
-- The annual frame was the quarterly frame, so five-year CAGRs were computed over 1.25 years.
-- Foreign currencies were read as USD — Toyota's JPY revenue came out ~150x too large.
-- Bank revenue resolved to three incompatible bases at once (fee income, gross, net of interest).
-- Hurst estimator bias: a true random walk returned 0.5996, putting 52% of ordinary stocks
-  outside the metric's own random-walk band.
-- Cornish-Fisher VaR inverted above its valid domain, scoring the fattest-tailed stock as safest.
-- Altman Z'' rated Bed Bath & Beyond "safe" ten months before Chapter 11.
-- Beneish's largest term and Piotroski's rescaling both fabricated components.
-- A missing risk-free rate silently became 0%, a vol-dependent and therefore rank-changing bias.
-- The reported "90% confidence interval" covered 0.70 falling to 0.40; now 1.00 to 0.86.
-- Stock splits were not handled, so share series jumped 9.9x (NVDA), 20.2x (AMZN), 3.8x (AAPL).
-- McDonald's tags diluted shares in millions; nothing cross-checked the scale.
-- Derived quarters were ungated, letting a restatement-vintage mismatch produce negative capex.
-- Market cap used the adjusted close, deflating every historical multiple by dividend yield.
-- `--asof` was accepted and ignored under the default point-in-time mode.
-- `momentum_1m` scored higher-is-better while `momentum_12_1` skips that month because it reverses.
-- `accruals_ratio` scored AUC 0.29 against going-concern companies — it rewarded distress.
-- Metrics computed but weighted at zero: risk, momentum and liquidity in every profile.
+
+- Historical `--asof` requests can no longer silently use later restatements under the default
+  latest-vintage mode.
+- Duration-fact normalization distinguishes discrete quarters, year-to-date facts, and fiscal
+  years; averaged share counts are not treated as additive flows.
+- Foreign-currency facts are not silently interpreted as USD.
+- Abandoned tags, split-scaled share counts, mixed restatement vintages, invalid valuation
+  denominators, and adjusted-vs-traded price use now have explicit guards.
+- Missing benchmark or risk-free data no longer silently becomes a zero-rate assumption.
+- Metrics that are undefined for a business model are distinguished from genuinely missing data.
+
+### Validation status
+
+- `scripts/calibrate_intervals.py` is an internal missing-data/self-consistency stress test. Its
+  output does not establish statistical coverage for an unknown true grade or for future returns.
+- `scripts/validate_distress.py` measures contemporaneous separation between an EDGAR text-labelled
+  sample and a selected control group. Its AUC is not evidence that grades predict distress or
+  stock returns out of sample.
+- No bundled survivorship-free historical panel or audited out-of-sample return result is claimed.
+  The new backtest module supplies an evaluation contract; the caller must supply lawful,
+  point-in-time universe membership and total-return data including distributions and delistings.
 
 ## [0.1.0]
 
-Initial implementation: 105 metrics, 23 weighting methods, 10 normalizers, 8 aggregators,
-11 profiles, SEC EDGAR XBRL data layer.
+Initial implementation of the grading pipeline, profiles, registries, SEC EDGAR XBRL data layer,
+terminal reports, and core fundamental/statistical metrics.
