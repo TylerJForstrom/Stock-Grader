@@ -718,6 +718,7 @@ def build_fundamentals(
     annual: dict[str, pd.Series] = {}
     filings: dict[date, date] = {}
     tag_used: dict[str, str] = {}
+    concept_provenance: dict[str, dict] = {}
 
     for concept, chain in concept_chains.items():
         tag = _select_tag(chain, gaap, pit_mode=pit_mode, asof=asof)
@@ -725,6 +726,21 @@ def build_fundamentals(
             continue
         tag_used[concept] = tag
         fact = gaap[tag]
+        unit_key = next(iter(fact.get("units", {})), None)
+        prov_items = fact.get("units", {}).get(unit_key, []) if unit_key else []
+        if pit_mode is PitMode.PIT and asof is not None:
+            cutoff = asof.isoformat()
+            prov_items = [i for i in prov_items if str(i.get("filed", "")) <= cutoff]
+        concept_provenance[concept] = {
+            "tag": tag,
+            "unit": unit_key,
+            "latest_period_end": max(
+                (str(i.get("end", "")) for i in prov_items), default=None
+            ),
+            "latest_filed": max(
+                (str(i.get("filed", "")) for i in prov_items), default=None
+            ),
+        }
         if PERIOD_TYPES[concept].value == "instant":
             series = normalize_instant_facts(fact, pit_mode=pit_mode, asof=asof)
             if not series.empty:
@@ -769,6 +785,7 @@ def build_fundamentals(
         filed=pd.Series(filings, dtype="object").sort_index(),
         period_type=dict(PERIOD_TYPES),
         tag_used=tag_used,
+        concept_provenance=concept_provenance,
         pit_mode=pit_mode,
         averaged=set(AVERAGED_CONCEPTS),
     )

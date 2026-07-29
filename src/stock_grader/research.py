@@ -377,6 +377,11 @@ def build_research_report(
         "canonical_concept_tags": (
             dict(target.fundamentals.tag_used) if target.fundamentals is not None else {}
         ),
+        "concept_provenance": (
+            dict(target.fundamentals.concept_provenance)
+            if target.fundamentals is not None
+            else {}
+        ),
         "peer_fingerprint": peer_selection.fingerprint,
     }
     valuation = build_valuation_analysis(

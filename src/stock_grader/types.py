@@ -108,6 +108,10 @@ class Fundamentals:
     filed: pd.Series
     period_type: dict[str, PeriodType] = field(default_factory=dict)
     tag_used: dict[str, str] = field(default_factory=dict)
+    # Per-concept audit trail: {"revenue": {"tag": ..., "unit": ...,
+    # "latest_period_end": ..., "latest_filed": ...}} — the evidence link from
+    # every ratio back to the specific XBRL disclosure it was computed from.
+    concept_provenance: dict[str, dict] = field(default_factory=dict)
     pit_mode: PitMode = PitMode.LATEST
     currency: str = "USD"
     averaged: set[str] = field(default_factory=set)
