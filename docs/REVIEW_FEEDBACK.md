@@ -128,3 +128,18 @@ insider zips routed through the shared SEC client (one fair-access budget), shar
 ticker_variants helper used by resolve_cik and insider lookups, versioned derived
 parquet cache (_v2). Earlier §1 items landed by Codex in a09974c/368f366/22fa1dc.
 §1 is COMPLETE; next queued: FoundryProvider adapter.
+
+2026-07-29 — (Claude) FoundryProvider landed (963045e): grader consumes Stock-Data
+artifacts via the manifest contract, '--universe foundry:' + trailing_dps fallback.
+§2 COMPLETE across three commits (e0eefd7, 592e21b, and the sector-neutral/letter-
+floor commit): redundancy groups, risk-pillar split + stability quarantine,
+Hazen unification, letter-distribution consensus, sector-neutral default,
+15-peer letter floor with binomial percentile ranges. §5 discount rate now
+derives rf + 5% ERP with scenario rate variation and the Damodaran terminal cap.
+§6 statistics stack ported from the simulation (significance.py PSR/DSR/
+bootstrap + research_manifest trial ledger + rank_ic, with its reference-value
+and control tests). REMAINING for industry-standard: §3 per-metric XBRL
+provenance (chosen_tag/period_end/filed into MetricEvidence), §4 dossier
+additions (per-peer comp table, SBC, insider activity, red flags), §6 panel
+builder + purged cross-sectional folds wiring, §8 compliance disclaimers on all
+renderers.
