@@ -1,0 +1,37 @@
+name: monthly-freeze
+
+on:
+  schedule:
+    - cron: "19 13 1 * *"   # 1st of each month: freeze the forward score panel
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Freeze scores (bundled universe, primary spec)
+        env:
+          STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
+        run: stock-grader freeze --profile all_weather --out frozen_scores
+      - name: Commit
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A frozen_scores
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit -m "freeze: $(date -u +%Y-%m)"
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --rebase origin main || exit 1
+          done
+          exit 1

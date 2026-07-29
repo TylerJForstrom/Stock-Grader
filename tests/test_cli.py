@@ -395,3 +395,31 @@ def test_backtest_records_trials_and_deflates_by_ledger_history(
     assert len(records) == 2
     assert all(verify_line(record) for record in records)  # tamper-evident chain
     assert records[-1]["trials"] == 2
+
+
+def test_freeze_writes_immutable_dated_panel(tmp_path, monkeypatch):
+    """The forward panel: one parquet per date, never overwritten."""
+    from tests.test_pipeline import _universe
+
+    snapshots = _universe(16, with_prices=False)
+    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    monkeypatch.setattr(cli, "_build_snapshots", lambda tickers, args, provider: snapshots)
+
+    args = Namespace(
+        out=str(tmp_path / "frozen"), universe="ignored.txt", asof="2026-07-29",
+        cache_dir=None, contact=None, no_network=True, profile="all_weather", weighting=None,
+        normalizer=None, aggregator=None, rho=None, pit=False, refresh=False,
+        sector_neutral=None, curve=None,
+    )
+    assert cli.cmd_freeze(args) == 0
+    out = tmp_path / "frozen" / "2026-07-29.parquet"
+    assert out.exists()
+    frame = pd.read_parquet(out)
+    assert len(frame) == 16
+    assert set(frame.columns) >= {
+        "signal_date", "ticker", "cik", "score", "letter", "graded",
+        "config_fingerprint", "universe_fingerprint", "code_commit",
+    }
+    before = out.read_bytes()
+    assert cli.cmd_freeze(args) == 0  # second run: skip, never overwrite
+    assert out.read_bytes() == before

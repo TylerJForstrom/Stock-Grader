@@ -867,6 +867,66 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_freeze(args: argparse.Namespace) -> int:
+    """Freeze today's scores into the append-only forward panel.
+
+    Grades the universe and writes one immutable parquet per signal date.
+    Scores frozen BEFORE the future happens are the only backtest input that
+    cannot possibly be overfit to it — every month of running this is a month
+    of evidence money cannot buy later. Existing dates are never overwritten.
+    """
+    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
+                                     offline=args.no_network))
+    tickers = _load_universe(args.universe) if args.universe else _resolve_peers(args, [])
+    if not tickers:
+        console.print("[red]no universe to freeze[/red]")
+        return 2
+    signal_date = date.fromisoformat(args.asof) if args.asof else date.today()
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{signal_date.isoformat()}.parquet"
+    if out_path.exists():
+        status_console.print(f"[dim]{out_path} already frozen; nothing to do[/dim]")
+        return 0
+
+    snapshots = _build_snapshots(tickers, args, provider=provider)
+    if not snapshots:
+        console.print("[red]no securities could be loaded[/red]")
+        return 2
+    reports = grade_universe(snapshots, _config_from_args(args))
+
+    from .research_manifest import current_commit
+
+    rows = []
+    for report in reports.values():
+        rows.append(
+            {
+                "signal_date": signal_date.isoformat(),
+                "ticker": report.ticker,
+                "cik": report.meta.get("cik"),
+                "score": report.score,
+                "letter": report.letter,
+                "percentile": report.percentile,
+                "coverage": report.coverage,
+                "graded": report.graded,
+                "profile": report.profile,
+                "config_fingerprint": report.meta.get("config_fingerprint"),
+                "universe_fingerprint": report.meta.get("universe_fingerprint"),
+                "code_commit": current_commit(),
+                "schema_version": "1.0",
+            }
+        )
+    frame = pd.DataFrame(rows).sort_values("ticker")
+    tmp = out_path.with_suffix(".parquet.tmp")
+    frame.to_parquet(tmp, index=False)
+    tmp.replace(out_path)
+    graded_count = int(frame["graded"].sum())
+    console.print(
+        f"froze {len(frame)} scores ({graded_count} graded) for {signal_date} -> {out_path}"
+    )
+    return 0
+
+
 def cmd_methods(args: argparse.Namespace) -> int:
     from rich.box import SIMPLE
     from rich.table import Table
@@ -998,6 +1058,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_rank.add_argument("--top", type=_positive_int)
     common(p_rank, needs_universe=True)
     p_rank.set_defaults(func=cmd_rank)
+
+    p_freeze = sub.add_parser(
+        "freeze",
+        help="freeze today's scores into the append-only forward panel (never overwrites)",
+    )
+    p_freeze.add_argument("--out", default="frozen_scores",
+                          help="directory of immutable per-date parquet files")
+    common(p_freeze, needs_universe=True)
+    p_freeze.set_defaults(func=cmd_freeze)
 
     p_cons = sub.add_parser("consensus", help="grade under every profile and report disagreement")
     p_cons.add_argument("tickers", nargs="+")
