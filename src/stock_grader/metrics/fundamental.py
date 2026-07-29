@@ -239,32 +239,32 @@ def _enterprise_value(snapshot: SecuritySnapshot) -> float | None:
 # ---------------------------------------------------------------------------------------------
 
 
-@metric("pe_trailing", pillar="valuation", direction=-1, unit="x",
+@metric("pe_trailing", group="earnings_multiple", pillar="valuation", direction=-1, unit="x",
         description="Price / trailing twelve-month earnings", winsor=(0.0, _MULTIPLE_CAP))
 def pe_trailing(s: SecuritySnapshot) -> float | None:
     """Undefined for loss-makers rather than negative — a negative P/E is not a cheap one."""
     return safe_div(s.market_cap, _ttm(s, "net_income"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("price_to_sales", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("price_to_sales", group="sales_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def price_to_sales(s: SecuritySnapshot) -> float | None:
     """Price / trailing revenue. Meaningful even when earnings are negative."""
     return safe_div(s.market_cap, _ttm(s, "revenue"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("price_to_book", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("price_to_book", group="book_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def price_to_book(s: SecuritySnapshot) -> float | None:
     """Price / shareholders' equity. Undefined when book value is negative."""
     return safe_div(s.market_cap, _latest(s, "equity"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("price_to_tangible_book", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("price_to_tangible_book", group="book_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def price_to_tangible_book(s: SecuritySnapshot) -> float | None:
     """Price / book value excluding goodwill and intangibles."""
     return safe_div(s.market_cap, _latest(s, "tangible_book"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("price_to_fcf", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("price_to_fcf", group="fcf_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def price_to_fcf(s: SecuritySnapshot) -> float | None:
     """Price / free cash flow."""
     return safe_div(s.market_cap, _ttm(s, "fcf"), positive_denominator=True, cap=_MULTIPLE_CAP)
@@ -276,37 +276,37 @@ def price_to_ocf(s: SecuritySnapshot) -> float | None:
     return safe_div(s.market_cap, _ttm(s, "cfo"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("ev_to_ebitda", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("ev_to_ebitda", group="ebit_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def ev_to_ebitda(s: SecuritySnapshot) -> float | None:
     """Enterprise value / EBITDA — capital-structure neutral, so it compares across leverage."""
     return safe_div(_enterprise_value(s), _ttm(s, "ebitda"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("ev_to_ebit", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("ev_to_ebit", group="ebit_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def ev_to_ebit(s: SecuritySnapshot) -> float | None:
     """Enterprise value / EBIT. Charges companies for depreciation, unlike EV/EBITDA."""
     return safe_div(_enterprise_value(s), _ttm(s, "ebit"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("ev_to_sales", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("ev_to_sales", group="sales_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def ev_to_sales(s: SecuritySnapshot) -> float | None:
     """Enterprise value / revenue."""
     return safe_div(_enterprise_value(s), _ttm(s, "revenue"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("ev_to_fcf", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric("ev_to_fcf", group="fcf_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
 def ev_to_fcf(s: SecuritySnapshot) -> float | None:
     """Enterprise value / free cash flow."""
     return safe_div(_enterprise_value(s), _ttm(s, "fcf"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("earnings_yield", pillar="valuation", direction=1, unit="ratio")
+@metric("earnings_yield", group="earnings_multiple", pillar="valuation", direction=1, unit="ratio")
 def earnings_yield(s: SecuritySnapshot) -> float | None:
     """Earnings / price. The reciprocal of P/E, but defined for loss-makers (it goes negative)."""
     return safe_div(_ttm(s, "net_income"), s.market_cap, positive_denominator=True)
 
 
-@metric("fcf_yield", pillar="valuation", direction=1, unit="ratio")
+@metric("fcf_yield", group="fcf_multiple", pillar="valuation", direction=1, unit="ratio")
 def fcf_yield(s: SecuritySnapshot) -> float | None:
     """Free cash flow / market cap."""
     return safe_div(_ttm(s, "fcf"), s.market_cap, positive_denominator=True)
@@ -658,7 +658,7 @@ def fcf_to_debt(s: SecuritySnapshot) -> float | None:
     return safe_div(_ttm(s, "fcf"), debt, cap=10.0)
 
 
-@metric("altman_z", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0))
+@metric("altman_z", group="altman", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0))
 def altman_z(s: SecuritySnapshot) -> float | None:
     """Altman Z-score for public manufacturers.
 
@@ -928,11 +928,19 @@ def share_count_change(s: SecuritySnapshot) -> float | None:
 
 @metric("dividend_yield", pillar="shareholder", direction=1, unit="ratio", winsor=(0.0, 0.3))
 def dividend_yield(s: SecuritySnapshot) -> float | None:
-    """Dividends paid / market cap."""
+    """Dividends paid / market cap.
+
+    Falls back to the foundry's reconstructed dividends-per-share (already on
+    the current split basis) when the XBRL cash-flow tag is absent — small
+    caps often skip the tag while the per-share history still exists.
+    """
     dividends = _ttm(s, "dividends_paid")
-    if dividends is None:
-        return None
-    return safe_div(abs(dividends), s.market_cap, positive_denominator=True)
+    if dividends is not None:
+        return safe_div(abs(dividends), s.market_cap, positive_denominator=True)
+    foundry_dps = s.meta.get("foundry_dps_ttm") if s.meta else None
+    if foundry_dps is not None and s.price:
+        return safe_div(float(foundry_dps), s.price, positive_denominator=True)
+    return None
 
 
 @metric("payout_ratio", pillar="shareholder", direction=0, unit="ratio",

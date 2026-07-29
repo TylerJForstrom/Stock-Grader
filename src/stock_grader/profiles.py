@@ -77,15 +77,18 @@ PROFILE_SPECS: dict[str, dict] = {
                   "'is this a great business', not 'is it cheap'.",
     },
     "momentum": {
-        "weights": {"momentum": 0.50, "risk": 0.20, "growth": 0.14, "profitability": 0.10,
-                    "liquidity": 0.06},
+        "weights": {"momentum": 0.50, "risk": 0.10, "risk_adjusted_return": 0.10, "growth": 0.14,
+                    "profitability": 0.10, "liquidity": 0.06},
         "rho": 0.9,
         "thesis": "Price and earnings trend, risk-adjusted. Liquidity matters because a momentum "
                   "signal you cannot trade is not a signal.",
     },
     "low_volatility": {
-        "weights": {"risk": 0.40, "quality": 0.19, "health": 0.17, "profitability": 0.11,
-                    "shareholder": 0.08, "liquidity": 0.05},
+        # 0.30 pure risk + 0.10 risk-adjusted return: the old single 0.40 "risk"
+        # pillar mixed volatility with Sharpe, so a hot momentum stock with a
+        # great Sharpe scored well on a profile named low_volatility.
+        "weights": {"risk": 0.30, "risk_adjusted_return": 0.10, "quality": 0.19, "health": 0.17,
+                    "profitability": 0.11, "shareholder": 0.08, "liquidity": 0.05},
         "rho": 0.2,
         "thesis": "The low-volatility anomaly: stable, boring, well-capitalised businesses. Low "
                   "rho because the entire premise is the absence of weak spots.",

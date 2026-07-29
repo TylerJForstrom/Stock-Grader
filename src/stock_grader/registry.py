@@ -102,6 +102,12 @@ class MetricSpec:
     winsor: tuple[float, float] | None = None  # absolute clamp before scoring
     ideal_band: tuple[float, float] | None = None  # for direction == 0
     tags: frozenset[str] = field(default_factory=frozenset)
+    # Redundancy group: metrics in the same group are close restatements of one
+    # signal (a ratio and its reciprocal, three FCF multiples). At weighting
+    # time the group shares ONE metric's worth of weight, split equally among
+    # its live members — otherwise the effective weight of a signal is set by
+    # how many correlated proxies of it someone happened to register.
+    group: str | None = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.fn(*args, **kwargs)
@@ -130,6 +136,7 @@ def metric(
     winsor: tuple[float, float] | None = None,
     ideal_band: tuple[float, float] | None = None,
     tags: frozenset[str] | set[str] | None = None,
+    group: str | None = None,
 ) -> Callable[[Callable], MetricSpec]:
     """Register a metric function.
 
@@ -154,6 +161,7 @@ def metric(
             winsor=winsor,
             ideal_band=ideal_band,
             tags=frozenset(tags or ()),
+            group=group,
         )
         METRICS.register(name, spec)
         return spec

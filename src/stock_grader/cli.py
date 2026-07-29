@@ -391,6 +391,23 @@ def _build_snapshots(
         elif len(tickers) == 1:
             manual_prices[tickers[0]] = float(entry)
 
+    # Foundry corporate actions: reconstructed dividends-per-share used as a
+    # fallback for dividend metrics when the XBRL cash-flow tag is absent.
+    foundry = None
+    if getattr(args, "foundry", None):
+        from .data.foundry import FoundryDataSource, FoundryError
+
+        target = str(args.foundry).strip()
+        try:
+            if target.lower().startswith(("http://", "https://")):
+                foundry = FoundryDataSource(url_base=target)
+            else:
+                foundry = FoundryDataSource(root=target)
+            foundry.dividends()  # fail fast on contract violations
+        except FoundryError as exc:
+            status_console.print(f"[yellow]foundry unavailable: {exc}[/yellow]")
+            foundry = None
+
     snapshots: list[SecuritySnapshot] = []
     status = status_console.status("[dim]loading securities…[/dim]") if len(tickers) > 1 else None
     if status:
@@ -499,6 +516,14 @@ def _build_snapshots(
             # A price index excludes dividends, so alpha against it is overstated by roughly
             # beta x the index dividend yield.
             snapshot.meta["benchmark_is_price_only"] = True
+        if foundry is not None:
+            try:
+                dps = foundry.trailing_dps(ticker)
+            except Exception:  # noqa: BLE001 - fallback data must never sink a snapshot
+                dps = None
+            if dps is not None:
+                snapshot.meta["foundry_dps_ttm"] = dps
+                snapshot.meta["foundry_dps_source"] = "stock-data corporate_actions"
         snapshots.append(snapshot)
     if status:
         status.stop()
@@ -871,6 +896,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="FRED index for beta/alpha (SP500, NASDAQ, DJIA); price-only, so alpha "
                             "is overstated by roughly beta x the index dividend yield")
         p.add_argument("--no-network", action="store_true", help="SEC cache only, no price fetches")
+        p.add_argument("--foundry",
+                       help="Stock-Data foundry location (local clone path or raw URL): supplies "
+                            "reconstructed dividends-per-share as a fallback for dividend metrics")
         p.add_argument("--refresh", action="store_true", help="bypass the cache")
         p.add_argument("--cache-dir")
         p.add_argument("--contact", help="contact address sent to SEC in the User-Agent")

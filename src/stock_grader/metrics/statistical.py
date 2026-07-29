@@ -208,7 +208,7 @@ def _aligned_factor_returns(
 # ---------------------------------------------------------------------------------------------
 
 
-@metric("annualized_return_1y", pillar="risk", direction=1, unit="ratio",
+@metric("annualized_return_1y", pillar="risk_adjusted_return", direction=1, unit="ratio",
         needs_prices=True, min_history=253, winsor=(-1.0, 5.0))
 def annualized_return_1y(s: SecuritySnapshot) -> float | None:
     """Annualised log return over the last year."""
@@ -243,7 +243,7 @@ def downside_deviation(s: SecuritySnapshot) -> float | None:
     return float(np.sqrt((negative**2).sum() / len(returns)) * np.sqrt(TRADING_DAYS))
 
 
-@metric("sharpe_ratio", pillar="risk", direction=1, unit="ratio",
+@metric("sharpe_ratio", pillar="risk_adjusted_return", direction=1, unit="ratio",
         needs_prices=True, needs_risk_free=True, min_history=253, winsor=(-5.0, 5.0))
 def sharpe_ratio(s: SecuritySnapshot) -> float | None:
     """Excess return per unit of total volatility, against the real risk-free rate."""
@@ -259,7 +259,7 @@ def sharpe_ratio(s: SecuritySnapshot) -> float | None:
     return float(excess.mean() / sigma * np.sqrt(TRADING_DAYS))
 
 
-@metric("sortino_ratio", pillar="risk", direction=1, unit="ratio",
+@metric("sortino_ratio", pillar="risk_adjusted_return", direction=1, unit="ratio",
         needs_prices=True, needs_risk_free=True, min_history=253, winsor=(-5.0, 10.0))
 def sortino_ratio(s: SecuritySnapshot) -> float | None:
     """Excess return per unit of downside deviation."""
@@ -297,7 +297,7 @@ def max_drawdown(s: SecuritySnapshot) -> float | None:
     return float(-drawdown.min())
 
 
-@metric("calmar_ratio", pillar="risk", direction=1, unit="ratio",
+@metric("calmar_ratio", pillar="risk_adjusted_return", direction=1, unit="ratio",
         needs_prices=True, min_history=757, winsor=(-10.0, 10.0))
 def calmar_ratio(s: SecuritySnapshot) -> float | None:
     """Three-year annualised return divided by max drawdown."""
@@ -466,7 +466,7 @@ def beta(s: SecuritySnapshot) -> float | None:
     return float(aligned["security"].cov(aligned["market"]) / variance)
 
 
-@metric("capm_alpha", pillar="risk", direction=1, unit="ratio",
+@metric("capm_alpha", pillar="risk_adjusted_return", direction=1, unit="ratio",
         needs_prices=True, needs_benchmark=True, needs_risk_free=True, min_history=253, winsor=(-2.0, 2.0))
 def capm_alpha(s: SecuritySnapshot) -> float | None:
     """Annualised CAPM intercept — return unexplained by market exposure."""
@@ -540,7 +540,7 @@ def _anis_lloyd_expected_rs(n: int) -> float:
     return front * tail
 
 
-@metric("hurst_exponent", pillar="risk", direction=0, unit="exponent", ideal_band=(0.45, 0.60),
+@metric("hurst_exponent", pillar="stability", direction=0, unit="exponent", ideal_band=(0.45, 0.60),
         needs_prices=True, min_history=504)
 def hurst_exponent(s: SecuritySnapshot) -> float | None:
     """Hurst exponent by rescaled-range analysis — **non-monotonic**.
@@ -590,7 +590,7 @@ def hurst_exponent(s: SecuritySnapshot) -> float | None:
     return slope if 0.0 <= slope <= 1.5 else None
 
 
-@metric("variance_ratio", pillar="risk", direction=0, unit="ratio", ideal_band=(0.9, 1.1),
+@metric("variance_ratio", pillar="stability", direction=0, unit="ratio", ideal_band=(0.9, 1.1),
         needs_prices=True, min_history=504)
 def variance_ratio(s: SecuritySnapshot) -> float | None:
     """Lo-MacKinlay variance ratio at lag 5 — **non-monotonic**, 1.0 means a random walk.
@@ -614,7 +614,7 @@ def variance_ratio(s: SecuritySnapshot) -> float | None:
     return float(var_q / (q * var_1))
 
 
-@metric("return_autocorrelation", pillar="risk", direction=0, unit="rho", ideal_band=(-0.05, 0.05),
+@metric("return_autocorrelation", pillar="stability", direction=0, unit="rho", ideal_band=(-0.05, 0.05),
         needs_prices=True, min_history=252)
 def return_autocorrelation(s: SecuritySnapshot) -> float | None:
     """Lag-1 autocorrelation of daily returns — **non-monotonic**, near zero is normal."""
@@ -625,7 +625,7 @@ def return_autocorrelation(s: SecuritySnapshot) -> float | None:
     return float(value) if value is not None and np.isfinite(value) else None
 
 
-@metric("mean_reversion_half_life", pillar="risk", direction=-1, unit="days",
+@metric("mean_reversion_half_life", pillar="stability", direction=-1, unit="days",
         needs_prices=True, min_history=505, winsor=(1.0, 252.0))
 def mean_reversion_half_life(s: SecuritySnapshot) -> float | None:
     """Half-life of statistically supported mean reversion in log price.
@@ -706,21 +706,21 @@ def short_term_reversal_1m(s: SecuritySnapshot) -> float | None:
     return _total_return(s, 21)
 
 
-@metric("momentum_3m", pillar="momentum", direction=1, unit="ratio",
+@metric("momentum_3m", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
         needs_prices=True, min_history=84, winsor=(-1.0, 5.0))
 def momentum_3m(s: SecuritySnapshot) -> float | None:
     """Three-month total return."""
     return _total_return(s, 63)
 
 
-@metric("momentum_6m", pillar="momentum", direction=1, unit="ratio",
+@metric("momentum_6m", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
         needs_prices=True, min_history=147, winsor=(-1.0, 5.0))
 def momentum_6m(s: SecuritySnapshot) -> float | None:
     """Six-month total return."""
     return _total_return(s, 126)
 
 
-@metric("momentum_12_1", pillar="momentum", direction=1, unit="ratio",
+@metric("momentum_12_1", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
         needs_prices=True, min_history=273, winsor=(-1.0, 5.0))
 def momentum_12_1(s: SecuritySnapshot) -> float | None:
     """Twelve-month return skipping the most recent month — the standard momentum factor.
@@ -731,7 +731,7 @@ def momentum_12_1(s: SecuritySnapshot) -> float | None:
     return _total_return(s, 231, skip=21)
 
 
-@metric("risk_adjusted_momentum", pillar="momentum", direction=1, unit="ratio",
+@metric("risk_adjusted_momentum", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
         needs_prices=True, min_history=273, winsor=(-10.0, 10.0))
 def risk_adjusted_momentum(s: SecuritySnapshot) -> float | None:
     """12-1 momentum divided by annualised volatility."""
@@ -747,7 +747,7 @@ def risk_adjusted_momentum(s: SecuritySnapshot) -> float | None:
     return float(momentum / volatility)
 
 
-@metric("momentum_consistency", pillar="momentum", direction=1, unit="fraction",
+@metric("momentum_consistency", group="trailing_momentum", pillar="momentum", direction=1, unit="fraction",
         needs_prices=True, min_history=273)
 def momentum_consistency(s: SecuritySnapshot) -> float | None:
     """How many of the 1/3/6/12-month horizons are positive — agreement across timeframes."""
@@ -775,7 +775,7 @@ def information_discreteness(s: SecuritySnapshot) -> float | None:
     return float(np.sign(momentum) * (negative - positive))
 
 
-@metric("pct_positive_days", pillar="momentum", direction=1, unit="fraction",
+@metric("pct_positive_days", group="trailing_momentum", pillar="momentum", direction=1, unit="fraction",
         needs_prices=True, min_history=252)
 def pct_positive_days(s: SecuritySnapshot) -> float | None:
     """Fraction of up days over the past year."""
@@ -783,7 +783,7 @@ def pct_positive_days(s: SecuritySnapshot) -> float | None:
     return float((returns > 0).mean()) if returns is not None else None
 
 
-@metric("distance_from_52w_high", pillar="momentum", direction=1, unit="ratio",
+@metric("distance_from_52w_high", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
         needs_prices=True, min_history=252)
 def distance_from_52w_high(s: SecuritySnapshot) -> float | None:
     """Current price relative to the 52-week high — proximity to the high predicts continuation."""
@@ -795,7 +795,7 @@ def distance_from_52w_high(s: SecuritySnapshot) -> float | None:
     return safe_div(float(window.iloc[-1]), high, positive_denominator=True)
 
 
-@metric("trend_strength", pillar="momentum", direction=1, unit="t-stat",
+@metric("trend_strength", group="trailing_momentum", pillar="momentum", direction=1, unit="t-stat",
         needs_prices=True, min_history=252, winsor=(-50.0, 50.0))
 def trend_strength(s: SecuritySnapshot) -> float | None:
     """t-statistic of the slope of a linear regression through log price.
@@ -867,7 +867,7 @@ def zero_return_days(s: SecuritySnapshot) -> float | None:
 # ---------------------------------------------------------------------------------------------
 
 
-@metric("price_to_sma200", pillar="momentum", direction=1, unit="ratio",
+@metric("price_to_sma200", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
         needs_prices=True, min_history=252, winsor=(0.0, 3.0))
 def price_to_sma200(s: SecuritySnapshot) -> float | None:
     """Price relative to its 200-day simple moving average."""
@@ -878,7 +878,7 @@ def price_to_sma200(s: SecuritySnapshot) -> float | None:
     return safe_div(float(prices.iloc[-1]), sma, positive_denominator=True)
 
 
-@metric("golden_cross", pillar="momentum", direction=1, unit="binary",
+@metric("golden_cross", group="trailing_momentum", pillar="momentum", direction=1, unit="binary",
         needs_prices=True, min_history=252)
 def golden_cross(s: SecuritySnapshot) -> float | None:
     """1 when the 50-day average is above the 200-day average, else 0."""

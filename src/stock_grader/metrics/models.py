@@ -269,7 +269,7 @@ def ohlson_o_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     )
 
 
-@metric("altman_z_prime", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0),
+@metric("altman_z_prime", group="altman", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0),
         description="Altman Z'' for non-manufacturers — no market value or sales-to-assets term")
 def altman_z_prime(s: SecuritySnapshot) -> tuple[float, dict[str, float]] | None:
     """Altman Z'' (1993), the four-variable revision for non-manufacturers.

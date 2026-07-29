@@ -463,6 +463,30 @@ def _normalize_matrix(
     return pd.DataFrame(scored, index=matrix.index) if scored else pd.DataFrame(index=matrix.index)
 
 
+def _apply_redundancy_groups(weights: pd.Series) -> pd.Series:
+    """Metrics in one redundancy group share a single metric's worth of weight.
+
+    P/E and earnings yield are the same signal twice; three FCF multiples are
+    the same signal three times. Without this, a signal's effective weight is
+    set by how many correlated restatements of it happen to be registered.
+    Members are scaled by 1/len(group) and the pillar renormalizes — exactly
+    "each group occupies one slot, split equally inside it".
+    """
+    groups: dict[str, list[str]] = defaultdict(list)
+    for name in weights.index:
+        spec = METRICS.get(name)
+        if spec is not None and spec.group:
+            groups[spec.group].append(name)
+    multi = {g: m for g, m in groups.items() if len(m) > 1}
+    if not multi:
+        return weights
+    adjusted = weights.astype("float64").copy()
+    for members in multi.values():
+        adjusted[members] = adjusted[members] / float(len(members))
+    total = float(adjusted.sum())
+    return adjusted / total if total > 0 else weights
+
+
 def _pillar_members(names: list[str]) -> dict[str, list[str]]:
     grouped: dict[str, list[str]] = defaultdict(list)
     for name in names:
@@ -584,6 +608,12 @@ def grade_universe(
 
     scores = _normalize_matrix(matrix, snapshots, config)
     pillars = _pillar_members(list(scores.columns))
+    # Time-series diagnostics (Hurst, variance ratio, autocorrelation) carry
+    # near-zero cross-sectional pricing content at these universe sizes; they
+    # are computed for the evidence dossier but stay OUT of grading unless a
+    # config explicitly weights the pillar.
+    if "stability" in pillars and "stability" not in (config.pillar_weights or {}):
+        del pillars["stability"]
     warnings_by_ticker: dict[str, list[str]] = {s.ticker: list(s.warnings) for s in snapshots}
 
     # ---- Level 1: metrics -> pillars, one weighting computation per pillar (shared across the
@@ -601,6 +631,7 @@ def grade_universe(
         )
         method = "fixed" if config.metric_weights.get(pillar) else config.metric_weighting
         weights = compute_weights(block, method=method, ctx=ctx)
+        weights = _apply_redundancy_groups(weights)
 
         column: dict[str, float] = {}
         for ticker in block.index:
