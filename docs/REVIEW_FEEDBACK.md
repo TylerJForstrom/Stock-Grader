@@ -5,6 +5,54 @@ Maintained by the Claude reviewer session. Newest entries first. Items marked
 
 ---
 
+## 2026-07-29 — review of Codex handoff-queue commits (041a185/41931ee, 76c9de0/526cad9)
+
+Overall verdict: GOOD work — right scope, real hardening, proven green in the
+cloud, and a legitimate Windows platform fix. 13 findings survived adversarial
+verification (0 refuted); none invalidate the commits, all are follow-ups.
+Work them top-down:
+
+1. **[important] symbols.py**: The daily staleness gate measures manifest generated_at_utc, but snapshot() rewrites both the events and current manifests with a fresh timestamp on every run even when some or all source fetches fail — so the gate can only detect missed runs, never a persistently failing collector. Only the every-s
+   FIX: Track per-source success watermarks and gate on them. In snapshot(), maintain a per-source last-success date in the current/ manifest extra (e.g. extra={"snapshot_date": today, "failures": failures, "last_success": {source: date}}), carrying forward the previous manifest's last_success for sources that failed this run and updating it only for sources that succeeded. Then extend check-staleness to,
+
+2. **[important] collectors.yml**: Stock-Vault places its check-staleness step AFTER collection (if: always()), the opposite of Stock-Data's before-collection pattern — so a multi-day missed-run gap that the current run heals is never reported red, even though borrow snapshots are current-state-only and the missed observations are pe
+   FIX: Mirror Stock-Data's pattern in both Stock-Vault workflows. In collectors.yml, move the 'Verify collector clocks' step (stock-vault check-staleness --vault-dir data borrow market-eod) to immediately after 'pip install -e .' and before 'Borrow snapshot', dropping its if: always(); add if: always() to the Borrow snapshot, Market EOD, and FINRA steps so the run still self-heals and commits when the pr
+
+3. **[important] events.py**: The weekly sweep checkpoints flagged_events.jsonl.gz every 500 CIKs but only writes data/events/manifest.json at the end of a completed sweep, while the workflow's commit step runs if: always() with git add -A data — a timeout (120-min limit) or runner death mid-sweep publicly commits an updated eve
+   FIX: In Stock-Data/src/stock_data/events.py, make every checkpoint self-consistent: move the write_manifest() call into a small helper invoked both in the every-500-CIKs branch (after _write_events at line 155) and at the end of collect(), so the on-disk file and manifest.json are never out of sync at any kill point. The manifest hash of a partial-but-valid dataset is honest — .progress.json already ma
+
+4. **[important] foundry.py**: Queue item 5 is only half done: the Stock-Data side (events as a manifest dataset) is correct, but the stated payoff — FoundryDataSource.universe(asof=...) replaying added/removed events backward to enable PIT ticker-to-CIK mapping — was not implemented, and foundry.py has no consumer of the new dat
+   FIX: Two-part fix: (1) Implement the Stock-Grader half of queue item 5 — add an `events()` reader in FoundryDataSource for the data/symbols/events manifest dataset and extend `universe()` with an `asof: pd.Timestamp | None = None` keyword that replays added/removed events backward from the current snapshot to reconstruct point-in-time membership, with tests covering a ticker delisted before asof (prese
+
+5. **[minor] symbols.py**: The durability-ordering docstring claims events are 'never duplicated' via exact-line dedupe, but a crash between the events write and baseline advance that is retried on a later UTC day re-emits the same diffs with a different date field, which the exact-line dedupe does not catch — producing near-
+   FIX: Make the dedupe date-agnostic: when building seen_lines and when testing candidate lines, strip the "date" key first (e.g., seen = {json.dumps({k: v for k, v in json.loads(line).items() if k != "date"}, sort_keys=True) for line in existing.splitlines()} and compare each new event serialized the same way). This drops replayed events regardless of which day the retry runs, while still allowing a gen
+
+6. **[minor] README.md**: Queue item 7 leftovers were skipped without updating the queue: the SSGA collector was neither built nor was its README row deleted (the queue demanded one or the other — the ssga-holdings 'daily' row still advertises a collector that does not exist in src/stock_vault), and the vault git-bundle mirr
+   FIX: Three parts, in order of harm prevented: (1) Resolve the README contradiction now — either build the SSGA collector (pattern = Stock-Vault/src/stock_vault/borrow.py, per HANDOFF ~1h) and wire it into collectors.yml, or delete the ssga-holdings row from Stock-Vault/README.md so the table stops advertising a nonexistent archive. Given the row's own rationale (no retroactive history, so every skipped
+
+7. **[important] .gitattributes**: 526cad9 uses `text eol=lf` instead of `-text`: it fixes checkout smudging but enables commit-time CRLF-to-LF normalization, which can silently alter future FINRA bytes behind the manifest's back. The current 8 CSVs are pure LF (verified), so it works today, but the mechanism is a band-aid; the byte-
+   FIX: In C:/Users/tforstrom/Desktop/Stock-Vault/.gitattributes change line 3 from `data/finra_short_interest/*.csv text eol=lf` to `data/finra_short_interest/*.csv -text`, which disables conversion in both directions (checkout smudging on Windows AND commit-time normalization on the runner), guaranteeing the committed blob is byte-identical to the downloaded/hashed bytes. Update the assertion in tests/t
+
+8. **[important] .gitattributes**: The Windows-bytes fix covers only data/finra_short_interest/*.csv, but data/delisted_prices/*/cohort_index.json is also a sha256-listed manifest entry (all 6 year manifests list it) with no eol protection; the repo runs with core.autocrlf=true. Should be a blanket `data/** -text`.
+   FIX: In C:/Users/tforstrom/Desktop/Stock-Vault/.gitattributes, replace the single CSV rule with a blanket byte-fidelity rule for all manifest-hashed data: `data/** -text` (optionally keeping the CSV line; -text subsumes it since the index already holds LF). This marks every archived file as no-conversion so checkout bytes always equal committed bytes, matching the manifests. Alternatively, minimally ad
+
+9. **[important] staleness.py**: The FINRA dataset has no staleness gate: DATASETS covers only borrow/market-eod/recs, so the newly-scheduled FINRA collector can die silently forever, violating the handoff intent of 'staleness self-checks in every scheduled workflow'. A gate on the newest shrtYYYYMMDD filename settlement date (e.g.
+   FIX: In staleness.py, add a check keyed off the newest shrt filename: FINRA_MAX_AGE = dt.timedelta(days=45); _FINRA_NAME = re.compile(r"^shrt(\d{8})\.csv$"); def check_finra(vault_dir, now=None) that uses _latest_filename_value(Path(vault_dir)/"finra_short_interest", _FINRA_NAME, lambda v: dt.datetime.strptime(v, "%Y%m%d").replace(tzinfo=dt.UTC)), raising StalenessError when no files exist or when now 
+
+10. **[minor] finra.py**: candidate_settlement_dates rolls only weekends (business_day_on_or_before checks weekday>=5); FINRA rolls holiday settlement dates to the prior business day too, so a mid-month or month-end date landing on a market holiday is never probed. Carried over verbatim from the Stock-Data original, but it i
+   FIX: In finra.py, make business_day_on_or_before holiday-aware by reusing the existing calendar in staleness.py: change the loop condition to `while day.weekday() >= 5 or _is_market_holiday(day):` (importing _is_market_holiday from .staleness, ideally promoting it to a public name like is_market_holiday). Add a regression test asserting candidate_settlement_dates(2027-02-01, 2027-02-28) contains date(2
+
+11. **[minor] recs.py**: The monthly recs snapshot has no coverage floor: any single successful ticker produces the month's file, which then satisfies the workflow's -s output check and check_recs, so a badly degraded snapshot passes every gate. The 401/403 SystemExit only catches auth failures, not partial outages.
+   FIX: In recs.py snapshot(), before writing the file, enforce a coverage floor: e.g. `min_required = max(1, int(0.9 * len(tickers)))` (fraction configurable via param or env var); if `len(lines) < min_required`, raise SystemExit(f"recs: only {len(lines)}/{len(tickers)} tickers succeeded (need {min_required}); refusing to write a degraded snapshot") WITHOUT writing the file or manifest. Failing before th
+
+12. **[minor] collectors.yml**: Each staleness gate lives only inside the workflow it monitors, so a workflow that GitHub never schedules (disabled, YAML error after edit, org policy change) produces no failure email at all. The twice-daily collectors run could cheaply also check `recs` (and a future finra gate), giving cross-work
+   FIX: In C:/Users/tforstrom/Desktop/Stock-Vault/.github/workflows/collectors.yml, change the 'Verify collector clocks' step (line 43) from `stock-vault check-staleness --vault-dir data borrow market-eod` to `stock-vault check-staleness --vault-dir data borrow market-eod recs`, giving the recs clock cross-workflow coverage from the twice-daily collectors run. When a FINRA staleness gate is added to stale
+
+13. **[minor] README.md**: Handoff item 7 is only partially delivered: the SSGA collector was neither built nor its README row deleted (the explicit either/or in the queue), the yearly delisted top-up cron (June 15, harvest-delisted --years $(date +%Y)) was not added to any workflow, and the weekly git-bundle vault mirror was
+   FIX: Three small changes in Stock-Vault: (1) either build the SSGA collector on the borrow.py pattern or delete README.md line 18 and the SSGA license note at line 30; (2) add a third cron to .github/workflows/collectors.yml (e.g. "15 6 15 6 *") with a conditioned step running `stock-vault harvest-delisted --vault-dir data --years $(date +%Y)`; (3) create the weekly Windows Task Scheduler job running `
+
+---
+
 ## 2026-07-28 13:05 — ecosystem contract + queued work
 
 The ecosystem contract now lives at
