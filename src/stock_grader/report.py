@@ -93,6 +93,14 @@ def rank_reports(
     return ordered if top is None else ordered[: max(0, top)]
 
 
+# §8: every surface that shows a grade carries this. A-to-F letters read as
+# recommendations; they are peer-relative research screens and must say so.
+DISCLAIMER = (
+    "Peer-relative research screen from historical filings - not investment "
+    "advice, not a prediction of returns."
+)
+
+
 def render_report(report: GradeReport, console: Console | None = None, *, explain: bool = False) -> None:
     """Render one security's grade to the terminal."""
     console = console or Console()
@@ -176,6 +184,7 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
 
     console.print(Panel(Group(*blocks), border_style=_colour(report.letter), title="stock-grader",
                         title_align="left"))
+    console.print(Text(DISCLAIMER, style="dim"))
 
 
 def render_ranking(reports: dict[str, GradeReport], console: Console | None = None, *, top: int | None = None) -> None:
@@ -212,6 +221,7 @@ def render_ranking(reports: dict[str, GradeReport], console: Console | None = No
             str(report.meta.get("sector", "")),
         )
     console.print(table)
+    console.print(Text(DISCLAIMER, style="dim"))
 
 
 def _letter_distribution_text(result) -> str:
@@ -262,6 +272,7 @@ def render_consensus(results: dict, console: Console | None = None) -> None:
             f"{result.worst_profile} ({result.scores.min():.0f})",
         )
     console.print(table)
+    console.print(Text(DISCLAIMER, style="dim"))
 
 
 def _encode(value: Any) -> Any:
@@ -300,7 +311,12 @@ def _encode(value: Any) -> Any:
 
 
 def to_json(reports: Any, *, indent: int = 2) -> str:
-    """Stable JSON representation, suitable for piping into other tools."""
+    """Stable JSON representation, suitable for piping into other tools.
+
+    The disclaimer lives INSIDE each report's meta (schema-additive) rather
+    than as an envelope: consumers parse this output as the data itself and an
+    envelope would break the documented contract.
+    """
     return json.dumps(_encode(reports), indent=indent, allow_nan=False, sort_keys=True)
 
 
@@ -308,6 +324,8 @@ def to_markdown(report: GradeReport) -> str:
     """Markdown report for pasting into notes or a PR."""
     lines = [
         f"# {report.ticker} — {report.letter} ({report.score:.1f}/100)",
+        "",
+        f"> {DISCLAIMER}",
         "",
         f"- **Profile**: {report.profile}",
         (f"- **Weighting**: {report.weighting_method}   **Normalizer**: {report.normalizer}   "
@@ -380,6 +398,8 @@ def to_consensus_markdown(results: dict[str, Any]) -> str:
     """Consensus summary and per-profile inclusion details."""
     lines = [
         "# Consensus across profiles",
+        "",
+        f"> {DISCLAIMER}",
         "",
         "The letter distribution shows how many profiles landed on each grade — a",
         "contested stock is a different proposition depending on the lens, and that",

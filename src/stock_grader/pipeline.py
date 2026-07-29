@@ -1093,6 +1093,10 @@ def grade_universe(
                 "coverage_penalty": coverage_penalty(coverage),
                 "profile_weight_coverage": profile_weight_coverage,
                 "interval_kind": "model_sensitivity",
+                "disclaimer": (
+                    "Peer-relative research screen from historical filings - not "
+                    "investment advice, not a prediction of returns."
+                ),
                 "schema_version": "1.0",
                 "run_status": "graded" if not gates else "refused",
                 "config": config_manifest,
