@@ -347,3 +347,51 @@ def test_backtest_cli_requires_and_reports_a_verifiable_input_contract(
     frame.to_csv(path, index=False)
     with pytest.raises(ValueError, match="strict input contract"):
         cli.cmd_backtest(args)
+
+
+def test_backtest_records_trials_and_deflates_by_ledger_history(
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every run is a trial: the ledger accumulates and the DSR deflates by it."""
+    rows = [
+        {
+            "signal_date": f"2025-{month:02d}-25",
+            "filed_through": f"2025-{month:02d}-25",
+            "return_start": f"2025-{month:02d}-26",
+            "return_end": f"2025-{month + 1:02d}-25",
+            "ticker": f"T{index}",
+            "cik": f"{index + 1:010d}",
+            "score": index,
+            "forward_return": index / 1_000,
+            "universe_is_pit": True,
+            "return_is_total": True,
+            "delisting_return_included": True,
+        }
+        for month in (1, 2, 3)
+        for index in range(10)
+    ]
+    path = tmp_path / "panel.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    ledger = tmp_path / "ledger.jsonl"
+
+    def run() -> dict:
+        args = Namespace(
+            panel=str(path), quantiles=2, min_cross_section=10, periods_per_year=12,
+            transaction_cost_bps=10.0, bootstrap_samples=0, bootstrap_block_periods=1,
+            seed=0, allow_unverified_panel=False, format="json", ledger=str(ledger),
+        )
+        assert cli.cmd_backtest(args) == 0
+        return json.loads(capsys.readouterr().out)
+
+    first = run()
+    assert first["ledger"]["lifetime_trials"] == 1
+    second = run()
+    assert second["ledger"]["lifetime_trials"] == 2
+
+    from stock_grader.research_manifest import load_manifest, verify_line
+
+    records = load_manifest(ledger)
+    assert len(records) == 2
+    assert all(verify_line(record) for record in records)  # tamper-evident chain
+    assert records[-1]["trials"] == 2

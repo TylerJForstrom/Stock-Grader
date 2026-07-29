@@ -13,6 +13,7 @@ the fundamentals that could be computed, with the shortfall reported rather than
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 import sys
@@ -772,10 +773,93 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             + "); add the documented attestation/identifier columns or pass "
             "--allow-unverified-panel for an explicitly caveated exploratory run"
         )
+    # §6 significance wiring: every backtest run IS a trial. It is recorded in
+    # the append-only ledger, and the edge verdict is deflated by every trial
+    # the ledger has ever seen — the honest correction for "we kept the best
+    # backtest". Deleting the ledger to reset the count is exactly the fraud
+    # the SHA-256 chain in the manifest is designed to make visible.
+    from .research_manifest import (
+        ResearchRecord,
+        append_record,
+        current_commit,
+        load_manifest,
+    )
+    from .significance import assess_edge, per_period_sharpe
+
+    net_spreads = [p.net_spread for p in report.periods]
+    ledger_path = Path(getattr(args, "ledger", "research_ledger.jsonl"))
+    prior = load_manifest(ledger_path) if ledger_path.exists() else []
+    trial_sharpes = [
+        record["metrics"]["per_period_sharpe"]
+        for record in prior
+        if isinstance(record.get("metrics"), dict)
+        and "per_period_sharpe" in record["metrics"]
+    ]
+    this_sharpe = per_period_sharpe(net_spreads) if len(net_spreads) >= 2 else float("nan")
+    trial_sharpes.append(this_sharpe)
+    significance = (
+        assess_edge(
+            net_spreads,
+            trial_sharpes,
+            periods_per_year=args.periods_per_year,
+            bootstrap_seed=args.seed,
+        )
+        if len(net_spreads) >= 2
+        else None
+    )
+    append_record(
+        ledger_path,
+        ResearchRecord(
+            experiment=f"backtest:{path.name}",
+            market="us_equities",
+            symbols=[],
+            targets=["forward_return"],
+            horizons=[],
+            trials=len(trial_sharpes),
+            metrics={
+                "per_period_sharpe": this_sharpe,
+                "mean_net_spread": report.mean_net_spread,
+                "mean_rank_ic": report.mean_rank_ic,
+                "deflated_sharpe": (
+                    significance.deflated_sharpe if significance else float("nan")
+                ),
+            },
+            costs={"transaction_cost_bps": float(args.transaction_cost_bps)},
+            benchmark="zero",
+            leakage_controls=(
+                "panel attestation contract: "
+                + ("PASS" if not failed_contract else "FAILED " + ",".join(failed_contract))
+            ),
+            gate_passed=bool(significance and significance.significant),
+            verdict=significance.verdict if significance else "insufficient periods",
+            data_span=(
+                f"{report.periods[0].signal_date}..{report.periods[-1].signal_date}"
+                if report.periods
+                else ""
+            ),
+            code_commit=current_commit(),
+        ),
+    )
+    status_console.print(
+        f"[dim]trial recorded in {ledger_path} "
+        f"(lifetime trials: {len(trial_sharpes)})[/dim]"
+    )
+
     if args.format == "json":
-        print(to_json(report))
+        # Additive keys on the documented report schema - never an envelope.
+        payload = json.loads(to_json(report))
+        if significance is not None:
+            payload["significance"] = json.loads(to_json(significance))
+        payload["ledger"] = {"path": str(ledger_path), "lifetime_trials": len(trial_sharpes)}
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         markdown = backtest_to_markdown(report)
+        if significance is not None:
+            markdown += (
+                "\n\n## Edge significance (deflated for every ledger trial)\n\n```\n"
+                + significance.summary()
+                + "\n```\n"
+            )
         if args.format == "md":
             print(markdown)
         else:
@@ -965,6 +1049,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_backtest.add_argument("--bootstrap-samples", type=int, default=1_000)
     p_backtest.add_argument("--bootstrap-block-periods", type=_positive_int, default=3)
     p_backtest.add_argument("--seed", type=int, default=0)
+    p_backtest.add_argument("--ledger", default="research_ledger.jsonl",
+                            help="append-only trial ledger; the deflated-Sharpe "
+                                 "correction counts every trial ever recorded here")
     p_backtest.add_argument(
         "--allow-unverified-panel",
         action="store_true",
