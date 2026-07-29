@@ -4,7 +4,6 @@ from datetime import timedelta
 
 from stock_grader.peers import select_peers
 from stock_grader.types import SectorClass
-
 from test_pipeline import _universe
 
 

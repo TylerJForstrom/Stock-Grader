@@ -947,7 +947,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=(-0.02, 0.05, 0.12),
         help="illustrative annual cash-flow growth assumptions as decimals",
     )
-    p_research.add_argument("--discount-rate", type=float, default=0.10)
+    p_research.add_argument("--discount-rate", type=float, default=None,
+                                help="explicit required equity return; omit to derive risk-free + equity risk premium")
     p_research.add_argument("--terminal-growth", type=float, default=0.025)
     common(p_research)
     p_research.set_defaults(func=cmd_research)
@@ -1008,12 +1009,13 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--dcf-growth values must be finite")
         if any(value <= -1.0 for value in args.dcf_growth):
             parser.error("--dcf-growth values must be greater than -1")
-        if not math.isfinite(args.discount_rate) or not math.isfinite(args.terminal_growth):
-            parser.error("valuation rates must be finite")
-        if args.discount_rate <= -1.0 or args.terminal_growth <= -1.0:
-            parser.error("valuation rates must be greater than -1")
-        if args.discount_rate <= args.terminal_growth:
-            parser.error("--discount-rate must be greater than --terminal-growth")
+        if not math.isfinite(args.terminal_growth) or args.terminal_growth <= -1.0:
+            parser.error("--terminal-growth must be a finite rate greater than -1")
+        if args.discount_rate is not None:
+            if not math.isfinite(args.discount_rate) or args.discount_rate <= -1.0:
+                parser.error("--discount-rate must be a finite rate greater than -1")
+            if args.discount_rate <= args.terminal_growth:
+                parser.error("--discount-rate must be greater than --terminal-growth")
     if (
         getattr(args, "rho", None) is not None
         and getattr(args, "aggregator", None) not in (None, "ces")

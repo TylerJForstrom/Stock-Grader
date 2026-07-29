@@ -38,6 +38,51 @@ _MAX_INPUT_AGE_DAYS = 400
 _HIGH_TERMINAL_VALUE_CONCENTRATION = 0.75
 _REVERSE_GROWTH_BOUNDS = (-0.50, 1.00)
 
+# Discount-rate construction. A hardcoded 10% applied identically to a
+# regulated utility and a micro-cap biotech was the single largest unforced
+# valuation error: the rate now builds from the observed risk-free rate plus a
+# documented long-run equity risk premium, and the bear/base/bull scenarios
+# vary the rate as well as growth — discount-rate uncertainty dominates growth
+# uncertainty in five-year-plus-terminal structures.
+_DEFAULT_EQUITY_RISK_PREMIUM = 0.05
+_LEGACY_DISCOUNT_RATE = 0.10
+_SCENARIO_RATE_SPREAD = 0.015  # bear +150bp, bull -150bp
+
+
+def derive_discount_rate(
+    risk_free_rate: float,
+    *,
+    equity_risk_premium: float = _DEFAULT_EQUITY_RISK_PREMIUM,
+    beta: float | None = None,
+) -> float:
+    """Required equity return: risk-free + (shrunk beta) x equity risk premium.
+
+    Beta, when supplied, is Blume-shrunk toward 1 (``0.5 + 0.5*beta``) and
+    clipped to [0, 3] first — raw historical betas are noisy and mean-revert.
+    Without a beta the market beta of 1 applies and the rate is rf + ERP.
+    """
+    if not math.isfinite(risk_free_rate) or not -0.05 <= risk_free_rate <= 0.20:
+        raise ValueError("risk_free_rate must be a plausible annual decimal rate")
+    if not math.isfinite(equity_risk_premium) or not 0.0 <= equity_risk_premium <= 0.10:
+        raise ValueError("equity_risk_premium must be between 0 and 10%")
+    if beta is None or not math.isfinite(beta):
+        shrunk = 1.0
+    else:
+        shrunk = 0.5 + 0.5 * min(3.0, max(0.0, float(beta)))
+    return float(risk_free_rate + shrunk * equity_risk_premium)
+
+
+def _latest_risk_free(snapshot: SecuritySnapshot) -> float | None:
+    """Newest plausible annual risk-free rate from the snapshot's series."""
+    series = getattr(snapshot, "risk_free", None)
+    if series is None or len(series) == 0:
+        return None
+    values = pd.to_numeric(pd.Series(series), errors="coerce").dropna()
+    values = values[(values > -0.05) & (values < 0.20)]
+    if values.empty:
+        return None
+    return float(values.iloc[-1])
+
 
 @dataclass(frozen=True, slots=True)
 class DCFScenario:
@@ -552,18 +597,45 @@ def build_valuation_analysis(
     snapshot: SecuritySnapshot,
     *,
     growth_rates: tuple[float, float, float] = (-0.02, 0.05, 0.12),
-    discount_rate: float = 0.10,
+    discount_rate: float | None = None,
     terminal_growth_rate: float = 0.025,
     years: int = 5,
     annual_dilution_rate: float = 0.0,
     terminal_dilution_rate: float | None = None,
+    beta: float | None = None,
 ) -> ValuationAnalysis:
     """Build bear/base/bull and reverse-DCF views from one snapshot.
+
+    ``discount_rate=None`` (the default) derives the required equity return from
+    the snapshot's risk-free series plus a documented equity risk premium,
+    optionally beta-adjusted; an explicit rate is honored verbatim. Scenarios
+    vary the discount rate alongside growth (bear +150bp, bull -150bp).
 
     Banks, insurers, REITs, and investment holding companies are refused because after-interest
     corporate FCF is not the right valuation numerator for those business models. Dedicated
     residual-income, AFFO/NAV, or sum-of-the-parts models should be used instead.
     """
+    risk_free_rate = _latest_risk_free(snapshot)
+    rate_warnings: list[str] = []
+    if discount_rate is None:
+        if risk_free_rate is not None:
+            discount_rate = derive_discount_rate(risk_free_rate, beta=beta)
+            rate_derivation = "risk_free_plus_equity_risk_premium"
+        else:
+            discount_rate = _LEGACY_DISCOUNT_RATE
+            rate_derivation = "legacy_default_no_risk_free_series"
+            rate_warnings.append(
+                "no risk-free series available: discount rate fell back to the "
+                f"legacy {_LEGACY_DISCOUNT_RATE:.0%} assumption"
+            )
+    else:
+        rate_derivation = "analyst_supplied"
+    if risk_free_rate is not None and terminal_growth_rate > risk_free_rate + 1e-3:
+        rate_warnings.append(
+            f"terminal growth {terminal_growth_rate:.1%} exceeds the risk-free rate "
+            f"{risk_free_rate:.1%}: a perpetuity cannot outgrow the economy's "
+            "risk-free benchmark (Damodaran cap); treat the terminal values as optimistic"
+        )
 
     (
         growth_rates,
@@ -586,6 +658,15 @@ def build_valuation_analysis(
             "growth_rates": list(growth_rates),
             "discount_rate": discount_rate,
             "discount_rate_definition": "required_equity_return",
+            "discount_rate_derivation": rate_derivation,
+            "risk_free_rate": risk_free_rate,
+            "equity_risk_premium": (
+                _DEFAULT_EQUITY_RISK_PREMIUM
+                if rate_derivation == "risk_free_plus_equity_risk_premium"
+                else None
+            ),
+            "beta_assumption": beta if beta is not None else "market (1.0)",
+            "scenario_discount_rate_spread": _SCENARIO_RATE_SPREAD,
             "terminal_growth_rate": terminal_growth_rate,
             "years": years,
             "annual_dilution_rate": annual_dilution_rate,
@@ -604,6 +685,7 @@ def build_valuation_analysis(
             "interpretation": "illustrative_scenarios_not_analyst_forecasts",
         },
     )
+    analysis.warnings.extend(rate_warnings)
 
     if snapshot.sector in (
         SectorClass.BANK,
@@ -661,11 +743,22 @@ def build_valuation_analysis(
         analysis.warnings.append(price_warning)
 
     names = ("bear", "base", "bull")
+    # Bear pairs low growth with a HIGHER required return, bull the reverse —
+    # varying only growth at a fixed rate understates the true scenario spread.
+    # The bull rate is floored above terminal growth so the perpetuity stays valid.
+    scenario_rates = {
+        "bear": discount_rate + _SCENARIO_RATE_SPREAD,
+        "base": discount_rate,
+        "bull": max(discount_rate - _SCENARIO_RATE_SPREAD, terminal_growth_rate + 0.005),
+    }
+    analysis.assumptions["scenario_discount_rates"] = {
+        name: round(rate, 6) for name, rate in scenario_rates.items()
+    }
     for name, growth in zip(names, growth_rates, strict=True):
         scenario = DCFScenario(
             name=name,
             growth_rate=float(growth),
-            discount_rate=discount_rate,
+            discount_rate=scenario_rates[name],
             terminal_growth_rate=terminal_growth_rate,
             years=years,
             annual_dilution_rate=annual_dilution_rate,

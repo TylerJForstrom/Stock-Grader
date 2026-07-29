@@ -85,7 +85,9 @@ def _fundamentals(scale: float = 1.0, *, quality: float = 1.0) -> Fundamentals:
     )
 
 
-def _universe(n: int = 12, *, with_prices: bool = True) -> list[SecuritySnapshot]:
+def _universe(n: int = 16, *, with_prices: bool = True) -> list[SecuritySnapshot]:
+    # 16 >= GradeConfig.min_letter_peers: the default fixture must exercise the
+    # actually-graded path; the letter floor has its own dedicated tests.
     tickers = [f"T{i:02d}" for i in range(n)]
     prices, benchmark, _ = (
         generate_panel(tickers, n_days=800, seed=5, synthetic=True) if with_prices else ({}, None, None)

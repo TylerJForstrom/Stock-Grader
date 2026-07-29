@@ -75,13 +75,23 @@ class GradeConfig:
         metric_aggregator: str = "weighted_mean",
         pillar_aggregator: str = "ces",
         aggregator_kwargs: dict | None = None,
-        sector_neutral: bool = False,
+        # Sector-neutral scoring is the DEFAULT: a bank's P/B and a software
+        # company's margin are not comparable, and cross-sector robust_z mostly
+        # measures the industry, not the company. Small sectors shrink toward
+        # the global distribution (James-Stein n/(n+5)), so tiny buckets never
+        # produce meaningless within-group statistics. Opt out for genuinely
+        # homogeneous universes (e.g. an all-bank peer list).
+        sector_neutral: bool = True,
         curve: str = "cross_sectional",
         absolute_weight: float = 0.5,
         seed: int = 0,
         uncertainty_draws: int = 300,
         gates: bool = True,
         min_profile_weight_coverage: float = 0.70,
+        # Below this many ranked peers a letter is refused (the percentile and
+        # its binomial sampling range are still reported): at n=8 a Hazen
+        # percentile moves in 12.5-point steps and one peer decides the letter.
+        min_letter_peers: int = 15,
         required_pillars: set[str] | list[str] | tuple[str, ...] | None = None,
         require_defining_pillar: bool = True,
         allow_in_sample_supervised_weighting: bool = False,
@@ -256,6 +266,10 @@ class GradeConfig:
             not np.isfinite(pessimism) or not 0.0 <= float(pessimism) <= 1.0
         ):
             raise ValueError("pessimism must be finite and between 0 and 1")
+        min_letter_peers = int(min_letter_peers)
+        if min_letter_peers < 2:
+            raise ValueError("min_letter_peers must be at least 2")
+        self.min_letter_peers = min_letter_peers
         self.sector_neutral = sector_neutral
         self.curve = curve
         self.absolute_weight = absolute_weight
@@ -783,6 +797,17 @@ def grade_universe(
         coverage = (ok / applicable) if applicable else 0.0
 
         percentile = float(percentiles[ticker]) if percentiles is not None and ticker in percentiles else None
+        n_ranked = int(len(ranked_base.dropna())) if percentiles is not None else 0
+        percentile_range = None
+        if percentile is not None and np.isfinite(percentile) and n_ranked >= 2:
+            # Binomial rank error: the honest statement of what n peers can
+            # resolve. At n=8 the half-width is ~±30 points around the middle.
+            p = percentile / 100.0
+            half_width = 1.96 * 100.0 * float(np.sqrt(max(p * (1.0 - p), 1e-9) / n_ranked))
+            percentile_range = (
+                max(0.0, percentile - half_width),
+                min(100.0, percentile + half_width),
+            )
 
         if config.curve == "absolute":
             final_score, letter = float(score), to_letter(score)
@@ -884,6 +909,15 @@ def grade_universe(
             # artefact of having nothing to compare against. Reporting a letter here would dress
             # up "no information" as a considered C.
             gates.append("gradeable_peer_universe_too_small")
+        elif config.curve != "absolute" and 0 < n_ranked < config.min_letter_peers:
+            gates.append(
+                f"peer_count_below_letter_floor:{n_ranked}<{config.min_letter_peers}"
+            )
+            warns.append(
+                f"refusing a letter: only {n_ranked} peers passed the gates (floor "
+                f"{config.min_letter_peers}). With this few ranks a single peer moves the "
+                "letter; the percentile and its sampling range are reported instead"
+            )
         if gates:
             letter = "N/A"
 
@@ -1066,6 +1100,8 @@ def grade_universe(
                 "universe_fingerprint": universe_fingerprint,
                 "universe_members": universe_members,
                 "effective_peer_count": max(0, len(ranked_base) - (ticker in ranked_base.index)),
+                "percentile_range": percentile_range,
+                "letter_peer_floor": config.min_letter_peers,
                 "price_source": snapshot.meta.get("price_source"),
                 "price_date": snapshot.meta.get("price_date"),
                 "price_age_days": snapshot.meta.get("price_age_days"),

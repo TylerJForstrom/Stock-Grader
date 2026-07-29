@@ -35,7 +35,7 @@ def test_historical_cik_and_ticker_paths_share_latest_vintage_guard():
     provider = SECProvider.__new__(SECProvider)
     # The guard runs before either network/client access in the shared _fetch body.
     with pytest.raises(ValueError, match="PitMode.PIT"):
-        provider._fetch(  # noqa: SLF001 - direct invariant test
+        provider._fetch(
             "0000886158",
             "886158",
             asof=date(2019, 1, 1),
@@ -104,11 +104,11 @@ def test_cli_hides_methods_that_require_unavailable_configuration():
     parser = cli.build_parser()
     grade = next(
         action
-        for action in parser._subparsers._group_actions  # noqa: SLF001
+        for action in parser._subparsers._group_actions
         if action.dest == "command"
     ).choices["grade"]
-    weighting = next(action for action in grade._actions if action.dest == "weighting")  # noqa: SLF001
-    normalizer = next(action for action in grade._actions if action.dest == "normalizer")  # noqa: SLF001
+    weighting = next(action for action in grade._actions if action.dest == "weighting")
+    normalizer = next(action for action in grade._actions if action.dest == "normalizer")
 
     assert "ic" not in weighting.choices
     assert "fixed" not in weighting.choices

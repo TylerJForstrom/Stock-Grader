@@ -48,6 +48,41 @@ class TestRedundancyGroups:
         assert groups == {"trailing_momentum"}
 
 
+class TestLetterFloor:
+    def test_config_default_and_validation(self):
+        from stock_grader.pipeline import GradeConfig
+
+        assert GradeConfig().min_letter_peers == 15
+        assert GradeConfig().sector_neutral is True
+        with pytest.raises(ValueError, match="min_letter_peers"):
+            GradeConfig(min_letter_peers=1)
+
+    def test_small_universe_gates_letter_but_reports_percentile_range(self):
+        from tests.test_pipeline import _universe
+
+        from stock_grader.pipeline import grade_universe
+
+        reports = grade_universe(_universe(8))
+        floored = [
+            r for r in reports.values()
+            if any(g.startswith("peer_count_below_letter_floor") for g in r.gates)
+        ]
+        assert floored, "an 8-peer universe must hit the letter floor"
+        for report in floored:
+            assert report.letter == "N/A"
+            assert report.percentile is not None  # information survives the refusal
+            low, high = report.meta["percentile_range"]
+            assert 0.0 <= low <= report.percentile <= high <= 100.0
+
+    def test_floor_can_be_lowered_for_homogeneous_peer_sets(self):
+        from tests.test_pipeline import _universe
+
+        from stock_grader.pipeline import GradeConfig, grade_universe
+
+        reports = grade_universe(_universe(8), config=GradeConfig(min_letter_peers=5))
+        assert any(r.letter != "N/A" for r in reports.values())
+
+
 class TestRiskPillarSplit:
     def test_risk_adjusted_performance_left_the_risk_pillar(self):
         for name in ("sharpe_ratio", "sortino_ratio", "calmar_ratio", "capm_alpha",

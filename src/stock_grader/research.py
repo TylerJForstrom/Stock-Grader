@@ -337,7 +337,7 @@ def build_research_report(
     config: GradeConfig | None = None,
     *,
     valuation_growth_rates: tuple[float, float, float] = (-0.02, 0.05, 0.12),
-    valuation_discount_rate: float = 0.10,
+    valuation_discount_rate: float | None = None,
     valuation_terminal_growth: float = 0.025,
 ) -> ResearchReport:
     """Grade a target against selected peers and assemble a complete evidence bundle."""
