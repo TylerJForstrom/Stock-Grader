@@ -417,26 +417,28 @@ class TestSECInsiderCacheScoping:
         refreshed = provider.load(asof=date(2026, 2, 1), refresh=True)
         pd.testing.assert_frame_equal(refreshed, first)
 
-    def test_sec_circuit_breaker_stops_repeated_rate_limit_calls(self, tmp_path, monkeypatch):
+    def test_sec_circuit_breaker_stops_repeated_rate_limit_calls(self, tmp_path):
+        # Downloads route through the shared SEC client now; a client that has
+        # exhausted its own retries reports None, and the provider's breaker
+        # must stop asking after failure_threshold quarters.
+        class ExhaustedClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def get_bytes(self, url: str) -> bytes | None:
+                self.calls += 1
+                return None
+
+        stub = ExhaustedClient()
         provider = SECInsiderPriceProvider(
             cache_dir=tmp_path,
             failure_threshold=2,
             cooldown_seconds=3600,
+            client=stub,
         )
-        calls = 0
-
-        class Response:
-            status_code = 429
-
-        def fake_get(*args, **kwargs):
-            nonlocal calls
-            calls += 1
-            return Response()
-
-        monkeypatch.setattr(requests, "get", fake_get)
         for quarter in ("2025q1", "2025q2", "2025q3"):
             assert provider._load_quarter(quarter, refresh=True) is None
-        assert calls == 2
+        assert stub.calls == 2
 
 
 def test_shapley_checks_factorial_budget_before_enumerating(monkeypatch):

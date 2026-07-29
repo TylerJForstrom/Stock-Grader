@@ -94,7 +94,26 @@ def _default_universe_path() -> Path | None:
     return next((p for p in candidates if p.exists()), None)
 
 
+_FOUNDRY_RAW_URL = "https://raw.githubusercontent.com/TylerJForstrom/Stock-Data/main"
+
+
 def _load_universe(path: str) -> list[str]:
+    # "foundry:" pulls the listed-exchange universe from the Stock-Data
+    # foundry's daily snapshot (manifest-verified). Forms:
+    #   foundry:                      -> the public repo via raw URL
+    #   foundry:C:/path/to/Stock-Data -> a local clone
+    #   foundry:https://...           -> an explicit raw base URL
+    if path.startswith("foundry:"):
+        from .data.foundry import FoundryDataSource
+
+        target = path[len("foundry:"):].strip()
+        if not target:
+            source = FoundryDataSource(url_base=_FOUNDRY_RAW_URL)
+        elif target.lower().startswith(("http://", "https://")):
+            source = FoundryDataSource(url_base=target)
+        else:
+            source = FoundryDataSource(root=target)
+        return source.universe_tickers()
     text = Path(path).read_text()
     tickers: list[str] = []
     for line in text.splitlines():
