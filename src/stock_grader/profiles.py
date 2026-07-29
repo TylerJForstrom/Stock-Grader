@@ -156,11 +156,13 @@ class ConsensusResult:
 
     Attributes:
         per_profile: each profile's report.
-        score: the fit-weighted consensus score.
-        letter: consensus letter.
-        clarity: 0..100, how much the profiles agree. Low clarity is not a defect in the data —
-            it means the security genuinely is a different proposition depending on the lens, which
-            is the single most useful thing this object reports.
+        score: mean of the graded profiles' scores (context, not a claim — the
+            profiles are different composites of the same evidence).
+        letter: consensus letter on the shared curve.
+        letter_distribution: count of graded profiles at each letter — the honest
+            statement of agreement. A stock that is A on quality and F on momentum
+            is more informative shown as contested than blended into a C.
+        spread: max minus min profile score, in score points.
     """
 
     def __init__(self, ticker: str, per_profile: dict[str, GradeReport]) -> None:
@@ -175,14 +177,18 @@ class ConsensusResult:
             dtype="float64",
         )
         self.scores = scores
+        self.letter_distribution: dict[str, int] = {}
+        for name, report in per_profile.items():
+            if report.graded:
+                self.letter_distribution[report.letter] = (
+                    self.letter_distribution.get(report.letter, 0) + 1
+                )
         if scores.empty:
-            self.score, self.letter, self.clarity, self.spread = float("nan"), "N/A", 0.0, float("nan")
+            self.score, self.letter, self.spread = float("nan"), "N/A", float("nan")
             self.best_profile = self.worst_profile = None
             return
         self.score = float(scores.mean())
         self.spread = float(scores.max() - scores.min())
-        # 40 points of spread across profiles is total disagreement; 0 is unanimity.
-        self.clarity = float(np.clip(100.0 - self.spread * 2.5, 0.0, 100.0))
         # Keep the consensus number and letter on the same scale. Cross-sectional reports use the
         # percentile thresholds; absolute/hybrid reports use the composite thresholds. Older
         # callers may omit curve metadata, in which case a real included report is the safest
@@ -222,12 +228,15 @@ class ConsensusResult:
             "ticker": self.ticker,
             "score": self.score,
             "letter": self.letter,
-            "clarity": self.clarity,
+            "letter_distribution": dict(sorted(self.letter_distribution.items())),
             "spread": self.spread,
             "best_profile": self.best_profile,
             "worst_profile": self.worst_profile,
             "scores": {str(name): float(score) for name, score in self.scores.items()},
-            "per_profile": self.per_profile,
+            "per_profile": {
+                str(name): report.to_dict() if hasattr(report, "to_dict") else report
+                for name, report in self.per_profile.items()
+            },
         }
 
 

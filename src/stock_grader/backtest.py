@@ -21,8 +21,8 @@ data pipelines a hard invariant proving that later filings did not enter the fea
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
-from typing import Iterator
 
 import numpy as np
 import pandas as pd

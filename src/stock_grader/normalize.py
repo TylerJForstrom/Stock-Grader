@@ -185,7 +185,11 @@ def percentile_rank(values: pd.Series, **_: object) -> pd.Series:
         return pd.Series(np.nan, index=values.index, dtype="float64")
     if len(clean) == 1:
         return _neutral(values)
-    ranked = values.rank(pct=True, method="average") * 100.0
+    # Hazen plotting position (rank - 0.5)/n — the same convention scoring.py
+    # uses for grading percentiles. rank(pct=True) is r/n, which pins the top
+    # observation to exactly 100 and skews the whole scale asymmetric; one
+    # plotting position everywhere or ties break differently across layers.
+    ranked = (values.rank(method="average") - 0.5) / float(len(clean)) * 100.0
     return ranked.astype("float64")
 
 

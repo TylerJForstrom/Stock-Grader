@@ -18,36 +18,36 @@ from .metrics import fundamental, models, sector_specific, statistical  # noqa: 
 from .peers import PeerSelection, explicit_peers, select_peers
 from .pipeline import GradeConfig, grade_universe
 from .profiles import consensus_grade, get_profile, profile_names
-from .research import ResearchReport, build_research_report
 from .registry import (
     AGGREGATORS,
     METRICS,
     NORMALIZERS,
     WEIGHTINGS,
 )
+from .research import ResearchReport, build_research_report
 from .types import Coverage, GradeReport, PitMode, SecuritySnapshot
 from .valuation import DCFScenario, ValuationAnalysis, build_valuation_analysis
 
 __all__ = [
     "AGGREGATORS",
-    "BacktestConfig",
-    "BacktestReport",
-    "DCFScenario",
     "METRICS",
     "NORMALIZERS",
     "WEIGHTINGS",
+    "BacktestConfig",
+    "BacktestReport",
     "Coverage",
+    "DCFScenario",
     "GradeConfig",
     "GradeReport",
-    "PitMode",
     "PeerSelection",
+    "PitMode",
     "ResearchReport",
     "SecuritySnapshot",
     "ValuationAnalysis",
     "__version__",
+    "backtest_to_markdown",
     "build_research_report",
     "build_valuation_analysis",
-    "backtest_to_markdown",
     "consensus_grade",
     "evaluate_walk_forward",
     "explicit_peers",

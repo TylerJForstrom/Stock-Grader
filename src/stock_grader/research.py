@@ -26,6 +26,7 @@ import pandas as pd
 from .peers import PeerSelection
 from .pipeline import GradeConfig, build_metric_matrix, grade_universe
 from .registry import METRICS
+from .scoring import hazen_percentile
 from .types import Coverage, GradeReport, SecuritySnapshot
 from .valuation import ValuationAnalysis, build_valuation_analysis
 
@@ -122,13 +123,11 @@ def _json_safe(value: Any) -> Any:
 
 
 def _midrank_percentile(value: float, peers: pd.Series) -> float | None:
+    """Delegates to scoring.hazen_percentile — ONE plotting position everywhere."""
     clean = pd.to_numeric(peers, errors="coerce").dropna()
     if not math.isfinite(value) or clean.empty:
         return None
-    population = pd.concat([clean, pd.Series([value], index=["__target__"])])
-    ranks = population.rank(method="average")
-    # Hazen plotting position: the middle observation maps to 50 and ties share the same rank.
-    return float((ranks["__target__"] - 0.5) / len(population) * 100.0)
+    return hazen_percentile(value, clean)
 
 
 def _desirability_percentile(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date
 
 import numpy as np
@@ -297,17 +298,19 @@ class TestConsensus:
     def test_consensus_reports_disagreement(self):
         results = consensus_grade(_universe())
         for result in results.values():
-            assert 0.0 <= result.clarity <= 100.0
             assert result.best_profile in profile_names()
             assert result.worst_profile in profile_names()
+            assert math.isfinite(result.spread)
 
-    def test_clarity_falls_as_profiles_disagree(self):
+    def test_letter_distribution_counts_graded_profiles(self):
+        # The distribution replaced the invented clarity scalar: it must count
+        # every graded profile exactly once and use real letters.
         results = consensus_grade(_universe())
-        spreads = {t: r.spread for t, r in results.items()}
-        clarities = {t: r.clarity for t, r in results.items()}
-        widest = max(spreads, key=spreads.get)
-        narrowest = min(spreads, key=spreads.get)
-        assert clarities[widest] <= clarities[narrowest]
+        for result in results.values():
+            assert sum(result.letter_distribution.values()) == len(result.scores)
+            valid = {"A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"}
+            assert set(result.letter_distribution) <= valid
+            assert "clarity" not in result.to_dict()
 
 
 class TestSyntheticData:

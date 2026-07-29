@@ -214,16 +214,27 @@ def render_ranking(reports: dict[str, GradeReport], console: Console | None = No
     console.print(table)
 
 
+def _letter_distribution_text(result) -> str:
+    """"3xB+ 5xB 2xC" — the count of graded profiles at each letter."""
+    if not getattr(result, "letter_distribution", None):
+        return "—"
+    order = {letter: index for index, letter in enumerate(
+        ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"])}
+    items = sorted(result.letter_distribution.items(),
+                   key=lambda kv: order.get(kv[0], 99))
+    return " ".join(f"{count}x{letter}" for letter, count in items)
+
+
 def render_consensus(results: dict, console: Console | None = None) -> None:
     """Render the multi-profile consensus, foregrounding disagreement."""
     console = console or Console()
     table = Table(box=SIMPLE, header_style="bold",
-                  title="Consensus across profiles — low clarity means the answer depends on the lens",
+                  title="Consensus across profiles — a contested letter is information, not noise",
                   title_justify="left")
     table.add_column("ticker", style="bold")
     table.add_column("consensus", justify="center")
     table.add_column("score", justify="right")
-    table.add_column("clarity", justify="right")
+    table.add_column("letters", justify="left")
     table.add_column("best as", style="green")
     table.add_column("worst as", style="red")
 
@@ -240,12 +251,13 @@ def render_consensus(results: dict, console: Console | None = None) -> None:
                 "",
             )
             continue
-        clarity_style = "green" if result.clarity > 60 else "yellow" if result.clarity > 30 else "red"
+        distribution = _letter_distribution_text(result)
+        contested = len(result.letter_distribution) > 2
         table.add_row(
             result.ticker,
             Text(result.letter, style=f"bold {_colour(result.letter)}"),
             f"{result.score:.1f}",
-            Text(f"{result.clarity:.0f}", style=clarity_style),
+            Text(distribution, style="yellow" if contested else "dim"),
             f"{result.best_profile} ({result.scores.max():.0f})",
             f"{result.worst_profile} ({result.scores.min():.0f})",
         )
@@ -369,9 +381,11 @@ def to_consensus_markdown(results: dict[str, Any]) -> str:
     lines = [
         "# Consensus across profiles",
         "",
-        "Low clarity means the answer depends on the investment lens.",
+        "The letter distribution shows how many profiles landed on each grade — a",
+        "contested stock is a different proposition depending on the lens, and that",
+        "disagreement is the most useful thing this table reports.",
         "",
-        "| ticker | consensus | score | clarity | best as | worst as |",
+        "| ticker | consensus | score | letters | best as | worst as |",
         "|---|:---:|---:|---:|---|---|",
     ]
     ordered = sorted(
@@ -388,7 +402,8 @@ def to_consensus_markdown(results: dict[str, Any]) -> str:
             continue
         lines.append(
             f"| {result.ticker} | {result.letter} | {result.score:.1f} "
-            f"| {result.clarity:.0f} | {result.best_profile} ({result.scores.max():.0f}) "
+            f"| {_letter_distribution_text(result)} "
+            f"| {result.best_profile} ({result.scores.max():.0f}) "
             f"| {result.worst_profile} ({result.scores.min():.0f}) |"
         )
 

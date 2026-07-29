@@ -519,7 +519,7 @@ def _build_snapshots(
         if foundry is not None:
             try:
                 dps = foundry.trailing_dps(ticker)
-            except Exception:  # noqa: BLE001 - fallback data must never sink a snapshot
+            except Exception:
                 dps = None
             if dps is not None:
                 snapshot.meta["foundry_dps_ttm"] = dps
