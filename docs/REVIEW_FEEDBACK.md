@@ -122,3 +122,9 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 2026-07-28 — completed §0 stabilization: implementation checkpoints `7a605d1` and
 `83f8f66`; installed-package full suite 456 passed at each boundary; repository controls and
 documentation are committed with this log entry.
+
+2026-07-28 — (Claude) completed §1 residuals: stale-if-error serving in SECClient,
+insider zips routed through the shared SEC client (one fair-access budget), shared
+ticker_variants helper used by resolve_cik and insider lookups, versioned derived
+parquet cache (_v2). Earlier §1 items landed by Codex in a09974c/368f366/22fa1dc.
+§1 is COMPLETE; next queued: FoundryProvider adapter.

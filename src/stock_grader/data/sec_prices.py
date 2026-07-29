@@ -54,9 +54,9 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
-import requests
 
 from .cache import default_cache_dir
+from .symbols import ticker_variants
 
 log = logging.getLogger(__name__)
 
@@ -95,12 +95,18 @@ def _quarter_bounds(quarter: str) -> tuple[date, date]:
     return (start - timedelta(days=95), end + timedelta(days=95))
 
 
+# Bump when the derived-table logic changes (filtering, clipping, median rule):
+# the parquet caches a DERIVED table, so old files stay schema-valid but
+# semantically stale forever unless the version participates in the filename.
+_CACHE_SCHEMA_VERSION = 2
+
+
 def _quarter_cache_path(root: Path, quarter: str) -> Path:
     """Resolve a known-format quarter path and refuse symlink escapes."""
     if _QUARTER_PATTERN.fullmatch(quarter) is None:
         raise ValueError(f"invalid SEC quarter identifier: {quarter!r}")
     root = root.resolve()
-    candidate = (root / f"{quarter}.parquet").resolve()
+    candidate = (root / f"{quarter}_v{_CACHE_SCHEMA_VERSION}.parquet").resolve()
     if candidate.parent != root:
         raise ValueError("SEC insider cache path escaped its configured directory")
     return candidate
@@ -165,10 +171,17 @@ class SECInsiderPriceProvider:
         timeout: float = 180.0,
         failure_threshold: int = 2,
         cooldown_seconds: float = 60.0,
+        client: object | None = None,
     ) -> None:
         self.cache_dir = Path(cache_dir or default_cache_dir("insider")).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.contact = contact or os.environ.get("STOCK_GRADER_CONTACT") or _DEFAULT_CONTACT
+        # Every request to sec.gov hosts goes through a SECClient so the
+        # fair-access limiter, declared User-Agent, and retry policy are shared
+        # rather than re-implemented per module.
+        from .sec import SECClient
+
+        self._client = client or SECClient(cache_dir=self.cache_dir, contact=self.contact)
         self.quarters = max(1, quarters)
         self.timeout = timeout
         self.failure_threshold = max(1, failure_threshold)
@@ -236,26 +249,15 @@ class SECInsiderPriceProvider:
             log.warning("SEC insider circuit breaker is open; skipping %s", quarter)
             return None
         url = _DATASET_URL.format(quarter=quarter)
-        try:
-            response = requests.get(
-                url,
-                timeout=self.timeout,
-                headers={"User-Agent": f"Stock-Grader/0.1 ({self.contact})"},
-            )
-        except requests.RequestException as exc:
+        content = self._client.get_bytes(url)
+        if content is None:
             self._record_network_failure()
-            log.warning("insider dataset %s unreachable: %s", quarter, exc)
+            log.warning("insider dataset %s unavailable via SEC client", quarter)
             return None
-        if response.status_code != 200:
-            if response.status_code == 429 or response.status_code >= 500:
-                self._record_network_failure()
-            else:
-                self._record_network_success()
-            log.info("insider dataset %s returned HTTP %s", quarter, response.status_code)
-            return None
+        self._record_network_success()
 
         try:
-            with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 submissions = pd.read_csv(
                     archive.open("SUBMISSION.tsv"),
                     sep="\t",
@@ -368,7 +370,8 @@ class SECInsiderPriceProvider:
         table = self.load(asof=asof)
         if table.empty:
             return None
-        rows = table[table["ticker"] == ticker.upper()]
+        # SEC writes class shares as BRK-B where humans write BRK.B; try both.
+        rows = table[table["ticker"].isin(ticker_variants(ticker))]
         if rows.empty:
             return None
         series = rows.set_index("date")["price"].sort_index()

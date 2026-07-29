@@ -33,6 +33,7 @@ from ..types import Fundamentals, PitMode, SecuritySnapshot
 from .cache import default_cache_dir, safe_cache_path
 from .concepts import AVERAGED_CONCEPTS, DEI_CONCEPTS, PERIOD_TYPES, chains_for
 from .sectors import classify_sic
+from .symbols import ticker_variants
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +103,17 @@ class SECClient:
     def _cache_path(self, key: str) -> Path:
         return safe_cache_path(self.cache_dir, "", key, ".json")
 
+    def _read_stale(self, path: Path, key: str) -> dict[str, Any] | None:
+        """Last resort after online failure: an expired cached copy beats nothing."""
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+        log.warning("SEC unreachable; serving STALE cached copy of %s", key)
+        return payload
+
     def get_json(self, url: str, key: str, *, refresh: bool = False) -> dict[str, Any] | None:
         """Fetch JSON, serving from cache when fresh. Returns ``None`` on unrecoverable failure."""
         path = self._cache_path(key)
@@ -121,7 +133,7 @@ class SECClient:
         if self._consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
             log.warning("SEC unreachable after %d consecutive failures; not retrying",
                         self._consecutive_failures)
-            return None
+            return self._read_stale(path, key)
 
         backoff = 1.0
         for attempt in range(4):
@@ -145,6 +157,46 @@ class SECClient:
                     log.debug("could not cache %s: %s", key, exc)
                 self._consecutive_failures = 0
                 return payload
+            if resp.status_code == 404:
+                log.info("SEC 404 for %s", url)
+                return None
+            if resp.status_code in (429, 503):
+                log.info("SEC throttled (%s), backing off %.1fs", resp.status_code, backoff)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            log.warning("SEC returned HTTP %s for %s", resp.status_code, url)
+            return self._read_stale(path, key)
+        self._consecutive_failures += 1
+        log.warning("SEC request gave up after retries: %s", url)
+        return self._read_stale(path, key)
+
+    def get_bytes(self, url: str) -> bytes | None:
+        """Rate-limited, retrying binary GET for sec.gov bulk files (dataset zips).
+
+        Shares the client's limiter, session (declared User-Agent), and circuit
+        breaker so every request to SEC hosts observes one fair-access budget.
+        No disk caching here — callers cache their own derived artifacts.
+        """
+        if self.offline:
+            return None
+        if self._consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            log.warning("SEC unreachable after %d consecutive failures; not retrying",
+                        self._consecutive_failures)
+            return None
+        backoff = 1.0
+        for attempt in range(4):
+            self._limiter.acquire()
+            try:
+                resp = self._session.get(url, timeout=max(self.timeout, 180.0))
+            except requests.RequestException as exc:
+                log.warning("SEC request failed (%s): %s", url, exc)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            if resp.status_code == 200:
+                self._consecutive_failures = 0
+                return resp.content
             if resp.status_code == 404:
                 log.info("SEC 404 for %s", url)
                 return None
@@ -847,8 +899,7 @@ class SECProvider:
         """
         if self._tickers is None:
             self._tickers = self.client.ticker_map()
-        upper = ticker.upper().strip()
-        for candidate in (upper, upper.replace(".", "-"), upper.replace("-", ".")):
+        for candidate in ticker_variants(ticker):
             found = self._tickers.get(candidate)
             if found:
                 return found
