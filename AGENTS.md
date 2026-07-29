@@ -10,6 +10,11 @@ datasets with manifests (never code imports); this repo is the system of
 record for grading methodology; data enters only through the Stock-Data
 foundry.
 
+## Active work queue
+
+A handoff queue with remaining fixes in execution order lives at
+**docs/HANDOFF.md** — when it exists and has open items, work from it first.
+
 ## Authoritative plan
 
 The implementation plan for this project is **docs/REVISED_PLAN.md** (a reviewed and
