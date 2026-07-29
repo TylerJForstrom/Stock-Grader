@@ -110,3 +110,30 @@ class TestRiskPillarSplit:
             "risk": ["annualized_volatility"],
             "stability": ["hurst_exponent"],
         }
+
+
+class TestStructuralZeros:
+    def test_absent_dividend_tag_is_true_zero_when_statements_present(self):
+        from tests.test_pipeline import _universe
+
+        from stock_grader.metrics.fundamental import _flow_or_structural_zero
+
+        snapshot = _universe(1, with_prices=False)[0]
+        frames_have_tag = (
+            "dividends_paid" in snapshot.fundamentals.quarterly.columns
+            or "dividends_paid" in snapshot.fundamentals.annual.columns
+        )
+        if frames_have_tag:
+            for frame in (snapshot.fundamentals.quarterly, snapshot.fundamentals.annual):
+                if "dividends_paid" in frame.columns:
+                    frame.drop(columns=["dividends_paid"], inplace=True)
+        assert _flow_or_structural_zero(snapshot, "dividends_paid") == 0.0
+
+    def test_no_statements_means_missing_not_zero(self):
+        from datetime import date
+
+        from stock_grader.metrics.fundamental import _flow_or_structural_zero
+        from stock_grader.types import SecuritySnapshot
+
+        empty = SecuritySnapshot(ticker="X", asof=date(2026, 1, 31))
+        assert _flow_or_structural_zero(empty, "dividends_paid") is None

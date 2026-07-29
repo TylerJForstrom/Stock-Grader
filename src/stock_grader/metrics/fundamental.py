@@ -850,10 +850,44 @@ def capex_intensity(s: SecuritySnapshot) -> float | None:
     return safe_div(abs(capex), _ttm(s, "revenue"), positive_denominator=True)
 
 
+def _flow_or_structural_zero(snapshot: SecuritySnapshot, concept: str) -> float | None:
+    """Trailing flow, treating a genuinely absent tag as a TRUE ZERO.
+
+    A company that pays no dividends files no dividends_paid tag at all —
+    that is a policy choice, not a data gap, and scoring it as MISSING
+    penalizes coverage and hands the deliberate non-payer's weight to other
+    metrics. The zero is only asserted when the rest of the statements are
+    demonstrably present (assets AND net income resolvable), so a filer whose
+    whole submission failed to parse still reads as missing.
+    """
+    value = _ttm(snapshot, concept)
+    if value is not None:
+        return value
+    f = _f(snapshot)
+    if f is None:
+        return None
+    has_statements = (
+        _latest(snapshot, "assets") is not None
+        and _ttm(snapshot, "net_income") is not None
+    )
+    if not has_statements:
+        return None
+    tagged = concept in f.quarterly.columns or concept in f.annual.columns
+    return None if tagged else 0.0
+
+
 @metric("rnd_intensity", pillar="efficiency", direction=1, unit="ratio")
 def rnd_intensity(s: SecuritySnapshot) -> float | None:
-    """R&D / revenue. Higher is treated as better — reinvestment in future competitiveness."""
-    return safe_div(_ttm(s, "rnd_expense"), _ttm(s, "revenue"), positive_denominator=True)
+    """R&D / revenue. Higher is treated as better — reinvestment in future competitiveness.
+
+    A retailer that files no R&D tag genuinely spends zero on R&D; scoring
+    that as missing data was wrong (structural-zero policy, §2).
+    """
+    return safe_div(
+        _flow_or_structural_zero(s, "rnd_expense"),
+        _ttm(s, "revenue"),
+        positive_denominator=True,
+    )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -934,7 +968,7 @@ def dividend_yield(s: SecuritySnapshot) -> float | None:
     the current split basis) when the XBRL cash-flow tag is absent — small
     caps often skip the tag while the per-share history still exists.
     """
-    dividends = _ttm(s, "dividends_paid")
+    dividends = _flow_or_structural_zero(s, "dividends_paid")
     if dividends is not None:
         return safe_div(abs(dividends), s.market_cap, positive_denominator=True)
     foundry_dps = s.meta.get("foundry_dps_ttm") if s.meta else None
@@ -972,7 +1006,7 @@ def fcf_payout_ratio(s: SecuritySnapshot) -> float | None:
 @metric("buyback_yield", pillar="shareholder", direction=1, unit="ratio", winsor=(-0.5, 0.5))
 def buyback_yield(s: SecuritySnapshot) -> float | None:
     """Net buybacks / market cap."""
-    buybacks = _ttm(s, "buybacks")
+    buybacks = _flow_or_structural_zero(s, "buybacks")
     if buybacks is None:
         return None
     issued = _ttm(s, "stock_issued") or 0.0
