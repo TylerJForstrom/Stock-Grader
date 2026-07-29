@@ -143,3 +143,7 @@ provenance (chosen_tag/period_end/filed into MetricEvidence), §4 dossier
 additions (per-peer comp table, SBC, insider activity, red flags), §6 panel
 builder + purged cross-sectional folds wiring, §8 compliance disclaimers on all
 renderers.
+
+2026-07-29 — completed queue item 5 (Stock-Data half): symbol events now publish as their own manifest dataset in Stock-Data commit `041a185`; committed-blob hash verified; full suite 30 passed and Ruff clean.
+
+2026-07-29 — completed the requested queue item 7 ops subset: Stock-Data staleness gates and FINRA removal in `41931ee`; Stock-Vault staleness/recs/EOD/FINRA hardening in `76c9de0` plus Windows manifest-byte guard `526cad9`; suites 30/22 passed, Ruff clean, and Actions runs `30467259875`, `30467277635`, `30466449490`, and `30466469142` completed successfully.
