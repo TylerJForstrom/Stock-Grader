@@ -97,6 +97,36 @@ command can add `--vault C:/Users/tforstrom/Desktop/Stock-Vault` after the
 `freeze` subcommand to obtain the dense, hash-verified private archive and
 evaluate all profiles.
 
+## Measured wide-universe rollout
+
+The three public SEC-float memberships were exercised in order on this Windows
+machine with `scripts/measure_wide_freeze.py`, the local verified SEC bulk
+cache, SEC-only prices, and separate scratch output roots. The residual column
+reports the aggregate across all eleven profiles, followed by the per-profile
+mean in parentheses.
+
+| N | Snapshot build | Shared matrix | Profile residual | Total | Peak RSS | Panel disk | Graded fraction | Unresolved CIKs |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 250 | 154.497 s | 56.609 s | 166.896 s (15.172 s mean) | 381.875 s | 534,245,376 B | 165,042 B | 95.467% | 0 |
+| 500 | 185.465 s | 70.709 s | 299.525 s (27.230 s mean) | 558.708 s | 842,231,808 B | 232,870 B | 94.867% | 0 |
+| 1,000 | 421.522 s | 138.020 s | 690.361 s (62.760 s mean) | 1,253.896 s | 1,456,394,240 B | 391,314 B | 94.078% | 0 |
+
+N=1,000 completed in 20.90 minutes, comfortably below the 100-minute local
+acceptance ceiling and the workflow's 300-minute timeout. Each stage wrote
+nine panels and returned success while explicitly refusing `low_volatility`
+and `momentum`: SEC-only prices do not contain the dense daily histories those
+profiles require. The graded fraction is calculated over the nine panels that
+passed their safety gates; the two absent panels are not silently counted as
+graded. Scratch panels and timing JSON stay outside git under `C:/tmp`.
+
+For the same-date `all_weather` panels, widening from 82 to 1,000 names changed
+mean coverage from 0.763932 to 0.710718, median coverage from 0.784050 to
+0.730159, and graded fraction from 95.122% (78/82) to 94.100% (941/1,000).
+The modest 1.022-percentage-point graded-fraction decline does not justify
+retuning `MIN_COVERAGE_TO_GRADE`; it remains 0.35 so M5 does not confound a
+universe change with a gate change. The exact diagnostic is preserved outside
+git at `C:/tmp/m5-coverage.json`.
+
 ## Measured 82-name refactor speedup
 
 On this Windows machine, the same cache-only command (`stock-grader freeze

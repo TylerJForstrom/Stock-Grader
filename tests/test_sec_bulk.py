@@ -63,6 +63,15 @@ class StubClient:
         self.get_calls += 1
         return self.content
 
+    def get_bytes_with_headers(self, _url: str) -> tuple[bytes, dict[str, str]] | None:
+        self.get_calls += 1
+        if self.content is None:
+            return None
+        return self.content, {
+            "Content-Length": str(len(self.content)),
+            "Last-Modified": self.last_modified,
+        }
+
 
 def test_sec_client_head_uses_the_shared_fair_access_session(tmp_path: Path) -> None:
     expected_headers = {"Content-Length": "123", "Last-Modified": _http_date()}
@@ -100,16 +109,24 @@ def test_sec_client_head_uses_the_shared_fair_access_session(tmp_path: Path) -> 
 
     assert client.head(SECBulkFacts.URL) == expected_headers
     assert client.get_bytes(SECBulkFacts.URL) == b"archive-bytes"
+    assert client.get_bytes_with_headers(SECBulkFacts.URL) == (
+        b"archive-bytes",
+        expected_headers,
+    )
     identity = {"Accept-Encoding": "identity"}
     assert session.head_calls == [(SECBulkFacts.URL, client.timeout, True, identity)]
-    assert session.get_calls == [(SECBulkFacts.URL, 180.0, identity)]
+    assert session.get_calls == [
+        (SECBulkFacts.URL, 180.0, identity),
+        (SECBulkFacts.URL, 180.0, identity),
+    ]
 
     offline = SECClient(cache_dir=tmp_path / "offline", contact="tests@example.com", offline=True)
     offline._session = session
     assert offline.head(SECBulkFacts.URL) is None
     assert offline.get_bytes(SECBulkFacts.URL) is None
+    assert offline.get_bytes_with_headers(SECBulkFacts.URL) is None
     assert len(session.head_calls) == 1
-    assert len(session.get_calls) == 1
+    assert len(session.get_calls) == 2
 
 
 def _write_cached(
@@ -219,6 +236,39 @@ def test_matching_generation_after_head_avoids_download(tmp_path: Path) -> None:
     assert SECBulkFacts(client, cache_dir=tmp_path).ensure() == archive
     assert client.head_calls == 1
     assert client.get_calls == 0
+
+
+def test_download_validates_the_get_generation_when_head_is_ahead(
+    tmp_path: Path,
+) -> None:
+    """SEC's CDN can publish a new HEAD while GET still serves the prior valid ZIP."""
+    content = _zip_bytes({"CIK0000000001.json": {"cik": 1}})
+    get_modified = _http_date(date(2026, 7, 30))
+
+    class SplitGeneration(StubClient):
+        def head(self, _url: str) -> dict[str, str]:
+            self.head_calls += 1
+            return {
+                "Content-Length": str(len(content) + 327_655),
+                "Last-Modified": _http_date(date(2026, 7, 31)),
+            }
+
+        def get_bytes_with_headers(
+            self, _url: str
+        ) -> tuple[bytes, dict[str, str]]:
+            self.get_calls += 1
+            return content, {
+                "Content-Length": str(len(content)),
+                "Last-Modified": get_modified,
+            }
+
+    client = SplitGeneration(content)
+    archive = SECBulkFacts(client, cache_dir=tmp_path).ensure()
+    assert archive == tmp_path / "companyfacts_2026-07-30.zip"
+    assert archive is not None and archive.read_bytes() == content
+    sidecar = json.loads(archive.with_suffix(".json").read_text(encoding="utf-8"))
+    assert sidecar["bytes"] == len(content)
+    assert sidecar["last_modified"] == get_modified
 
 
 def test_offline_uses_cached_zip_and_missing_cache_returns_none(tmp_path: Path) -> None:

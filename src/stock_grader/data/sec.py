@@ -180,7 +180,7 @@ class SECClient:
         log.warning("SEC request gave up after retries: %s", url)
         return self._read_stale(path, key)
 
-    def get_bytes(self, url: str) -> bytes | None:
+    def get_bytes_with_headers(self, url: str) -> tuple[bytes, dict[str, str]] | None:
         """Rate-limited, retrying binary GET for sec.gov bulk files (dataset zips).
 
         Shares the client's limiter, session (declared User-Agent), and circuit
@@ -211,7 +211,8 @@ class SECClient:
                 continue
             if resp.status_code == 200:
                 self._consecutive_failures = 0
-                return resp.content
+                headers = {str(key): str(value) for key, value in resp.headers.items()}
+                return resp.content, headers
             if resp.status_code == 404:
                 log.info("SEC 404 for %s", url)
                 return None
@@ -225,6 +226,11 @@ class SECClient:
         self._consecutive_failures += 1
         log.warning("SEC request gave up after retries: %s", url)
         return None
+
+    def get_bytes(self, url: str) -> bytes | None:
+        """Fetch binary content while discarding representation headers."""
+        response = self.get_bytes_with_headers(url)
+        return None if response is None else response[0]
 
     def head(self, url: str) -> dict[str, str] | None:
         """Issue a rate-limited HEAD through the shared fair-access client."""

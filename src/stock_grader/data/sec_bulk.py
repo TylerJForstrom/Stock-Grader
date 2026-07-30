@@ -49,6 +49,8 @@ class _BulkClient(Protocol):
 
     def get_bytes(self, url: str) -> bytes | None: ...
 
+    def get_bytes_with_headers(self, url: str) -> tuple[bytes, dict[str, str]] | None: ...
+
 
 def _atomic_bytes(destination: Path, content: bytes) -> None:
     """Atomically replace ``destination`` with bytes written in the same directory."""
@@ -284,16 +286,44 @@ class SECBulkFacts:
             self._ensured_path = destination
             return destination
 
-        content = self.client.get_bytes(self.URL)
+        get_with_headers = getattr(self.client, "get_bytes_with_headers", None)
+        if callable(get_with_headers):
+            response = get_with_headers(self.URL)
+            if response is None:
+                content = None
+                representation_headers = headers
+            else:
+                content, representation_headers = response
+        else:
+            # Production SECClient exposes the actual GET headers. Retain compatibility for
+            # small injected clients while keeping the network path generation-safe.
+            content = self.client.get_bytes(self.URL)
+            representation_headers = headers
         if content is None:
             cached = self._offline_cache()
             self._ensured = True
             self._ensured_path = cached
             return cached
-        if len(content) != expected_bytes:
+
+        representation_last_modified = _header(representation_headers, "Last-Modified")
+        representation_generation, _ = self._last_modified(representation_last_modified)
+        representation_bytes = _positive_int(
+            _header(representation_headers, "Content-Length"),
+            "GET Content-Length",
+        )
+        if len(content) != representation_bytes:
             raise SECBulkFactsError(
                 "SEC Companyfacts download length mismatch: "
-                f"expected {expected_bytes}, received {len(content)}"
+                f"GET advertised {representation_bytes}, received {len(content)}"
+            )
+        destination = self.cache_dir / f"companyfacts_{representation_generation}.zip"
+        if (
+            representation_bytes != expected_bytes
+            or representation_last_modified != last_modified
+        ):
+            log.warning(
+                "SEC Companyfacts HEAD and GET described different generations; "
+                "validating and caching the GET representation"
             )
 
         temporary: Path | None = None
@@ -317,7 +347,7 @@ class SECBulkFacts:
 
         self._write_sidecar(
             destination,
-            last_modified=last_modified,
+            last_modified=representation_last_modified,
             digest=digest,
             member_count=member_count,
         )
