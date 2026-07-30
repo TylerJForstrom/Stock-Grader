@@ -10,8 +10,8 @@ commands that remain.
 
 Do not call M5 complete until every acceptance item in
 `docs/majors/M5-wide-universe.md` is genuinely satisfied. In particular, the
-N=250/500/1000 measured rollout, final Grader validation, and Grader workflow
-dispatch are still pending at the time of this handoff.
+The measured N=250/500/1000 rollout is complete. Final Grader full-suite
+validation, peer/sector diagnostics, and the Grader workflow dispatch remain.
 
 ## 1. Safety first on the home computer
 
@@ -55,22 +55,10 @@ Read these files in order before continuing:
 - Branch: `codex/m5-wide-universe`
 - Main/base commit: `9881a36`
 - Core M5 implementation commit: `c276a0a`
-- At the time this file was written, the branch had no upstream configured.
-- Current uncommitted work that must not be discarded:
-  - one append-only `research_ledger.jsonl` record;
-  - three generated public universe files;
-  - a staged SEC Companyfacts HEAD/GET generation-race fix in:
-    - `src/stock_grader/data/sec.py`
-    - `src/stock_grader/data/sec_bulk.py`
-    - `tests/test_sec_bulk.py`
-  - this handoff file.
-
-> **PRIMARY FILL - final Grader continuation commit(s):**
->
-> - CDN/artifact/ledger/handoff commit: `<COMMIT_SHA>`
-> - Measurement/docs commit(s): `<COMMIT_SHA_OR_LIST>`
-> - Final branch HEAD: `<COMMIT_SHA>`
-> - Remote/upstream after push: `<REMOTE_BRANCH>`
+- SEC CDN fix, public artifacts, ledger, measurements, and handoff commit:
+  `27b385d`.
+- Agent-log/final handoff update: the commit immediately following `27b385d`.
+- Remote after push: `origin/codex/m5-wide-universe`.
 
 ### Stock-Vault
 
@@ -880,22 +868,18 @@ Read, in order:
 
 Treat M5_HANDOFF_HOME.md as the exact continuation record. Verify its branch
 commits and all public/private artifact hashes before running anything
-expensive. Preserve the staged SEC HEAD/GET generation-race fix, the three
+expensive. Preserve the committed SEC HEAD/GET generation-race fix, the three
 immutable public universe files, and the single append-only PRE-REGISTERED
 ledger record.
 
 Finish the remaining work in the handoff's order:
-  1. final pre-commit Grader full suite and Ruff;
-  2. N=250 measured run and documentation;
-  3. N=500 measured run and documentation;
-  4. N=1000 measured run, requiring total <100 minutes;
-  5. coverage, graded-fraction, peer, sector-key, and 0.35 coverage-threshold
-     measurements and decisions;
-  6. Agent-log commit hashes;
-  7. final before/after-commit Grader full suites and Ruff;
-  8. push the branch, dispatch monthly-freeze.yml on that branch, and verify
+  1. verify the committed N=250/500/1000 table and public artifacts;
+  2. run the remaining peer and sector-key measurements (same-date coverage
+     and the unchanged 0.35 threshold are already documented);
+  3. run the final Grader full suite and Ruff and preserve exact summaries;
+  4. dispatch monthly-freeze.yml on the branch and verify
      the completed run with gh run list;
-  9. final three-repo status and acceptance audit.
+  5. perform the final three-repo status and acceptance audit.
 
 Use real data only. Do not weaken safety gates, edit prior ledger lines,
 overwrite immutable artifacts, pool universe IDs, leak Vault-derived data into
