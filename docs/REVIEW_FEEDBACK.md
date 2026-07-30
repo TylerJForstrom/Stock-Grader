@@ -167,6 +167,15 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 (Codex: append one line here per completed plan section, e.g.
 "2026-07-28 — completed §1 items 1-3, commit abc1234".)
 
+2026-07-30 — (Claude) ALL 13 review findings implemented and verified:
+Stock-Vault 186e4f3 (pre-collection gates w/ cross-coverage, FINRA gate,
+holiday-aware settlement roll, recs coverage floor, blanket data/** -text,
+SSGA collector live 12/12 funds, backup-vault.ps1); Stock-Data ef983cf
+(per-source last_success watermark gating, self-consistent checkpoint
+manifests, date-agnostic event dedupe, daily cross-check of the weekly
+clock); Stock-Grader (universe(asof=...) PIT replay, live-verified against
+628 real events). Review queue is EMPTY.
+
 2026-07-28 — completed §0 stabilization: implementation checkpoints `7a605d1` and
 `83f8f66`; installed-package full suite 456 passed at each boundary; repository controls and
 documentation are committed with this log entry.
