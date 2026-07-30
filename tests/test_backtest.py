@@ -20,22 +20,22 @@ def _panel(periods: int = 18, names: int = 50) -> pd.DataFrame:
         returns = 0.04 * scores + rng.normal(scale=0.03, size=names)
         start = signal + pd.Timedelta(days=1)
         end = signal + pd.offsets.MonthEnd(1)
-        for index in range(names):
-            rows.append(
-                {
-                    "signal_date": signal,
-                    "filed_through": signal,
-                    "return_start": start,
-                    "return_end": end,
-                    "ticker": f"T{index:03d}",
-                    "cik": f"{index + 1:010d}",
-                    "score": scores[index],
-                    "forward_return": returns[index],
-                    "universe_is_pit": True,
-                    "return_is_total": True,
-                    "delisting_return_included": True,
-                }
-            )
+        rows.extend(
+            {
+                "signal_date": signal,
+                "filed_through": signal,
+                "return_start": start,
+                "return_end": end,
+                "ticker": f"T{index:03d}",
+                "cik": f"{index + 1:010d}",
+                "score": scores[index],
+                "forward_return": returns[index],
+                "universe_is_pit": True,
+                "return_is_total": True,
+                "delisting_return_included": True,
+            }
+            for index in range(names)
+        )
     return pd.DataFrame(rows)
 
 

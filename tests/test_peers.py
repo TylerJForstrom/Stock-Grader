@@ -65,7 +65,7 @@ def test_auto_peers_require_the_same_snapshot_date_and_deduplicate_by_cik():
     snapshots[3].cik = "22"
     snapshots[3].ticker = "ALIAS"
 
-    peers, manifest = select_peers(target, snapshots[1:], minimum=2, maximum=4)
+    _peers, manifest = select_peers(target, snapshots[1:], minimum=2, maximum=4)
 
     assert snapshots[1].ticker not in manifest.members
     assert "as-of date" in manifest.excluded[snapshots[1].ticker]

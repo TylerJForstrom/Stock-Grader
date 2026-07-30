@@ -897,25 +897,25 @@ def cmd_freeze(args: argparse.Namespace) -> int:
 
     from .research_manifest import current_commit
 
-    rows = []
-    for report in reports.values():
-        rows.append(
-            {
-                "signal_date": signal_date.isoformat(),
-                "ticker": report.ticker,
-                "cik": report.meta.get("cik"),
-                "score": report.score,
-                "letter": report.letter,
-                "percentile": report.percentile,
-                "coverage": report.coverage,
-                "graded": report.graded,
-                "profile": report.profile,
-                "config_fingerprint": report.meta.get("config_fingerprint"),
-                "universe_fingerprint": report.meta.get("universe_fingerprint"),
-                "code_commit": current_commit(),
-                "schema_version": "1.0",
-            }
-        )
+    commit = current_commit()
+    rows = [
+        {
+            "signal_date": signal_date.isoformat(),
+            "ticker": report.ticker,
+            "cik": report.meta.get("cik"),
+            "score": report.score,
+            "letter": report.letter,
+            "percentile": report.percentile,
+            "coverage": report.coverage,
+            "graded": report.graded,
+            "profile": report.profile,
+            "config_fingerprint": report.meta.get("config_fingerprint"),
+            "universe_fingerprint": report.meta.get("universe_fingerprint"),
+            "code_commit": commit,
+            "schema_version": "1.0",
+        }
+        for report in reports.values()
+    ]
     frame = pd.DataFrame(rows).sort_values("ticker")
     tmp = out_path.with_suffix(".parquet.tmp")
     frame.to_parquet(tmp, index=False)

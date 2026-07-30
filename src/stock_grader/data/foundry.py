@@ -105,25 +105,79 @@ class FoundryDataSource:
 
     # -- datasets ----------------------------------------------------------
 
-    def universe(self, *, listed_only: bool = True) -> list[dict[str, Any]]:
+    def events(self) -> list[dict[str, Any]]:
+        """Listing/delisting/change events from the daily diff stream."""
+        blob = self._read_dataset_file("data/symbols/events", "events.jsonl")
+        return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
+
+    def universe(
+        self, *, listed_only: bool = True, asof: str | None = None
+    ) -> list[dict[str, Any]]:
         """CIK/ticker/exchange records from the daily symbol snapshot.
 
         ``listed_only`` keeps records whose exchange is a listed venue —
         the peer-hygiene filter that keeps OTC/pink-sheet names out of
         cross-sectional grading.
+
+        ``asof`` (ISO date) reconstructs point-in-time membership by replaying
+        the event stream BACKWARD from the current snapshot: additions after
+        asof are removed, removals after asof are restored, changes after asof
+        revert to their recorded previous state. Tickers get reused after
+        delistings — grading a past date against today's membership silently
+        maps dead issuers onto their symbol's new owners. The archive only
+        reaches back to its first snapshot (2026-07-28); earlier asof values
+        raise rather than silently serving today's survivors.
         """
         blob = self._read_dataset_file(
             "data/symbols/current", "sec_company_tickers_exchange.jsonl"
         )
         records = [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
+        if asof is not None:
+            members = {(r.get("cik"), r.get("ticker")): r for r in records}
+            stream = self.events()
+            # An event dated D proves snapshots existed on D-1 and D, so the
+            # earliest reconstructable membership date is earliest_event - 1.
+            # Before that the stream cannot testify: refuse rather than serve
+            # today's survivors dressed up as history.
+            earliest = min((str(e.get("date", "")) for e in stream), default=None)
+            if earliest is not None:
+                import datetime as _dt
+
+                boundary = (
+                    _dt.date.fromisoformat(earliest) - _dt.timedelta(days=1)
+                ).isoformat()
+                if asof < boundary:
+                    raise FoundryError(
+                        f"asof {asof} predates the event archive (reconstructable "
+                        f"from {boundary}); point-in-time membership unavailable"
+                    )
+            replayed = [
+                e
+                for e in stream
+                if e.get("source") == "sec_company_tickers_exchange"
+                and str(e.get("date", "")) > asof
+            ]
+            for event in sorted(replayed, key=lambda e: str(e.get("date", "")), reverse=True):
+                record = event.get("record") or {}
+                key = (record.get("cik"), record.get("ticker"))
+                kind = event.get("event")
+                if kind == "added":
+                    members.pop(key, None)
+                elif kind == "removed":
+                    members[key] = record
+                elif kind == "changed" and event.get("previous"):
+                    members[key] = event["previous"]
+            records = list(members.values())
         if listed_only:
             records = [r for r in records if r.get("exchange") in _LISTED_EXCHANGES]
         return records
 
-    def universe_tickers(self, *, listed_only: bool = True) -> list[str]:
+    def universe_tickers(
+        self, *, listed_only: bool = True, asof: str | None = None
+    ) -> list[str]:
         seen: set[str] = set()
         out: list[str] = []
-        for record in self.universe(listed_only=listed_only):
+        for record in self.universe(listed_only=listed_only, asof=asof):
             ticker = record.get("ticker")
             if ticker and ticker not in seen:
                 seen.add(ticker)
