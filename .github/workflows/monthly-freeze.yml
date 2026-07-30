@@ -21,7 +21,15 @@ jobs:
       - name: Freeze scores (bundled universe, primary spec)
         env:
           STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
-        run: stock-grader freeze --profile all_weather --universe config/universe_default.txt --out frozen_scores
+        run: |
+          # Fail fast rather than degrade to a placeholder SEC User-Agent: an
+          # empty contact is impolite to SEC and violates this repo's own
+          # contact policy.
+          if [ -z "$STOCK_GRADER_CONTACT" ]; then
+            echo "STOCK_GRADER_CONTACT is empty: set the SEC_CONTACT_EMAIL repository secret to a real contact address before running the freeze." >&2
+            exit 1
+          fi
+          stock-grader freeze --profile all_weather --universe config/universe_default.txt --out frozen_scores
       - name: Commit
         if: always()
         run: |

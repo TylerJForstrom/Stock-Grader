@@ -789,14 +789,19 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     net_spreads = [p.net_spread for p in report.periods]
     ledger_path = Path(getattr(args, "ledger", "research_ledger.jsonl"))
     prior = load_manifest(ledger_path) if ledger_path.exists() else []
+    # Only finite trial Sharpes deflate: a null/NaN sharpe (a panel too short to
+    # compute one) is a trial with no usable statistic, and letting it through
+    # makes stdev(trial_sharpes) NaN and therefore DSR=NaN on every future run.
     trial_sharpes = [
         record["metrics"]["per_period_sharpe"]
         for record in prior
         if isinstance(record.get("metrics"), dict)
-        and "per_period_sharpe" in record["metrics"]
+        and isinstance(record["metrics"].get("per_period_sharpe"), (int, float))
+        and math.isfinite(record["metrics"]["per_period_sharpe"])
     ]
     this_sharpe = per_period_sharpe(net_spreads) if len(net_spreads) >= 2 else float("nan")
-    trial_sharpes.append(this_sharpe)
+    if math.isfinite(this_sharpe):
+        trial_sharpes.append(this_sharpe)
     significance = (
         assess_edge(
             net_spreads,
@@ -816,12 +821,18 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             targets=["forward_return"],
             horizons=[],
             trials=len(trial_sharpes),
+            # Non-finite metrics are stored as None (JSON null), never NaN: a NaN
+            # in the ledger is contagious across every later deflation.
             metrics={
-                "per_period_sharpe": this_sharpe,
+                "per_period_sharpe": (
+                    this_sharpe if math.isfinite(this_sharpe) else None
+                ),
                 "mean_net_spread": report.mean_net_spread,
                 "mean_rank_ic": report.mean_rank_ic,
                 "deflated_sharpe": (
-                    significance.deflated_sharpe if significance else float("nan")
+                    significance.deflated_sharpe
+                    if significance and math.isfinite(significance.deflated_sharpe)
+                    else None
                 ),
             },
             costs={"transaction_cost_bps": float(args.transaction_cost_bps)},
@@ -893,7 +904,24 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     if not snapshots:
         console.print("[red]no securities could be loaded[/red]")
         return 2
-    reports = grade_universe(snapshots, _config_from_args(args))
+    config = _config_from_args(args)
+    reports = grade_universe(snapshots, config)
+
+    # A panel where (nearly) nothing is graded is a data outage — an EDGAR
+    # blackout on freeze day makes every gate refuse — not a signal, and once a
+    # valid-looking parquet exists it is trusted downstream forever. Refuse
+    # below the same letter-floor peer minimum the grader itself enforces
+    # (GradeConfig.min_letter_peers, default 15): fewer graded names than that
+    # cannot even support a letter, let alone a cross-sectional panel.
+    graded_count = sum(1 for report in reports.values() if report.graded)
+    if graded_count < config.min_letter_peers:
+        console.print(
+            f"[red]refusing to freeze {signal_date}: only {graded_count} of "
+            f"{len(reports)} scores are graded, below the letter-floor minimum of "
+            f"{config.min_letter_peers}. This looks like a data outage, not a "
+            f"cross-section; no panel was written to {out_path}.[/red]"
+        )
+        return 2
 
     from .research_manifest import current_commit
 
@@ -920,7 +948,6 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     tmp = out_path.with_suffix(".parquet.tmp")
     frame.to_parquet(tmp, index=False)
     tmp.replace(out_path)
-    graded_count = int(frame["graded"].sum())
     console.print(
         f"froze {len(frame)} scores ({graded_count} graded) for {signal_date} -> {out_path}"
     )

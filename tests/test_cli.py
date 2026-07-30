@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
 from argparse import Namespace
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -336,6 +338,9 @@ def test_backtest_cli_requires_and_reports_a_verifiable_input_contract(
         seed=0,
         allow_unverified_panel=False,
         format="json",
+        # Point at a scratch ledger: without this the run appends a junk trial
+        # to the repo's real research_ledger.jsonl, deflating every future DSR.
+        ledger=str(tmp_path / "ledger.jsonl"),
     )
 
     assert cli.cmd_backtest(args) == 0
@@ -397,6 +402,58 @@ def test_backtest_records_trials_and_deflates_by_ledger_history(
     assert records[-1]["trials"] == 2
 
 
+def test_backtest_null_sharpe_trial_does_not_poison_later_deflation(
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A panel too short for a Sharpe stores JSON null, never a ledger-poisoning NaN."""
+
+    def rows(months: tuple[int, ...]) -> list[dict]:
+        return [
+            {
+                "signal_date": f"2025-{month:02d}-25",
+                "filed_through": f"2025-{month:02d}-25",
+                "return_start": f"2025-{month:02d}-26",
+                "return_end": f"2025-{month + 1:02d}-25",
+                "ticker": f"T{index}",
+                "cik": f"{index + 1:010d}",
+                "score": index,
+                "forward_return": index / 1_000,
+                "universe_is_pit": True,
+                "return_is_total": True,
+                "delisting_return_included": True,
+            }
+            for month in months
+            for index in range(10)
+        ]
+
+    short = tmp_path / "short.csv"
+    pd.DataFrame(rows((1,))).to_csv(short, index=False)  # one period: no Sharpe possible
+    real = tmp_path / "real.csv"
+    pd.DataFrame(rows((1, 2, 3))).to_csv(real, index=False)
+    ledger = tmp_path / "ledger.jsonl"
+
+    def run(panel: Path) -> dict:
+        args = Namespace(
+            panel=str(panel), quantiles=2, min_cross_section=10, periods_per_year=12,
+            transaction_cost_bps=10.0, bootstrap_samples=0, bootstrap_block_periods=1,
+            seed=0, allow_unverified_panel=False, format="json", ledger=str(ledger),
+        )
+        assert cli.cmd_backtest(args) == 0
+        return json.loads(capsys.readouterr().out)
+
+    run(short)
+    first = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+    assert first["metrics"]["per_period_sharpe"] is None  # JSON null, not NaN
+    assert first["metrics"]["deflated_sharpe"] is None
+
+    payload = run(real)
+    # Old behavior: the NaN trial made stdev(trial_sharpes) NaN, so every later
+    # deflation was NaN ("NO EDGE" forever). The null trial must not deflate.
+    assert math.isfinite(payload["significance"]["deflated_sharpe"])
+    assert payload["ledger"]["lifetime_trials"] == 1  # only the finite-Sharpe trial counts
+
+
 def test_freeze_writes_immutable_dated_panel(tmp_path, monkeypatch):
     """The forward panel: one parquet per date, never overwritten."""
     from tests.test_pipeline import _universe
@@ -423,3 +480,48 @@ def test_freeze_writes_immutable_dated_panel(tmp_path, monkeypatch):
     before = out.read_bytes()
     assert cli.cmd_freeze(args) == 0  # second run: skip, never overwrite
     assert out.read_bytes() == before
+
+
+def test_freeze_refuses_a_nearly_ungraded_panel(
+    tmp_path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An EDGAR outage that fails every gate must not freeze a tradeable-looking parquet."""
+    from tests.test_pipeline import _universe
+
+    snapshots = _universe(16, with_prices=False)
+    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    monkeypatch.setattr(cli, "_build_snapshots", lambda tickers, args, provider: snapshots)
+    # Every gate refused a letter: scores exist but nothing is graded.
+    monkeypatch.setattr(
+        cli,
+        "grade_universe",
+        lambda _snapshots, _config: {s.ticker: _report(s.ticker, 50.0, "N/A") for s in snapshots},
+    )
+
+    args = Namespace(
+        out=str(tmp_path / "frozen"), universe="ignored.txt", asof="2026-07-29",
+        cache_dir=None, contact=None, no_network=True, profile="all_weather", weighting=None,
+        normalizer=None, aggregator=None, rho=None, pit=False, refresh=False,
+        sector_neutral=None, curve=None,
+    )
+    assert cli.cmd_freeze(args) == 2
+    assert not (tmp_path / "frozen" / "2026-07-29.parquet").exists()
+    assert "refusing to freeze" in capsys.readouterr().out
+
+
+def test_monthly_freeze_workflow_fails_fast_without_sec_contact() -> None:
+    """An unset SEC_CONTACT_EMAIL must abort the freeze, not degrade the SEC User-Agent."""
+    workflow = (
+        Path(__file__).resolve().parent.parent
+        / ".github" / "workflows" / "monthly-freeze.yml"
+    ).read_text(encoding="utf-8")
+
+    guard = workflow.find('if [ -z "$STOCK_GRADER_CONTACT" ]')
+    invocation = workflow.find("stock-grader freeze")
+    assert guard != -1, "freeze step must fail fast when STOCK_GRADER_CONTACT is empty"
+    assert guard < invocation
+    guard_block = workflow[guard:invocation]
+    assert "SEC_CONTACT_EMAIL" in guard_block  # the message names the secret to set
+    assert "exit 1" in guard_block

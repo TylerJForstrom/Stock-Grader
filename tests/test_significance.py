@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 from stock_grader.significance import (
@@ -126,6 +127,26 @@ def test_weak_signal_many_trials_is_no_edge() -> None:
     report = assess_edge(returns, trials)
     assert not report.significant
     assert "NO EDGE" in report.verdict or "MARGINAL" in report.verdict
+
+
+def test_deflation_ignores_none_and_non_finite_trial_sharpes() -> None:
+    # A ledger trial whose Sharpe could not be computed arrives as None (or a
+    # legacy NaN). One such value must not turn stdev — and every later DSR —
+    # into NaN.
+    rng = random.Random(6)
+    returns = [rng.gauss(0.001, 0.01) for _ in range(200)]
+    clean_trials = [0.01, 0.02, 0.03]
+    polluted_trials = [0.01, None, float("nan"), 0.02, float("inf"), 0.03]
+
+    clean = assess_edge(returns, clean_trials, bootstrap_samples=100)
+    polluted = assess_edge(returns, polluted_trials, bootstrap_samples=100)
+
+    assert polluted.n_trials == clean.n_trials == 3
+    assert polluted.deflated_sharpe == clean.deflated_sharpe
+    assert math.isfinite(polluted.deflated_sharpe)
+
+    dsr, benchmark = deflated_sharpe_ratio(returns, polluted_trials)
+    assert (dsr, benchmark) == deflated_sharpe_ratio(returns, clean_trials)
 
 
 def test_assess_edge_reports_all_fields() -> None:

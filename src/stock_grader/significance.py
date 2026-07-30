@@ -158,17 +158,28 @@ def expected_max_sharpe(trial_sharpe_std: float, n_trials: int) -> float:
     return trial_sharpe_std * ((1.0 - EULER_MASCHERONI) * z1 + EULER_MASCHERONI * z2)
 
 
+def _finite_trial_sharpes(trial_sharpes: Sequence[float | None]) -> list[float]:
+    """Drop None/non-finite entries: one NaN makes stdev — and so every DSR — NaN."""
+    return [
+        float(sharpe)
+        for sharpe in trial_sharpes
+        if isinstance(sharpe, (int, float)) and math.isfinite(sharpe)
+    ]
+
+
 def deflated_sharpe_ratio(
-    returns: Sequence[float], trial_sharpes: Sequence[float]
+    returns: Sequence[float], trial_sharpes: Sequence[float | None]
 ) -> tuple[float, float]:
     """Deflated Sharpe Ratio.
 
     Returns ``(dsr, deflated_benchmark_sr)``. ``trial_sharpes`` are the
     *per-period* Sharpes of every configuration searched (their dispersion sets
-    the selection-inflation benchmark).
+    the selection-inflation benchmark). None/non-finite entries — trials whose
+    Sharpe could not be computed — are excluded from the dispersion estimate.
     """
-    n_trials = len(trial_sharpes)
-    benchmark = expected_max_sharpe(stdev(trial_sharpes), n_trials)
+    usable = _finite_trial_sharpes(trial_sharpes)
+    n_trials = len(usable)
+    benchmark = expected_max_sharpe(stdev(usable), n_trials)
     return probabilistic_sharpe_ratio(returns, benchmark_sr=benchmark), benchmark
 
 
@@ -283,7 +294,7 @@ class SignificanceReport:
 
 def assess_edge(
     returns: Sequence[float],
-    trial_sharpes: Sequence[float],
+    trial_sharpes: Sequence[float | None],
     *,
     alpha: float = 0.05,
     bootstrap_seed: int = 0,
@@ -294,8 +305,10 @@ def assess_edge(
 
     ``returns`` are the selected strategy's realized (ideally out-of-sample)
     per-period returns. ``trial_sharpes`` are the per-period Sharpes of every
-    configuration searched (use :func:`per_period_sharpe`).
+    configuration searched (use :func:`per_period_sharpe`); None/non-finite
+    entries are dropped so a sharpe-less trial cannot NaN the whole assessment.
     """
+    trial_sharpes = _finite_trial_sharpes(trial_sharpes)
     n = len(returns)
     annual = sharpe_ratio(returns, periods_per_year=periods_per_year)
     psr0 = probabilistic_sharpe_ratio(returns, 0.0)
