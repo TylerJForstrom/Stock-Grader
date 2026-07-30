@@ -57,7 +57,7 @@ Read these files in order before continuing:
 - Core M5 implementation commit: `c276a0a`
 - SEC CDN fix, public artifacts, ledger, measurements, and handoff commit:
   `27b385d`.
-- Agent-log/final handoff update: the commit immediately following `27b385d`.
+- Agent-log/final handoff update: `806e896`.
 - Remote after push: `origin/codex/m5-wide-universe`.
 
 ### Stock-Vault
@@ -349,6 +349,13 @@ Combined targeted regression set:
 190 passed in 1007.86s (0:16:47)
 ```
 
+Post-artifact high-risk targeted set:
+
+```text
+186 passed in 624.37s (0:10:24)
+All checks passed!
+```
+
 Ruff:
 
 ```text
@@ -366,18 +373,9 @@ The new time is 17.4% of the old time (5.73x faster), below the milestone's
 25% ceiling. Both runs attempted the same eleven profiles and refused the same
 cache-starved profiles, so the timing comparison is like-for-like.
 
-The staged CDN fix and generated artifacts landed after the `c276a0a` full
-suite. They still require final full Grader validation.
-
-> **PRIMARY FILL - final Stock-Grader validation:**
->
-> - Installed command: `python -m pip install -e ".[dev]"`
-> - Pre-final-commit pytest line: `<EXACT_LINE>`
-> - Pre-final-commit Ruff line: `<EXACT_LINE>`
-> - Final commit: `<COMMIT_SHA>`
-> - Post-final-commit pytest line: `<EXACT_LINE>`
-> - Post-final-commit Ruff line: `<EXACT_LINE>`
-> - Final test count (must be at least 582): `<COUNT>`
+The CDN fix and generated artifacts landed after the `c276a0a` full suite.
+Their high-risk targeted set and repo-wide Ruff are green, but the original
+request still requires one final unabridged `python -m pytest -q` at home.
 
 ### Stock-Vault
 
@@ -549,7 +547,7 @@ ground truth, real data, licensing, or live services contradicted one another.
 | Final Grader suite after CDN/artifacts/docs | **Pending** |
 | Vault suite and fixture screen | Met |
 | Public spec | Met |
-| Public 1,000-name file | Generated and hash-verified; **not yet final-committed at handoff** |
+| Public 1,000-name file | Met: generated, hash-verified, committed in `27b385d` |
 | Multi-profile equality test | Met |
 | 82-name speedup <=25% | Met: 17.4% |
 | Clean dated-frame cache equality | Met |
@@ -559,11 +557,11 @@ ground truth, real data, licensing, or live services contradicted one another.
 | SEC-only exactly 11 + second exit 0 | **Blocked by documented price/alarm contradiction** |
 | N=250/500/1000 timing table | Met; measured rows are below and in `docs/UNIVERSE.md` |
 | N=1000 under 100 minutes | Met: 1,253.896 seconds (20.90 minutes) |
-| Grader workflow branch dispatch green | **Pending** |
-| Exactly one pre-registration ledger record + valid chain | Met in working tree; final commit pending |
+| Grader workflow branch dispatch green | Dispatched as run `30579474350`; terminal green result pending |
+| Exactly one pre-registration ledger record + valid chain | Met and committed in `27b385d` |
 | Coverage/graded and retuning measurements documented | Partial: same-date 82-to-1,000 coverage and unchanged 0.35 gate are documented; peer/sector measurements remain |
 | Ecosystem and Vault docs | Met |
-| `docs/REVIEW_FEEDBACK.md` M5 commit-hash line | **Pending** |
+| `docs/REVIEW_FEEDBACK.md` M5 commit-hash line | Met in `806e896` |
 
 M5 is not complete at handoff.
 
