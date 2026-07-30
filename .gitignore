@@ -10,3 +10,4 @@ coverage.xml
 htmlcov/
 .cache/
 .DS_Store
+*.parquet.tmp

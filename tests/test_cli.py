@@ -10,15 +10,15 @@ import pandas as pd
 import pytest
 
 from stock_grader import cli
-from stock_grader.profiles import ConsensusResult
+from stock_grader.profiles import ConsensusResult, profile_names
 from stock_grader.types import GradeReport, SecuritySnapshot
 
 
-def _report(ticker: str, score: float, letter: str) -> GradeReport:
+def _report(ticker: str, score: float, letter: str, profile: str = "quality") -> GradeReport:
     return GradeReport(
         ticker=ticker,
         asof=date(2026, 7, 28),
-        profile="quality",
+        profile=profile,
         score=score,
         letter=letter,
         ci=(score - 5.0, score + 5.0),
@@ -454,22 +454,32 @@ def test_backtest_null_sharpe_trial_does_not_poison_later_deflation(
     assert payload["ledger"]["lifetime_trials"] == 1  # only the finite-Sharpe trial counts
 
 
+def _freeze_args(out: Path, **overrides) -> Namespace:
+    values = {
+        "out": str(out),
+        "universe": "ignored.txt",
+        "asof": "2026-07-29",
+        "pit": False,
+        "refresh": False,
+        "all_profiles": False,
+    }
+    values.update(overrides)
+    return _common_args(**values)
+
+
 def test_freeze_writes_immutable_dated_panel(tmp_path, monkeypatch):
-    """The forward panel: one parquet per date, never overwritten."""
+    """The forward panel: one parquet per profile per date, never overwritten."""
     from tests.test_pipeline import _universe
 
     snapshots = _universe(16, with_prices=False)
     monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
     monkeypatch.setattr(cli, "_build_snapshots", lambda tickers, args, provider: snapshots)
 
-    args = Namespace(
-        out=str(tmp_path / "frozen"), universe="ignored.txt", asof="2026-07-29",
-        cache_dir=None, contact=None, no_network=True, profile="all_weather", weighting=None,
-        normalizer=None, aggregator=None, rho=None, pit=False, refresh=False,
-        sector_neutral=None, curve=None,
-    )
+    args = _freeze_args(tmp_path / "frozen", profile="all_weather")
     assert cli.cmd_freeze(args) == 0
-    out = tmp_path / "frozen" / "2026-07-29.parquet"
+    # Single-profile mode writes into the profile's own subdirectory too, so the
+    # layout is identical whichever mode produced a panel.
+    out = tmp_path / "frozen" / "all_weather" / "2026-07-29.parquet"
     assert out.exists()
     frame = pd.read_parquet(out)
     assert len(frame) == 16
@@ -500,15 +510,142 @@ def test_freeze_refuses_a_nearly_ungraded_panel(
         lambda _snapshots, _config: {s.ticker: _report(s.ticker, 50.0, "N/A") for s in snapshots},
     )
 
-    args = Namespace(
-        out=str(tmp_path / "frozen"), universe="ignored.txt", asof="2026-07-29",
-        cache_dir=None, contact=None, no_network=True, profile="all_weather", weighting=None,
-        normalizer=None, aggregator=None, rho=None, pit=False, refresh=False,
-        sector_neutral=None, curve=None,
-    )
+    args = _freeze_args(tmp_path / "frozen", profile="all_weather")
     assert cli.cmd_freeze(args) == 2
-    assert not (tmp_path / "frozen" / "2026-07-29.parquet").exists()
+    assert not (tmp_path / "frozen" / "all_weather" / "2026-07-29.parquet").exists()
     assert "refusing to freeze" in capsys.readouterr().out
+
+
+def test_freeze_all_profiles_writes_one_panel_per_registered_profile(tmp_path, monkeypatch):
+    """One SEC fetch, one snapshot build, a panel per style lens."""
+    from tests.test_pipeline import _universe
+
+    snapshots = _universe(16, with_prices=False)
+    builds = []
+
+    def build_snapshots(tickers, args, provider):
+        builds.append(tickers)
+        return snapshots
+
+    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    monkeypatch.setattr(cli, "_build_snapshots", build_snapshots)
+    monkeypatch.setattr(
+        cli,
+        "grade_universe",
+        lambda snaps, config: {
+            s.ticker: _report(s.ticker, 50.0, "B", profile=config.name) for s in snaps
+        },
+    )
+
+    args = _freeze_args(tmp_path / "frozen", all_profiles=True)
+    assert cli.cmd_freeze(args) == 0
+    assert len(builds) == 1  # the extra profiles must cost no extra fetching
+    for profile in profile_names():
+        panel = tmp_path / "frozen" / profile / "2026-07-29.parquet"
+        assert panel.exists(), profile
+        frame = pd.read_parquet(panel)
+        assert len(frame) == 16
+        assert set(frame["profile"]) == {profile}
+
+    before = {p: p.read_bytes() for p in (tmp_path / "frozen").rglob("*.parquet")}
+    assert cli.cmd_freeze(args) == 0  # immutability holds for every profile
+    assert {p: p.read_bytes() for p in (tmp_path / "frozen").rglob("*.parquet")} == before
+    assert len(builds) == 1  # nothing left to freeze: no fetch at all
+
+
+def _refusing_universe(monkeypatch, refuse: set[str]):
+    """Grade every profile in `refuse` as ungraded, the rest as graded B."""
+    from tests.test_pipeline import _universe
+
+    snapshots = _universe(16, with_prices=False)
+    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    monkeypatch.setattr(cli, "_build_snapshots", lambda tickers, args, provider: snapshots)
+    monkeypatch.setattr(
+        cli,
+        "grade_universe",
+        lambda snaps, config: {
+            s.ticker: _report(
+                s.ticker,
+                50.0,
+                "N/A" if config.name in refuse else "B",
+                profile=config.name,
+            )
+            for s in snaps
+        },
+    )
+
+
+def test_freeze_all_profiles_skips_one_refused_profile_without_failing(
+    tmp_path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The interlock is per profile, and a profile that never graded is not news.
+
+    momentum and low_volatility cannot grade without a dense price series, so
+    failing the monthly run for that known state would train the operator to
+    ignore the alarm entirely.
+    """
+    _refusing_universe(monkeypatch, {"momentum"})
+
+    args = _freeze_args(tmp_path / "frozen", all_profiles=True)
+    assert cli.cmd_freeze(args) == 0  # structural refusal: the run stays green
+    assert not (tmp_path / "frozen" / "momentum" / "2026-07-29.parquet").exists()
+    for profile in profile_names():
+        if profile != "momentum":
+            assert (tmp_path / "frozen" / profile / "2026-07-29.parquet").exists(), profile
+    out = capsys.readouterr().out
+    assert "refusing to freeze" in out
+    assert "momentum" in out  # the refusal names the profile that was skipped
+    assert "structural" in out
+
+
+def test_freeze_fails_when_a_profile_that_froze_before_refuses_now(
+    tmp_path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A profile with history refusing IS news: something broke, so go red."""
+    _refusing_universe(monkeypatch, {"momentum"})
+    prior = tmp_path / "frozen" / "momentum" / "2026-06-30.parquet"
+    prior.parent.mkdir(parents=True)
+    prior.write_bytes(b"prior panel")
+
+    args = _freeze_args(tmp_path / "frozen", all_profiles=True)
+    assert cli.cmd_freeze(args) == 2
+    assert "regression" in capsys.readouterr().out
+
+
+def test_freeze_fails_when_the_traded_profile_refuses(tmp_path, monkeypatch) -> None:
+    """all_weather is what the paper trader trades; its refusal breaks trading."""
+    _refusing_universe(monkeypatch, {cli.TRADED_PROFILE})
+
+    args = _freeze_args(tmp_path / "frozen", all_profiles=True)
+    assert cli.cmd_freeze(args) == 2
+
+
+def test_freeze_fails_when_every_profile_refuses(tmp_path, monkeypatch) -> None:
+    """Nothing written at all is a data outage, whatever the per-profile story."""
+    _refusing_universe(monkeypatch, set(profile_names()))
+
+    args = _freeze_args(tmp_path / "frozen", all_profiles=True)
+    assert cli.cmd_freeze(args) == 2
+
+
+def test_freeze_all_profiles_is_registered_on_the_subcommand(tmp_path) -> None:
+    """Workflows pass it subcommand-first; a top-level-only flag would exit 2 in cron."""
+    args = cli.build_parser().parse_args(
+        ["freeze", "--universe", str(tmp_path / "u.txt"), "--all-profiles"]
+    )
+    assert args.all_profiles is True
+    assert cli.build_parser().parse_args(["freeze", "--universe", "u.txt"]).all_profiles is False
+
+
+def test_shipped_panels_live_under_their_profile_directory() -> None:
+    """Layout v2 (pinned cross-repo): frozen_scores/<profile>/<date>.parquet, no flat files."""
+    frozen = Path(__file__).resolve().parent.parent / "frozen_scores"
+    assert (frozen / "all_weather" / "2026-07-30.parquet").exists()
+    assert not list(frozen.glob("*.parquet"))  # the legacy flat panel was migrated, not copied
 
 
 def test_monthly_freeze_workflow_fails_fast_without_sec_contact() -> None:
@@ -525,3 +662,17 @@ def test_monthly_freeze_workflow_fails_fast_without_sec_contact() -> None:
     guard_block = workflow[guard:invocation]
     assert "SEC_CONTACT_EMAIL" in guard_block  # the message names the secret to set
     assert "exit 1" in guard_block
+
+
+def test_monthly_freeze_workflow_freezes_every_profile() -> None:
+    """The monthly clock is the only source of forward evidence — it must cover all profiles."""
+    workflow = (
+        Path(__file__).resolve().parent.parent
+        / ".github" / "workflows" / "monthly-freeze.yml"
+    ).read_text(encoding="utf-8")
+
+    invocation = next(
+        line for line in workflow.splitlines() if "stock-grader freeze" in line
+    )
+    assert "--all-profiles" in invocation
+    assert "--profile " not in invocation  # not pinned to one lens any more

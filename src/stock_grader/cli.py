@@ -542,7 +542,7 @@ def _build_snapshots(
     return snapshots
 
 
-def _config_from_args(args: argparse.Namespace) -> GradeConfig:
+def _config_from_args(args: argparse.Namespace, *, profile: str | None = None) -> GradeConfig:
     overrides = {}
     if args.weighting:
         overrides["metric_weighting"] = args.weighting
@@ -558,7 +558,7 @@ def _config_from_args(args: argparse.Namespace) -> GradeConfig:
         overrides["curve"] = args.curve
     if args.rho is not None:
         overrides["aggregator_kwargs"] = {"rho": args.rho}
-    return get_profile(args.profile, **overrides)
+    return get_profile(profile or args.profile, **overrides)
 
 
 def cmd_grade(args: argparse.Namespace) -> int:
@@ -878,13 +878,33 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+# Stock-Vault's paper trader pins its pre-registered v1 rules to this profile,
+# so its refusal breaks live trading while another profile's does not.
+TRADED_PROFILE = "all_weather"
+
+
+def _has_prior_panel(out_dir: Path, profile: str, signal_date: date) -> bool:
+    """Has this profile ever frozen a panel on a date other than this one?"""
+    directory = out_dir / profile
+    if not directory.is_dir():
+        return False
+    return any(path.stem != signal_date.isoformat() for path in directory.glob("*.parquet"))
+
+
 def cmd_freeze(args: argparse.Namespace) -> int:
     """Freeze today's scores into the append-only forward panel.
 
-    Grades the universe and writes one immutable parquet per signal date.
-    Scores frozen BEFORE the future happens are the only backtest input that
-    cannot possibly be overfit to it — every month of running this is a month
-    of evidence money cannot buy later. Existing dates are never overwritten.
+    Grades the universe and writes one immutable parquet per profile per signal
+    date. Scores frozen BEFORE the future happens are the only backtest input
+    that cannot possibly be overfit to it — every month of running this is a
+    month of evidence money cannot buy later. Existing dates are never
+    overwritten.
+
+    ``--all-profiles`` grades the one set of snapshots under every registered
+    profile. The SEC fetch and the snapshot build happen once either way, so
+    the extra profiles cost no network calls at all, and in a few years the
+    panels answer *which* style lens has an edge rather than merely whether one
+    blend does. The deflated-Sharpe ledger already charges for the extra trials.
     """
     provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
                                      offline=args.no_network))
@@ -894,63 +914,107 @@ def cmd_freeze(args: argparse.Namespace) -> int:
         return 2
     signal_date = date.fromisoformat(args.asof) if args.asof else date.today()
     out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{signal_date.isoformat()}.parquet"
-    if out_path.exists():
-        status_console.print(f"[dim]{out_path} already frozen; nothing to do[/dim]")
+    profiles = profile_names() if getattr(args, "all_profiles", False) else [args.profile]
+
+    def panel_path(profile: str) -> Path:
+        return out_dir / profile / f"{signal_date.isoformat()}.parquet"
+
+    pending = []
+    for profile in profiles:
+        if panel_path(profile).exists():
+            status_console.print(f"[dim]{panel_path(profile)} already frozen; nothing to do[/dim]")
+        else:
+            pending.append(profile)
+    if not pending:
         return 0
 
+    # Built once and graded under every pending profile: the whole point of the
+    # multi-profile freeze is that the fetch is the expensive part.
     snapshots = _build_snapshots(tickers, args, provider=provider)
     if not snapshots:
         console.print("[red]no securities could be loaded[/red]")
-        return 2
-    config = _config_from_args(args)
-    reports = grade_universe(snapshots, config)
-
-    # A panel where (nearly) nothing is graded is a data outage — an EDGAR
-    # blackout on freeze day makes every gate refuse — not a signal, and once a
-    # valid-looking parquet exists it is trusted downstream forever. Refuse
-    # below the same letter-floor peer minimum the grader itself enforces
-    # (GradeConfig.min_letter_peers, default 15): fewer graded names than that
-    # cannot even support a letter, let alone a cross-sectional panel.
-    graded_count = sum(1 for report in reports.values() if report.graded)
-    if graded_count < config.min_letter_peers:
-        console.print(
-            f"[red]refusing to freeze {signal_date}: only {graded_count} of "
-            f"{len(reports)} scores are graded, below the letter-floor minimum of "
-            f"{config.min_letter_peers}. This looks like a data outage, not a "
-            f"cross-section; no panel was written to {out_path}.[/red]"
-        )
         return 2
 
     from .research_manifest import current_commit
 
     commit = current_commit()
-    rows = [
-        {
-            "signal_date": signal_date.isoformat(),
-            "ticker": report.ticker,
-            "cik": report.meta.get("cik"),
-            "score": report.score,
-            "letter": report.letter,
-            "percentile": report.percentile,
-            "coverage": report.coverage,
-            "graded": report.graded,
-            "profile": report.profile,
-            "config_fingerprint": report.meta.get("config_fingerprint"),
-            "universe_fingerprint": report.meta.get("universe_fingerprint"),
-            "code_commit": commit,
-            "schema_version": "1.0",
-        }
-        for report in reports.values()
-    ]
-    frame = pd.DataFrame(rows).sort_values("ticker")
-    tmp = out_path.with_suffix(".parquet.tmp")
-    frame.to_parquet(tmp, index=False)
-    tmp.replace(out_path)
-    console.print(
-        f"froze {len(frame)} scores ({graded_count} graded) for {signal_date} -> {out_path}"
-    )
+    refused: list[str] = []
+    for profile in pending:
+        config = _config_from_args(args, profile=profile)
+        reports = grade_universe(snapshots, config)
+
+        # A panel where (nearly) nothing is graded is a data outage — an EDGAR
+        # blackout on freeze day makes every gate refuse — not a signal, and once a
+        # valid-looking parquet exists it is trusted downstream forever. Refuse
+        # below the same letter-floor peer minimum the grader itself enforces
+        # (GradeConfig.min_letter_peers, default 15): fewer graded names than that
+        # cannot even support a letter, let alone a cross-sectional panel. The
+        # floor is per profile — a strict profile refusing on this universe says
+        # nothing about the others, so it must not suppress them.
+        graded_count = sum(1 for report in reports.values() if report.graded)
+        if graded_count < config.min_letter_peers:
+            console.print(
+                f"[red]refusing to freeze {signal_date} for profile {profile}: only "
+                f"{graded_count} of {len(reports)} scores are graded, below the "
+                f"letter-floor minimum of {config.min_letter_peers}. This looks like a "
+                f"data outage, not a cross-section; no panel was written to "
+                f"{panel_path(profile)}.[/red]"
+            )
+            refused.append(profile)
+            continue
+
+        rows = [
+            {
+                "signal_date": signal_date.isoformat(),
+                "ticker": report.ticker,
+                "cik": report.meta.get("cik"),
+                "score": report.score,
+                "letter": report.letter,
+                "percentile": report.percentile,
+                "coverage": report.coverage,
+                "graded": report.graded,
+                "profile": report.profile,
+                "config_fingerprint": report.meta.get("config_fingerprint"),
+                "universe_fingerprint": report.meta.get("universe_fingerprint"),
+                "code_commit": commit,
+                "schema_version": "1.0",
+            }
+            for report in reports.values()
+        ]
+        frame = pd.DataFrame(rows).sort_values("ticker")
+        out_path = panel_path(profile)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out_path.with_suffix(".parquet.tmp")
+        frame.to_parquet(tmp, index=False)
+        tmp.replace(out_path)
+        console.print(
+            f"froze {len(frame)} scores ({graded_count} graded) for {signal_date} -> {out_path}"
+        )
+
+    if refused:
+        # Alarm policy. Some profiles simply cannot grade this universe — momentum
+        # and low_volatility need a denser daily price series than the free chain
+        # supplies — so failing the run every month for a known, unchanging state
+        # is how real alarms get trained away. Fail only on genuinely new
+        # information: the profile the paper trader actually trades refusing, a
+        # profile that HAS frozen before refusing now (a regression), or a month
+        # where nothing was written at all.
+        regressed = sorted(p for p in refused if _has_prior_panel(out_dir, p, signal_date))
+        console.print(
+            f"[red]{len(refused)} of {len(pending)} profiles were refused: "
+            f"{', '.join(refused)}[/red]"
+        )
+        if TRADED_PROFILE in refused or regressed or len(refused) == len(pending):
+            if regressed:
+                console.print(
+                    f"[red]regression: {', '.join(regressed)} froze a panel before and "
+                    f"refused now[/red]"
+                )
+            return 2
+        console.print(
+            "[yellow]those profiles have never frozen a panel on this universe "
+            "(structural, not a regression); the run stays green[/yellow]"
+        )
     return 0
 
 
@@ -1091,7 +1155,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="freeze today's scores into the append-only forward panel (never overwrites)",
     )
     p_freeze.add_argument("--out", default="frozen_scores",
-                          help="directory of immutable per-date parquet files")
+                          help="directory of immutable <profile>/<date>.parquet files")
+    p_freeze.add_argument("--all-profiles", action="store_true",
+                          help="grade the one set of snapshots under every registered profile "
+                               "and write a panel for each (no extra network calls); --profile "
+                               "is ignored")
     common(p_freeze, needs_universe=True)
     p_freeze.set_defaults(func=cmd_freeze)
 

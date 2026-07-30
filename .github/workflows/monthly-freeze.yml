@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .
-      - name: Freeze scores (bundled universe, primary spec)
+      - name: Freeze scores (bundled universe, every profile)
         env:
           STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
         run: |
@@ -29,7 +29,9 @@ jobs:
             echo "STOCK_GRADER_CONTACT is empty: set the SEC_CONTACT_EMAIL repository secret to a real contact address before running the freeze." >&2
             exit 1
           fi
-          stock-grader freeze --profile all_weather --universe config/universe_default.txt --out frozen_scores
+          # One SEC fetch, one snapshot build, a panel per profile: the extra
+          # profiles are free in network terms and multiply the forward evidence.
+          stock-grader freeze --all-profiles --universe config/universe_default.txt --out frozen_scores
       - name: Commit
         if: always()
         run: |
