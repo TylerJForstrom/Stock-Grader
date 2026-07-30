@@ -58,6 +58,35 @@ collector to skip retracted experiments. This is specified in detail as Step 9 o
 [M1](majors/M1-forward-panel-and-backtest.md), and it should be done before any real trial is recorded.
 Also make the test suite write to a temporary ledger so it stops polluting the real one.
 
+## Also do early: wire the vault price archive into the grader CLI
+
+**Two of the eleven scoring lenses are currently blind, and the data they need already exists.**
+
+Measured, not theorised: the first all-profiles cloud freeze
+([run 30557005303](https://github.com/TylerJForstrom/Stock-Grader/actions/runs/30557005303), 2026-07-30)
+wrote nine panels and refused two — `momentum` and `low_volatility` each graded **0 of 82** names. They need
+a dense daily price series, and the freeze runs with SEC data only.
+
+Stock-Vault holds exactly that series: `data/market_eod`, ~501 trading days × ~12,400 tickers, collected
+daily. `VaultDataSource` and `VaultPriceProvider` in `src/stock_grader/data/vault.py` already read and
+hash-verify it. But `grep -n vault src/stock_grader/cli.py` returns **nothing** — the adapter was built and
+never connected, so `--price-provider` has no `vault` choice and no command can reach the archive.
+
+The fix is small and unlocks disproportionate value (two whole style lenses, plus denser prices for every
+other profile):
+
+1. Add `vault` to the `--price-provider` choices and a `--vault-dir` argument, routing to the existing
+   `VaultPriceProvider`. Register both on the subparsers via `parents=[shared]`.
+2. In `monthly-freeze.yml`, check out Stock-Vault with a `VAULT_REPO_TOKEN` secret (a fine-grained PAT with
+   contents:read on the private vault — the same secret M1 requires) and pass `--price-provider vault
+   --vault-dir <checkout>/data`.
+3. Expect the alarm policy to fire once, correctly: after this lands, `momentum` and `low_volatility` should
+   start grading. If they later refuse *again*, that is now a regression and the run will go red — which is
+   the desired behaviour.
+
+Until this is done, treat any conclusion about momentum or low-volatility as unsupported: those arms have no
+evidence at all, not weak evidence.
+
 ## Ground rules (non-negotiable)
 
 These are distilled from failures this ecosystem has already had. `majors/ORIENTATION.md` has the full list
