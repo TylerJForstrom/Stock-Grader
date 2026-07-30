@@ -3,6 +3,33 @@
 > Part of the major-improvements handoff. Read [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
 > first — it carries the orientation, the working rules, and the milestone ordering.
 
+> ## Status update — landed since these specs were researched
+>
+> These specs were written earlier on 2026-07-30. The work they describe as "in flight", "in flux", "being
+> edited right now", or "must land first" has since **landed, been adversarially reviewed, and been pushed**.
+> Wherever a line below tells you to wait for it, coordinate with another agent, or treat a file as a moving
+> target, that instruction is **superseded**. All three repos are clean and green:
+>
+> - **Stock-Grader `5290a2f`** (582 tests) — `freeze --all-profiles` writes
+>   `frozen_scores/<profile>/YYYY-MM-DD.parquet` across 11 registered profiles. Nine panels exist for
+>   2026-07-30; `momentum` and `low_volatility` refused because they cannot grade without a dense price
+>   series. `monthly-freeze.yml` runs `--all-profiles` and is verified green in the cloud. A refusal only
+>   fails the run when the traded profile refuses, a profile that froze before refuses now, or nothing was
+>   written — a structural refusal keeps the run green on purpose.
+> - **Stock-Vault `b407524`** (73 tests) — `load_frozen_panel(source, profile="all_weather")` reads the
+>   per-profile layout, with the flat layout kept as a documented legacy fallback, so the real trader is NOT
+>   broken; it has in fact traded (10 orders on 2026-07-30). The journal now emits `kind: "benchmark"` and
+>   `kind: "fill"`. **The fill record's drift field is `drift_bps`, with `reference_close` and
+>   `reference_date`** — deliberately not named slippage, because the free EOD archive lags two sessions.
+>   `staleness.check_paper` now reads broker-sourced `snapshot` records rather than the journal manifest.
+> - **Stock-Data `15b0ad2`** (38 tests).
+>
+> Still outstanding and still yours to handle where your milestone needs them: the `VAULT_REPO_TOKEN` PAT,
+> and the **unwired vault price provider** described in [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
+> — `momentum` and `low_volatility` produce no evidence at all until that lands.
+>
+> **Line numbers in these specs predate the landed work. Re-read every file before you edit it.**
+
 **Effort:** large
 
 **Why it matters:** Turn the vault's four restricted-license archives (IB borrow, FINRA short interest, Finnhub recommendations, SSGA holdings) from write-only archives into evaluable signals by emitting panels that satisfy the exact column contract `stock_grader.backtest._validate_panel` enforces, so `stock-grader backtest <panel.parquet>` runs on them unchanged. The FINRA panel is evaluable TODAY (measured: 5,890 names survive liquidity filters for settlement 2026-05-29, and market_eod covers 501 trading days 2024-07-29..2026-07-28, so widening the FINRA `--since` yields ~45 non-overlapping periods immediately); the other three accrue forward. This is the first place in the ecosystem where a non-fundamental signal can be measured against an out-of-sample cross-section, which is the whole point of the edge hunt.
@@ -12,7 +39,7 @@
 - HANDOFF item 4 (ticker canonicalization) — this spec implements the Stock-Vault half of it (src/stock_vault/tickers.py) and can proceed before the Stock-Grader half lands, but the two must agree that canonical = SEC dash form
 - HANDOFF item 5 (events.jsonl into the manifest contract + universe(asof)) — already partially done (Stock-Data/data/symbols/events/{events.jsonl,manifest.json} exist), but its earliest event is 2026-07-29, so a genuinely point-in-time universe (universe_is_pit=true) is blocked until roughly a year of events accrue
 - FINRA archive backfill (step 2) must run before the short_interest panels have enough periods to evaluate
-- The in-flux multi-profile freeze work in Stock-Grader/src/stock_grader/cli.py and the paper.py benchmark/fill journaling — no code dependency, but do not touch either file while those agents are editing them
+- ~~The in-flux multi-profile freeze work and the paper.py benchmark/fill journaling~~ **DONE (5290a2f / b407524)**: both are merged and pushed, so both files are safe to read and edit normally
 
 ## Verified ground truth
 

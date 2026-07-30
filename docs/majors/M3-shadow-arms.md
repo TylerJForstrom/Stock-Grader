@@ -3,14 +3,41 @@
 > Part of the major-improvements handoff. Read [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
 > first — it carries the orientation, the working rules, and the milestone ordering.
 
+> ## Status update — landed since these specs were researched
+>
+> These specs were written earlier on 2026-07-30. The work they describe as "in flight", "in flux", "being
+> edited right now", or "must land first" has since **landed, been adversarially reviewed, and been pushed**.
+> Wherever a line below tells you to wait for it, coordinate with another agent, or treat a file as a moving
+> target, that instruction is **superseded**. All three repos are clean and green:
+>
+> - **Stock-Grader `5290a2f`** (582 tests) — `freeze --all-profiles` writes
+>   `frozen_scores/<profile>/YYYY-MM-DD.parquet` across 11 registered profiles. Nine panels exist for
+>   2026-07-30; `momentum` and `low_volatility` refused because they cannot grade without a dense price
+>   series. `monthly-freeze.yml` runs `--all-profiles` and is verified green in the cloud. A refusal only
+>   fails the run when the traded profile refuses, a profile that froze before refuses now, or nothing was
+>   written — a structural refusal keeps the run green on purpose.
+> - **Stock-Vault `b407524`** (73 tests) — `load_frozen_panel(source, profile="all_weather")` reads the
+>   per-profile layout, with the flat layout kept as a documented legacy fallback, so the real trader is NOT
+>   broken; it has in fact traded (10 orders on 2026-07-30). The journal now emits `kind: "benchmark"` and
+>   `kind: "fill"`. **The fill record's drift field is `drift_bps`, with `reference_close` and
+>   `reference_date`** — deliberately not named slippage, because the free EOD archive lags two sessions.
+>   `staleness.check_paper` now reads broker-sourced `snapshot` records rather than the journal manifest.
+> - **Stock-Data `15b0ad2`** (38 tests).
+>
+> Still outstanding and still yours to handle where your milestone needs them: the `VAULT_REPO_TOKEN` PAT,
+> and the **unwired vault price provider** described in [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
+> — `momentum` and `low_volatility` produce no evidence at all until that lands.
+>
+> **Line numbers in these specs predate the landed work. Re-read every file before you edit it.**
+
 **Effort:** large
 
 **Why it matters:** Alpaca gives exactly one paper account, so the forward-evidence clock currently tests exactly one profile (all_weather) while the other ten style lenses accrue frozen panels monthly and no forward record at all. This adds a deterministic simulator in Stock-Vault that replays the IDENTICAL pre-registered v1 selection rules — by calling paper.target_portfolio, never reimplementing it — over each profile's frozen panels, filling at the next archived session close from the whole-market EOD archive under an explicit bps cost model, and writing one append-only journal per arm using the SAME kind/record shapes as the real account. That buys an out-of-sample, pre-registered, cross-profile horse race where 11 equity curves accumulate in parallel under one reader, plus a real-vs-simulated fill calibration that turns the single real account into a measurement instrument for the other ten.
 
 ## Prerequisites
 
-- Stock-Grader multi-profile freeze (in flight, uncommitted): cmd_freeze writing frozen_scores/<profile>/YYYY-MM-DD.parquet and monthly-freeze.yml running `stock-grader freeze --all-profiles`. The simulator has nothing to replay for 10 of 11 arms until that lands and the first --all-profiles freeze runs. Only frozen_scores/all_weather/2026-07-30.parquet exists today.
-- Stock-Vault paper.py benchmark/fill journaling (in flight): the {"kind":"fill"} record shape must be reconciled with the shadow's before either is frozen. Zero fill records exist on disk today, so calibrate() is exercisable only after the real account actually trades a panel.
+- ~~Stock-Grader multi-profile freeze (in flight)~~ **DONE (5290a2f)**: the first `--all-profiles` freeze ran in the cloud and committed NINE panels for 2026-07-30 (all_weather, deep_value, dividend_growth, dividend_income, garp, growth, quality, turnaround, value). `momentum` and `low_volatility` have NO panel — they graded 0 of 82 — so those two arms have nothing to replay until the vault price provider is wired up.
+- ~~Stock-Vault paper.py benchmark/fill journaling (in flight)~~ **DONE (b407524)**: the real `{"kind":"fill"}` shape is settled — `order_id`, `symbol` (canonical dash form), `side`, `notional`, `filled_qty`, `filled_avg_price`, `filled_at`, `status`, `drift_bps`, `reference_close`, `reference_date`. ADOPT THESE NAMES; do not invent parallel ones. Real fills exist on disk as of 2026-07-30, so `calibrate()` is exercisable now.
 - market_eod archive coverage: 25 month dirs (2024-07 .. 2026-07) each with manifest.json. Shadow arms can only be simulated over sessions present in this archive; the daily collectors.yml cron must keep running or arms stall.
 - Step 1 (per-profile panel loader) blocks every other step AND unblocks the currently-broken real paper-rebalance.
 
@@ -44,7 +71,7 @@ report rather than bending the code to match the doc.
   *(`C:/Users/tforstrom/Desktop/Stock-Vault/src/stock_vault/paper.py:105-112, 224-231`)*
 - load_frozen_panel(source) currently globs ONLY the flat layout: frozen_dir = Path(source)/'frozen_scores'; candidates = sorted(p for p in frozen_dir.glob('*.parquet') if _PANEL_STEM.fullmatch(p.stem)) where _PANEL_STEM = re.compile(r'^\d{4}-\d{2}-\d{2}$'); it takes candidates[-1] and requires columns {'ticker','score','graded'}. It raises PaperTradingError(f'no frozen panels under {frozen_dir}') when empty.  
   *(`C:/Users/tforstrom/Desktop/Stock-Vault/src/stock_vault/paper.py:43,46,134-162`)*
-- IN-FLIGHT AND ALREADY ON DISK: the grader has moved panels to frozen_scores/<profile>/YYYY-MM-DD.parquet. `ls -R` shows only frozen_scores/all_weather/2026-07-30.parquet, and `git status` in Stock-Grader shows ' D frozen_scores/2026-07-30.parquet' + '?? frozen_scores/all_weather/'. Therefore paper.load_frozen_panel's flat glob now finds ZERO files and the real trader is BROKEN until it is taught the per-profile layout.  
+- **CORRECTED (this was true when researched, and is no longer):** the grader's panels live at frozen_scores/<profile>/YYYY-MM-DD.parquet (nine profiles for 2026-07-30) AND paper.load_frozen_panel is now profile-aware. The real trader is NOT broken — it traded 10 orders on 2026-07-30. Do not "fix" it.  
   *(`C:/Users/tforstrom/Desktop/Stock-Grader/frozen_scores/ (directory listing + git status)`)*
 - Frozen panel schema (13 columns, verified by reading the parquet): signal_date(str), ticker(str), cik(str), score(float64), letter(str), percentile(float64), coverage(float64), graded(bool), profile(str), config_fingerprint(str), universe_fingerprint(str), code_commit(str), schema_version(str='1.0'). The 2026-07-30 all_weather panel has 82 rows, 78 graded, profile column == ['all_weather']. Top-10 by (score desc, ticker asc): NVDA 99.36, META 98.08, ADBE 96.79, EOG 95.51, CMCSA 94.23, MSFT 92.95, MA 91.67, CRM 90.38, AXP 89.10, GOOGL 87.82.  
   *(`C:/Users/tforstrom/Desktop/Stock-Grader/frozen_scores/all_weather/2026-07-30.parquet`)*
@@ -368,7 +395,7 @@ Commit discipline: one coherent chunk per commit (steps 1-2, then 3-4, then 5-7,
 
 ## Pitfalls
 
-- THE REAL TRADER IS ALREADY BROKEN BY THE IN-FLIGHT FREEZE MOVE. paper.load_frozen_panel globs frozen_scores/*.parquet (paper.py:148), but the grader working tree has already moved the only panel to frozen_scores/all_weather/2026-07-30.parquet (git status shows ' D frozen_scores/2026-07-30.parquet' + '?? frozen_scores/all_weather/'). The next paper-trader.yml run will raise PaperTradingError('no frozen panels under .../frozen_scores'). Step 1 is not optional cleanup — it is the fix, and it must land before or with everything else.
+- **CORRECTED — the real trader is NOT broken.** This pitfall described a genuine window that has since closed: load_frozen_panel takes a `profile` argument (default all_weather), reads frozen_scores/<profile>/, and falls back to the flat layout for all_weather only. Verified by a green paper-trader run that placed 10 orders on 2026-07-30. Step 1 of this spec is therefore about the SHADOW arms' loader, not an emergency repair.
 - gzip.GzipFile(<path string>, 'wb', mtime=0) writes the TEMP FILE'S BASENAME into the gzip FNAME header (verified: identical payloads through 'x.jsonl.gz.tmp' and 'y.jsonl.gz.tmp' produced different bytes). Any byte-determinism claim built on the current paper._append_journal is false. Always write through gzip.GzipFile(filename='', mode='wb', fileobj=<open file>, mtime=0, compresslevel=9).
 - write_manifest sets generated_at_utc from dt.datetime.now(dt.UTC) (manifest.py:38), so manifest.json is NON-deterministic by construction. The determinism test must compare *.jsonl.gz only. Conversely, that same timestamp is what check_shadow's clock reads, so do not try to make it deterministic.
 - Compressed gzip bytes can differ across zlib builds even at the same compresslevel. Anchor the portable determinism claim on the sha256 of the DECOMPRESSED payload (journal.payload_sha256, also stored in the manifest's extra); compare compressed bytes only within a single machine/run.

@@ -3,13 +3,40 @@
 > Part of the major-improvements handoff. Read [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
 > first — it carries the orientation, the working rules, and the milestone ordering.
 
+> ## Status update — landed since these specs were researched
+>
+> These specs were written earlier on 2026-07-30. The work they describe as "in flight", "in flux", "being
+> edited right now", or "must land first" has since **landed, been adversarially reviewed, and been pushed**.
+> Wherever a line below tells you to wait for it, coordinate with another agent, or treat a file as a moving
+> target, that instruction is **superseded**. All three repos are clean and green:
+>
+> - **Stock-Grader `5290a2f`** (582 tests) — `freeze --all-profiles` writes
+>   `frozen_scores/<profile>/YYYY-MM-DD.parquet` across 11 registered profiles. Nine panels exist for
+>   2026-07-30; `momentum` and `low_volatility` refused because they cannot grade without a dense price
+>   series. `monthly-freeze.yml` runs `--all-profiles` and is verified green in the cloud. A refusal only
+>   fails the run when the traded profile refuses, a profile that froze before refuses now, or nothing was
+>   written — a structural refusal keeps the run green on purpose.
+> - **Stock-Vault `b407524`** (73 tests) — `load_frozen_panel(source, profile="all_weather")` reads the
+>   per-profile layout, with the flat layout kept as a documented legacy fallback, so the real trader is NOT
+>   broken; it has in fact traded (10 orders on 2026-07-30). The journal now emits `kind: "benchmark"` and
+>   `kind: "fill"`. **The fill record's drift field is `drift_bps`, with `reference_close` and
+>   `reference_date`** — deliberately not named slippage, because the free EOD archive lags two sessions.
+>   `staleness.check_paper` now reads broker-sourced `snapshot` records rather than the journal manifest.
+> - **Stock-Data `15b0ad2`** (38 tests).
+>
+> Still outstanding and still yours to handle where your milestone needs them: the `VAULT_REPO_TOKEN` PAT,
+> and the **unwired vault price provider** described in [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
+> — `momentum` and `low_volatility` produce no evidence at all until that lands.
+>
+> **Line numbers in these specs predate the landed work. Re-read every file before you edit it.**
+
 **Effort:** large
 
 **Why it matters:** Close the evidence loop: frozen point-in-time score panels are joined to realized forward returns and evaluated on a schedule, so every month of freezing turns into a recorded, multiple-testing-corrected trial instead of an un-evaluated file. Without this, the forward record accrues but never answers whether any profile ranks stocks better than chance. It also fixes the two ledger defects that would make the first real verdict uninterpretable.
 
 ## Prerequisites
 
-- The in-flight multi-profile freeze must land first: `cmd_freeze` writing `frozen_scores/<profile>/YYYY-MM-DD.parquet` (already present in the working tree at cli.py:902-987). `discover_frozen_panels` targets that layout only.
+- ~~The in-flight multi-profile freeze must land first~~ **DONE (5290a2f)**: `cmd_freeze` writes `frozen_scores/<profile>/YYYY-MM-DD.parquet` and nine panels exist for 2026-07-30. `discover_frozen_panels` targets that layout only.
 - A new Stock-Grader repository secret `VAULT_REPO_TOKEN`: a fine-grained PAT with Contents read+write on TylerJForstrom/Stock-Vault. Without it the workflow cannot read the private EOD archive or archive the built panel.
 - `data/symbols/events/manifest.json` in Stock-Data (HANDOFF item 5) — VERIFIED already present on disk, so `FoundryDataSource.universe(asof=)` works today. No action needed.
 - OPTIONAL, improves but does not block: HANDOFF item 6 (writing `cik` into `delisted_prices/*/cohort_index.json`) would upgrade delisting resolution from symbol matching to CIK matching.

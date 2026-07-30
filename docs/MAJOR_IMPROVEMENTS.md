@@ -11,6 +11,28 @@ Where a milestone says "verified", it means someone looked — not that someone 
 the artifact contract between them, the licensing split, every scheduled workflow, and the bug classes that
 have broken this system before.
 
+## Current state (2026-07-30)
+
+All three repos are clean, green, and pushed: Stock-Grader `5290a2f` (582 tests), Stock-Vault `b407524`
+(73 tests), Stock-Data `15b0ad2` (38 tests).
+
+Landed today, after these specs were researched — every milestone file carries a status banner saying the
+same thing, because several of them were written while this work was still in flight:
+
+- **Multi-profile freeze.** `freeze --all-profiles` grades one set of snapshots under all 11 profiles and
+  writes `frozen_scores/<profile>/YYYY-MM-DD.parquet`. The first cloud run committed **nine** panels for
+  2026-07-30; `momentum` and `low_volatility` refused, which is the unwired-price-provider problem below.
+- **The paper trader is live and holding positions** — 10 orders placed on 2026-07-30. Panel loading is
+  profile-aware, order failures no longer abort a rebalance, and every degenerate input (missing equity,
+  empty panel, stale panel) trips an interlock instead of trading.
+- **Benchmark and fill journaling.** The journal now emits four record kinds: `rebalance`, `snapshot`,
+  `benchmark` (SPY buy-and-hold and equal-weight counterfactuals from `BENCHMARK_START_DATE`), and `fill`
+  (with `drift_bps`, `reference_close`, `reference_date` — named drift rather than slippage because the free
+  EOD archive lags two sessions).
+
+If a milestone file and the code disagree, the code wins. Re-read before editing: every line number in those
+specs predates this work.
+
 ## The milestones
 
 | | Milestone | What it buys | Effort |

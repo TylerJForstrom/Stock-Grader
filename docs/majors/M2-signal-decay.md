@@ -3,6 +3,33 @@
 > Part of the major-improvements handoff. Read [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
 > first — it carries the orientation, the working rules, and the milestone ordering.
 
+> ## Status update — landed since these specs were researched
+>
+> These specs were written earlier on 2026-07-30. The work they describe as "in flight", "in flux", "being
+> edited right now", or "must land first" has since **landed, been adversarially reviewed, and been pushed**.
+> Wherever a line below tells you to wait for it, coordinate with another agent, or treat a file as a moving
+> target, that instruction is **superseded**. All three repos are clean and green:
+>
+> - **Stock-Grader `5290a2f`** (582 tests) — `freeze --all-profiles` writes
+>   `frozen_scores/<profile>/YYYY-MM-DD.parquet` across 11 registered profiles. Nine panels exist for
+>   2026-07-30; `momentum` and `low_volatility` refused because they cannot grade without a dense price
+>   series. `monthly-freeze.yml` runs `--all-profiles` and is verified green in the cloud. A refusal only
+>   fails the run when the traded profile refuses, a profile that froze before refuses now, or nothing was
+>   written — a structural refusal keeps the run green on purpose.
+> - **Stock-Vault `b407524`** (73 tests) — `load_frozen_panel(source, profile="all_weather")` reads the
+>   per-profile layout, with the flat layout kept as a documented legacy fallback, so the real trader is NOT
+>   broken; it has in fact traded (10 orders on 2026-07-30). The journal now emits `kind: "benchmark"` and
+>   `kind: "fill"`. **The fill record's drift field is `drift_bps`, with `reference_close` and
+>   `reference_date`** — deliberately not named slippage, because the free EOD archive lags two sessions.
+>   `staleness.check_paper` now reads broker-sourced `snapshot` records rather than the journal manifest.
+> - **Stock-Data `15b0ad2`** (38 tests).
+>
+> Still outstanding and still yours to handle where your milestone needs them: the `VAULT_REPO_TOKEN` PAT,
+> and the **unwired vault price provider** described in [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
+> — `momentum` and `low_volatility` produce no evidence at all until that lands.
+>
+> **Line numbers in these specs predate the landed work. Re-read every file before you edit it.**
+
 **Effort:** large
 
 **Why it matters:** Today the whole ecosystem assumes a monthly holding period because `freeze` runs monthly and `BacktestConfig.periods_per_year` defaults to 12 — nobody has measured whether the score's information actually lives 5, 21, 63, or 126 trading days. M2 builds one backtest-shaped panel per horizon from the same frozen scores, runs the existing `evaluate_walk_forward` evaluator on each, and reports a rank-IC decay curve (mean IC, IC information ratio, IC/sqrt(h), half-life) so the holding period is chosen from evidence instead of convention. Because a horizon sweep is N extra looks at the same data, every horizon is charged as its own ledger trial against the shared deflated-Sharpe denominator, and only a pre-declared primary horizon may pass the gate — the sweep buys knowledge about where the edge is without buying a false claim that it exists.

@@ -3,14 +3,41 @@
 > Part of the major-improvements handoff. Read [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
 > first — it carries the orientation, the working rules, and the milestone ordering.
 
+> ## Status update — landed since these specs were researched
+>
+> These specs were written earlier on 2026-07-30. The work they describe as "in flight", "in flux", "being
+> edited right now", or "must land first" has since **landed, been adversarially reviewed, and been pushed**.
+> Wherever a line below tells you to wait for it, coordinate with another agent, or treat a file as a moving
+> target, that instruction is **superseded**. All three repos are clean and green:
+>
+> - **Stock-Grader `5290a2f`** (582 tests) — `freeze --all-profiles` writes
+>   `frozen_scores/<profile>/YYYY-MM-DD.parquet` across 11 registered profiles. Nine panels exist for
+>   2026-07-30; `momentum` and `low_volatility` refused because they cannot grade without a dense price
+>   series. `monthly-freeze.yml` runs `--all-profiles` and is verified green in the cloud. A refusal only
+>   fails the run when the traded profile refuses, a profile that froze before refuses now, or nothing was
+>   written — a structural refusal keeps the run green on purpose.
+> - **Stock-Vault `b407524`** (73 tests) — `load_frozen_panel(source, profile="all_weather")` reads the
+>   per-profile layout, with the flat layout kept as a documented legacy fallback, so the real trader is NOT
+>   broken; it has in fact traded (10 orders on 2026-07-30). The journal now emits `kind: "benchmark"` and
+>   `kind: "fill"`. **The fill record's drift field is `drift_bps`, with `reference_close` and
+>   `reference_date`** — deliberately not named slippage, because the free EOD archive lags two sessions.
+>   `staleness.check_paper` now reads broker-sourced `snapshot` records rather than the journal manifest.
+> - **Stock-Data `15b0ad2`** (38 tests).
+>
+> Still outstanding and still yours to handle where your milestone needs them: the `VAULT_REPO_TOKEN` PAT,
+> and the **unwired vault price provider** described in [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
+> — `momentum` and `low_volatility` produce no evidence at all until that lands.
+>
+> **Line numbers in these specs predate the landed work. Re-read every file before you edit it.**
+
 **Effort:** large
 
 **Why it matters:** The single most effective lever against this project's multiple-testing problem is a wider cross-section: the repo's own simulation puts E[max IC | null] across 105 metrics at 0.306 for N=82 versus 0.122 for N=500 (docs/ERROR-REDUCTION.md:1500-1501). At 82 mega-caps the frozen panels can never separate a real edge from the best of many metrics, and the bundled list is an explicit survivor convenience list, not a universe. This spec builds a committed, pre-registered, survivorship-proof universe rule (top-N by trailing median dollar volume from the owner's OWN market_eod archive), an SEC bulk-companyfacts ingestion path that makes 500–1000 tickers fetchable at all, and the pipeline refactor without which an 11-profile freeze at N=1000 runs ~290 minutes against a 120-minute workflow timeout. It also states exactly what the letter floor, peer selection and sector-neutral scoring mean once N is 1000, and what must be re-tuned or re-registered before those panels are trusted.
 
 ## Prerequisites
 
-- In-flight multi-profile freeze (frozen_scores/<profile>/YYYY-MM-DD.parquet + --all-profiles) must be merged and green first — this spec edits cmd_freeze and the same workflow file
-- In-flight Stock-Vault paper.py benchmark/fill journaling + its frozen-panel path change (paper.py:158 still globs frozen_scores/*.parquet at the top level)
+- ~~In-flight multi-profile freeze must be merged and green first~~ **DONE (5290a2f)**: merged, 582 tests green, and the workflow verified green in the cloud. You are editing `cmd_freeze` and `monthly-freeze.yml` on top of that state — re-read both, the line numbers below predate it.
+- ~~In-flight Stock-Vault paper.py work~~ **DONE (b407524)**: `load_frozen_panel` is profile-aware. It still falls back to the flat layout for `all_weather` only, which is deliberate and documented — do not remove it.
 - Owner decision on whether a ticker-membership list derived from Massive/Polygon dollar volume may be committed to the PUBLIC Stock-Grader repo (see pitfalls); step 2 has a fully public-domain fallback rule
 
 ## Verified ground truth

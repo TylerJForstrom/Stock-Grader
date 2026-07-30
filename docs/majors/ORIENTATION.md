@@ -2,6 +2,33 @@
 
 > What a stranger must know before touching anything. Every claim was verified by reading the code.
 
+> ## Status update — landed since these specs were researched
+>
+> These specs were written earlier on 2026-07-30. The work they describe as "in flight", "in flux", "being
+> edited right now", or "must land first" has since **landed, been adversarially reviewed, and been pushed**.
+> Wherever a line below tells you to wait for it, coordinate with another agent, or treat a file as a moving
+> target, that instruction is **superseded**. All three repos are clean and green:
+>
+> - **Stock-Grader `5290a2f`** (582 tests) — `freeze --all-profiles` writes
+>   `frozen_scores/<profile>/YYYY-MM-DD.parquet` across 11 registered profiles. Nine panels exist for
+>   2026-07-30; `momentum` and `low_volatility` refused because they cannot grade without a dense price
+>   series. `monthly-freeze.yml` runs `--all-profiles` and is verified green in the cloud. A refusal only
+>   fails the run when the traded profile refuses, a profile that froze before refuses now, or nothing was
+>   written — a structural refusal keeps the run green on purpose.
+> - **Stock-Vault `b407524`** (73 tests) — `load_frozen_panel(source, profile="all_weather")` reads the
+>   per-profile layout, with the flat layout kept as a documented legacy fallback, so the real trader is NOT
+>   broken; it has in fact traded (10 orders on 2026-07-30). The journal now emits `kind: "benchmark"` and
+>   `kind: "fill"`. **The fill record's drift field is `drift_bps`, with `reference_close` and
+>   `reference_date`** — deliberately not named slippage, because the free EOD archive lags two sessions.
+>   `staleness.check_paper` now reads broker-sourced `snapshot` records rather than the journal manifest.
+> - **Stock-Data `15b0ad2`** (38 tests).
+>
+> Still outstanding and still yours to handle where your milestone needs them: the `VAULT_REPO_TOKEN` PAT,
+> and the **unwired vault price provider** described in [`../MAJOR_IMPROVEMENTS.md`](../MAJOR_IMPROVEMENTS.md)
+> — `momentum` and `low_volatility` produce no evidence at all until that lands.
+>
+> **Line numbers in these specs predate the landed work. Re-read every file before you edit it.**
+
 ## Topic 1 — The three repos: purpose, entry points, install, test suite, current test count
 
 There are three git repos on this Windows machine, all rooted at C:/Users/tforstrom/Desktop/. None imports another's code; they are separate installable Python packages.
@@ -148,7 +175,7 @@ From AGENTS.md, additionally: read docs/REVIEW_FEEDBACK.md at the start of each 
 
 Two further bug classes worth knowing because they are structural, not stylistic: (a) **unmanifested files are invisible** — writing a data file outside its dataset manifest means no consumer can ever read it (Topic 2); (b) **line-ending translation silently breaks sha256 verification**, which is why both repos pin .gitattributes.
 
-Finally, two files are **in flux right now** and their current contents should be treated as a moving target: Stock-Vault/src/stock_vault/paper.py and Stock-Grader/src/stock_grader/cli.py. Verified current state as of 2026-07-30: the grader already writes the per-profile layout `frozen_scores/<profile>/<YYYY-MM-DD>.parquet` (frozen_scores/all_weather/2026-07-30.parquet exists on disk, 11 profiles registered), but paper.py:146-152 still globs the FLAT `frozen_scores/*.parquet` with a `^\d{4}-\d{2}-\d{2}$` stem regex, so `paper-rebalance` raises `PaperTradingError('no frozen panels under ...')` against the current tree until that edit lands. The paper journal today emits only `kind: "rebalance"` (paper.py:262) and `kind: "snapshot"` (paper.py:298); the `{"kind":"benchmark"}` and `{"kind":"fill"}` record types are pending. Do not 'fix' either of these in passing — another agent owns them.
+Finally, a note that was written while two files were mid-edit and is now **resolved**: Stock-Vault/src/stock_vault/paper.py and Stock-Grader/src/stock_grader/cli.py are both merged and pushed. The grader writes the per-profile layout `frozen_scores/<profile>/<YYYY-MM-DD>.parquet` (nine panels for 2026-07-30), paper.py reads it via `load_frozen_panel(source, profile="all_weather")` with a documented legacy flat fallback, and the paper journal emits four record kinds: `rebalance`, `snapshot`, `benchmark`, and `fill`. Both files are safe to read and edit normally — but re-read them, because every line number in these specs predates the merge.
 
 ## Topic 7 — The statistical-honesty machinery: the append-only research ledger, its hash chain, deflated Sharpe / PSR, and why you must never delete a line or silently add a trial
 
@@ -188,7 +215,7 @@ Violating any of these has broken this system before.
 - Do not let a NaN into ledger metrics or trial Sharpes. One non-finite value makes stdev — and therefore every subsequent DSR — NaN. Store None/JSON null; the guards are cli.py:824-837 and significance._finite_trial_sharpes.
 - Do not commit anything derived from stockanalysis.com, Massive/Polygon, IBKR, Finnhub, SSGA, or FINRA into Stock-Data or Stock-Grader. Finnhub's terms cover DERIVED results, not just raw data. Public git history is forever; a force-push does not retract it, and the scheduled workflows auto-push on the next cron tick.
 - Do not make Stock-Grader a private repository. paper-trader.yml checks it out with the default GITHUB_TOKEN, which cannot read other private repos, and the paper clock dies at checkout without a fine-grained PAT.
-- Do not assume the frozen-panel layout is settled. The grader writes frozen_scores/<profile>/<date>.parquet (11 profiles) while Stock-Vault's paper.py still globs the flat frozen_scores/*.parquet; paper-rebalance currently fails against this tree. Both files are being edited by other agents right now — coordinate, do not patch in passing.
+- The frozen-panel layout IS settled: the grader writes frozen_scores/<profile>/<date>.parquet and paper.py reads it profile-aware, with the flat layout kept as a deliberate legacy fallback for all_weather. Treat that fallback as load-bearing, not as dead code to tidy away.
 - Do not remove a staleness gate to make a red workflow green. The gate runs BEFORE collection on purpose, and GitHub's scheduled-failure email to the owner IS the alerting system. Fix the clock, not the gate.
 - Do not remove the heartbeat commit from daily-snapshot.yml. GitHub disables cron workflows after 60 days without commits; the always-commit heartbeat is what keeps the point-in-time archive alive across quiet stretches.
 - Do not derive a staleness clock from file mtimes. Checkout mtimes describe the checkout, not the observation; every check in Stock-Vault/staleness.py derives its clock from an artifact filename or manifest content.
