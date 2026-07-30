@@ -10,8 +10,8 @@ commands that remain.
 
 Do not call M5 complete until every acceptance item in
 `docs/majors/M5-wide-universe.md` is genuinely satisfied. In particular, the
-The measured N=250/500/1000 rollout is complete. Final Grader full-suite
-validation, peer/sector diagnostics, and the Grader workflow dispatch remain.
+The measured N=250/500/1000 rollout and final Grader suite are complete.
+Peer/sector diagnostics and terminal Grader workflow verification remain.
 
 ## 1. Safety first on the home computer
 
@@ -373,9 +373,12 @@ The new time is 17.4% of the old time (5.73x faster), below the milestone's
 25% ceiling. Both runs attempted the same eleven profiles and refused the same
 cache-starved profiles, so the timing comparison is like-for-like.
 
-The CDN fix and generated artifacts landed after the `c276a0a` full suite.
-Their high-risk targeted set and repo-wide Ruff are green, but the original
-request still requires one final unabridged `python -m pytest -q` at home.
+Final post-artifact validation:
+
+```text
+622 passed in 681.92s (0:11:21)
+All checks passed!
+```
 
 ### Stock-Vault
 
@@ -544,7 +547,7 @@ ground truth, real data, licensing, or live services contradicted one another.
 | Acceptance item | Status at handoff |
 |---|---|
 | Grader full suite before/after core commit | Met: 582 baseline, 621 post-core |
-| Final Grader suite after CDN/artifacts/docs | **Pending** |
+| Final Grader suite after CDN/artifacts/docs | Met: 622 passed in 681.92s; Ruff clean |
 | Vault suite and fixture screen | Met |
 | Public spec | Met |
 | Public 1,000-name file | Met: generated, hash-verified, committed in `27b385d` |
