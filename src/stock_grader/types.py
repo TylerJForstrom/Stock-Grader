@@ -115,6 +115,10 @@ class Fundamentals:
     pit_mode: PitMode = PitMode.LATEST
     currency: str = "USD"
     averaged: set[str] = field(default_factory=set)
+    _frame_cache: dict[
+        tuple[object, ...],
+        tuple[pd.DataFrame, pd.Series, pd.DataFrame | None],
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     # Concepts that are arithmetic combinations of others. Each composite must use one exact
     # four-quarter window shared by every component. Independently selected trailing windows can
@@ -225,8 +229,34 @@ class Fundamentals:
         asof: date | None,
         require_complete: bool = True,
     ) -> pd.DataFrame | None:
-        """Numeric rows on normalized dates, optionally bounded by publication and analysis date."""
+        """Numeric rows on normalized dates, optionally bounded by publication and analysis date.
+
+        Fundamentals are treated as immutable during one evaluation. Object identities and PIT
+        state are part of the key so shallow copies that replace a frame or filing series cannot
+        inherit a stale result from the source object.
+        """
+        if frame is self.quarterly:
+            frame_kind = "quarterly"
+        elif frame is self.annual:
+            frame_kind = "annual"
+        else:
+            frame_kind = "external"
+        cache_key = (
+            frame_kind,
+            id(frame),
+            tuple(concepts),
+            asof,
+            require_complete,
+            self.pit_mode,
+            id(self.filed),
+            len(frame),
+            len(self.filed),
+        )
+        cached = self._frame_cache.get(cache_key)
+        if cached is not None and cached[0] is frame and cached[1] is self.filed:
+            return cached[2]
         if not concepts or any(concept not in frame.columns for concept in concepts):
+            self._frame_cache[cache_key] = (frame, self.filed, None)
             return None
         selected = frame[concepts].copy()
         parsed = pd.to_datetime(selected.index, errors="coerce", utc=True)
@@ -254,7 +284,9 @@ class Fundamentals:
         selected = selected.apply(pd.to_numeric, errors="coerce")
         selected = selected.replace([np.inf, -np.inf], np.nan)
         selected = selected.dropna(how="any" if require_complete else "all")
-        return selected if not selected.empty else None
+        cleaned = selected if not selected.empty else None
+        self._frame_cache[cache_key] = (frame, self.filed, cleaned)
+        return cleaned
 
     def _dated_series(
         self,

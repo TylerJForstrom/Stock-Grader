@@ -112,7 +112,15 @@ class WalkForwardSplit:
     test_dates: tuple[pd.Timestamp, ...]
 
 
-def _validate_panel(panel: pd.DataFrame) -> pd.DataFrame:
+def _single_universe_id(panel: pd.DataFrame) -> bool:
+    """Whether an optional universe_id column describes at most one universe."""
+    if "universe_id" not in panel:
+        return True
+    identifiers = panel["universe_id"].astype("string")
+    return bool(identifiers.nunique(dropna=False) <= 1)
+
+
+def _validate_panel(panel: pd.DataFrame, *, allow_mixed_universes: bool = False) -> pd.DataFrame:
     required = {
         "signal_date",
         "return_start",
@@ -124,6 +132,11 @@ def _validate_panel(panel: pd.DataFrame) -> pd.DataFrame:
     missing = sorted(required - set(panel.columns))
     if missing:
         raise ValueError("backtest panel is missing columns: " + ", ".join(missing))
+    if not allow_mixed_universes and not _single_universe_id(panel):
+        raise ValueError(
+            "backtest panel mixes multiple universe_id values; pass "
+            "allow_mixed_universes=True only for an explicitly caveated analysis"
+        )
     frame = panel.copy()
     for column in ("signal_date", "return_start", "return_end"):
         frame[column] = pd.to_datetime(frame[column], errors="coerce")
@@ -193,6 +206,7 @@ def _input_contract(panel: pd.DataFrame) -> dict[str, bool]:
         "total_returns_attested": _attested(panel, "return_is_total"),
         "delistings_included_attested": _attested(panel, "delisting_return_included"),
         "permanent_identifier_present": permanent_id is not None,
+        "single_universe_id": _single_universe_id(panel),
     }
 
 
@@ -262,12 +276,14 @@ def _moving_block_interval(
 def evaluate_walk_forward(
     panel: pd.DataFrame,
     config: BacktestConfig | None = None,
+    *,
+    allow_mixed_universes: bool = False,
 ) -> BacktestReport:
     """Evaluate frozen point-in-time scores against strictly later total returns."""
 
     config = config or BacktestConfig()
     contract = _input_contract(panel)
-    frame = _validate_panel(panel)
+    frame = _validate_panel(panel, allow_mixed_universes=allow_mixed_universes)
     periods: list[PeriodResult] = []
     rejected = 0
     previous_top: set[str] | None = None
@@ -378,6 +394,10 @@ def evaluate_walk_forward(
             "No permanent security identifier is present; ticker reuse can join the wrong issuer."
         )
 
+    if not contract["single_universe_id"]:
+        limitations.append(
+            "The panel mixes universe_id values, so cross-sectional breadth changes across periods."
+        )
     return BacktestReport(
         config=config,
         input_contract=contract,

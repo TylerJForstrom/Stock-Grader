@@ -18,10 +18,14 @@ import gzip
 import hashlib
 import json
 import logging
+import tempfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
+from .cache import default_cache_dir
+from .prices import PriceProvider
 from .symbols import ticker_variants
 
 log = logging.getLogger(__name__)
@@ -29,10 +33,64 @@ log = logging.getLogger(__name__)
 __all__ = ["VaultDataSource", "VaultError", "VaultPriceProvider"]
 
 SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0"})
+_MARKET_EOD_PANEL_SCHEMA_VERSION = 1
+_MARKET_EOD_COLUMNS = (
+    "date",
+    "symbol",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "vwap",
+    "transactions",
+)
+_MARKET_EOD_NUMERIC = ("open", "high", "low", "close", "volume", "vwap", "transactions")
 
 
 class VaultError(RuntimeError):
     """Missing dataset, unknown schema, or hash mismatch in the vault."""
+
+
+def _atomic_parquet_write(frame: pd.DataFrame, destination: Path) -> None:
+    temporary: Path | None = None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".parquet.tmp",
+            prefix=f".{destination.name}.",
+            dir=destination.parent,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+        frame.to_parquet(temporary, index=False)
+        temporary.replace(destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _validate_market_eod_panel(frame: pd.DataFrame) -> pd.DataFrame:
+    missing = sorted(set(_MARKET_EOD_COLUMNS) - set(frame.columns))
+    if missing:
+        raise VaultError("market_eod rows are missing required fields: " + ", ".join(missing))
+    table = frame.loc[:, _MARKET_EOD_COLUMNS].copy()
+    table["date"] = pd.to_datetime(table["date"], errors="raise").dt.normalize()
+    table["symbol"] = table["symbol"].astype(str).str.upper().str.strip()
+    if table["symbol"].eq("").any():
+        raise VaultError("market_eod contains an empty symbol")
+    for column in _MARKET_EOD_NUMERIC:
+        if table[column].map(lambda value: isinstance(value, (bool, np.bool_))).any():
+            raise VaultError(f"market_eod {column} contains an unparseable numeric value")
+        try:
+            table[column] = pd.to_numeric(table[column], errors="raise")
+        except (TypeError, ValueError) as exc:
+            raise VaultError(f"market_eod {column} contains an unparseable numeric value") from exc
+        if not np.isfinite(table[column].to_numpy(dtype="float64")).all():
+            raise VaultError(f"market_eod {column} contains a non-finite numeric value")
+        if table[column].isna().any():
+            raise VaultError(f"market_eod {column} contains a missing numeric value")
+    return table.sort_values(["date", "symbol"]).reset_index(drop=True)
 
 
 class VaultDataSource:
@@ -44,6 +102,10 @@ class VaultDataSource:
             raise VaultError(f"{self.root} does not look like a Stock-Vault clone (no data/)")
         self.verify_hashes = verify_hashes
         self._manifest_cache: dict[str, dict] = {}
+
+        self._market_eod_panels: dict[
+            tuple[dt.date | None, dt.date | None, Path], pd.DataFrame
+        ] = {}
 
     # -- contract ----------------------------------------------------------
 
@@ -103,6 +165,64 @@ class VaultDataSource:
                     continue
         return days
 
+    def market_eod_panel(
+        self,
+        start: dt.date | None = None,
+        end: dt.date | None = None,
+        cache_dir: str | Path | None = None,
+    ) -> pd.DataFrame:
+        """All archived OHLCV rows in one long frame, reading each day file once."""
+        if start is not None and end is not None and start > end:
+            raise ValueError("market_eod panel start cannot be after end")
+        days = [
+            day
+            for day in self.market_eod_available_days()
+            if (start is None or day >= start) and (end is None or day <= end)
+        ]
+        if not days:
+            return pd.DataFrame(columns=_MARKET_EOD_COLUMNS)
+
+        cache_root = Path(cache_dir or default_cache_dir("vault")).resolve()
+        cache_root.mkdir(parents=True, exist_ok=True)
+        key = (start, end, cache_root)
+        if key in self._market_eod_panels:
+            return self._market_eod_panels[key]
+        destination = cache_root / (
+            f"market_eod_{days[0].isoformat()}_{days[-1].isoformat()}"
+            f"_v{_MARKET_EOD_PANEL_SCHEMA_VERSION}.parquet"
+        )
+        if destination.is_file():
+            try:
+                cached = _validate_market_eod_panel(pd.read_parquet(destination))
+            except (OSError, ValueError, VaultError):
+                log.warning("invalid vault market_eod panel cache %s; rebuilding", destination)
+            else:
+                self._market_eod_panels[key] = cached
+                return cached
+
+        frames: list[pd.DataFrame] = []
+        for day in days:
+            table = self.market_eod_day(day)
+            if table.empty:
+                continue
+            table = table.copy()
+            table.insert(0, "date", pd.Timestamp(day))
+            frames.append(table)
+        if not frames:
+            return pd.DataFrame(columns=_MARKET_EOD_COLUMNS)
+        panel = _validate_market_eod_panel(pd.concat(frames, ignore_index=True))
+        _atomic_parquet_write(panel, destination)
+        self._market_eod_panels[key] = panel
+        return panel
+
+    @staticmethod
+    def _series_from_panel(panel: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
+        wanted = set(ticker_variants(ticker))
+        hits = panel[panel["symbol"].isin(wanted)]
+        if hits.empty:
+            return None
+        return hits.set_index("date").sort_index()
+
     def market_eod_series(
         self, ticker: str, *, start: dt.date | None = None, end: dt.date | None = None
     ) -> pd.DataFrame | None:
@@ -111,24 +231,8 @@ class VaultDataSource:
         Matches all ticker spellings (Polygon uses dot class notation, SEC uses
         dashes). Works for delisted names too — that is the point.
         """
-        wanted = set(ticker_variants(ticker))
-        frames = []
-        for day in self.market_eod_available_days():
-            if (start and day < start) or (end and day > end):
-                continue
-            table = self.market_eod_day(day)
-            if table.empty:
-                continue
-            hit = table[table["symbol"].astype(str).str.upper().isin(wanted)]
-            if not hit.empty:
-                row = hit.iloc[0].to_dict()
-                row["date"] = day
-                frames.append(row)
-        if not frames:
-            return None
-        out = pd.DataFrame(frames).set_index("date").sort_index()
-        out.index = pd.to_datetime(out.index)
-        return out
+        panel = self.market_eod_panel(start=start, end=end)
+        return self._series_from_panel(panel, ticker)
 
     # -- borrow ------------------------------------------------------------
 
@@ -173,9 +277,7 @@ class VaultDataSource:
                     continue
                 payload = json.loads(
                     gzip.decompress(
-                        self._read_verified(
-                            f"data/delisted_prices/{year_dir.name}", path.name
-                        )
+                        self._read_verified(f"data/delisted_prices/{year_dir.name}", path.name)
                     )
                 )
                 data = payload.get("data", payload)
@@ -193,7 +295,7 @@ class VaultDataSource:
         return None
 
 
-class VaultPriceProvider:
+class VaultPriceProvider(PriceProvider):
     """PriceProvider adapter: serve grader price frames from the vault archive.
 
     Unadjusted closes (collected with adjusted=false) — downstream adjustment
@@ -205,19 +307,53 @@ class VaultPriceProvider:
     name = "vault"
     provides_prices = True
 
-    def __init__(self, vault: VaultDataSource) -> None:
+    def __init__(self, vault: VaultDataSource, *, cache_dir: str | Path | None = None) -> None:
         self.vault = vault
+        self.cache_dir = cache_dir
+        self._panel: pd.DataFrame | None = None
+        self._indexed: pd.DataFrame | None = None
+        self._symbols: frozenset[str] | None = None
+
+    def _ensure_panel(self) -> None:
+        """Validate the feed before PriceProvider's fallback boundary can hide an error."""
+        if self._indexed is None:
+            self._panel = self.vault.market_eod_panel(cache_dir=self.cache_dir)
+            indexed = self._panel.copy()
+            indexed["symbol"] = indexed["symbol"].astype(str).str.upper()
+            self._indexed = indexed.set_index(["symbol", "date"]).sort_index()
+            self._symbols = frozenset(self._indexed.index.get_level_values("symbol"))
+
+    def get(
+        self,
+        ticker: str,
+        *,
+        start: dt.date | None = None,
+        end: dt.date | None = None,
+    ) -> pd.DataFrame | None:
+        # The generic provider intentionally turns transport failures into a chain fallback. A
+        # malformed local numeric archive is different: silently falling through would mix
+        # providers and make the run look valid, so validation must happen outside that boundary.
+        self._ensure_panel()
+        return super().get(ticker, start=start, end=end)
 
     def _fetch(self, ticker: str, *, start=None, end=None) -> pd.DataFrame | None:
-        series = self.vault.market_eod_series(
-            ticker,
-            start=start if isinstance(start, dt.date) else None,
-            end=end if isinstance(end, dt.date) else None,
-        )
-        if series is None or series.empty:
+        self._ensure_panel()
+        assert self._indexed is not None
+        assert self._symbols is not None
+        if self._indexed.empty:
             return None
-        frame = series.rename(
-            columns={"open": "open", "high": "high", "low": "low",
-                     "close": "close", "volume": "volume"}
-        )
-        return frame[[c for c in ("open", "high", "low", "close", "volume") if c in frame]]
+        frames = [
+            self._indexed.xs(candidate, level="symbol").copy()
+            for candidate in ticker_variants(ticker)
+            if candidate in self._symbols
+        ]
+        if not frames:
+            return None
+        series = pd.concat(frames).sort_index()
+        series = series[~series.index.duplicated(keep="first")]
+        if start is not None:
+            series = series[series.index >= pd.Timestamp(start)]
+        if end is not None:
+            series = series[series.index <= pd.Timestamp(end)]
+        columns = ("open", "high", "low", "close", "volume")
+        return series[[column for column in columns if column in series]]

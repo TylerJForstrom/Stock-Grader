@@ -16,7 +16,9 @@ import argparse
 import json
 import logging
 import math
+import re
 import sys
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -37,9 +39,11 @@ from .data.prices import (
     YahooPriceProvider,
 )
 from .data.sec import SECClient, SECProvider
+from .data.sec_bulk import SECBulkFacts
 from .data.sec_prices import SECInsiderPriceProvider, check_price_share_basis, resolve_price
 from .data.stockanalysis import StockAnalysisPriceProvider
 from .data.synthetic import generate_prices
+from .data.vault import VaultDataSource, VaultPriceProvider
 from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from .peers import explicit_peers, select_peers
 from .pipeline import GradeConfig, grade_universe
@@ -58,6 +62,28 @@ from .report import (
 from .research import build_research_report, research_to_json, research_to_markdown
 from .types import PitMode, SecuritySnapshot
 from .weighting import WEIGHT_METHOD_INFO
+
+_SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
+_UNIVERSE_HEADER_KEYS = frozenset(
+    {"universe_id", "asof", "spec_sha256", "source_sha256", "row_count"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class UniverseSelection:
+    """Tickers plus immutable provenance parsed from a committed universe artifact."""
+
+    tickers: list[str]
+    universe_id: str | None
+    asof: date | None
+    spec_sha256: str | None
+    source_sha256: str | None
+    path: str
+
+
+def _empty_selection(path: str, tickers: list[str]) -> UniverseSelection:
+    return UniverseSelection(tickers, None, None, None, None, path)
+
 
 console = Console()
 # Progress, warnings and errors go to stderr so `--format json` yields a parseable document on
@@ -98,7 +124,8 @@ def _default_universe_path() -> Path | None:
 _FOUNDRY_RAW_URL = "https://raw.githubusercontent.com/TylerJForstrom/Stock-Data/main"
 
 
-def _load_universe(path: str) -> list[str]:
+def _load_universe_selection(path: str) -> UniverseSelection:
+    """Load a ticker file and any immutable provenance carried in comment headers."""
     # "foundry:" pulls the listed-exchange universe from the Stock-Data
     # foundry's daily snapshot (manifest-verified). Forms:
     #   foundry:                      -> the public repo via raw URL
@@ -107,22 +134,95 @@ def _load_universe(path: str) -> list[str]:
     if path.startswith("foundry:"):
         from .data.foundry import FoundryDataSource
 
-        target = path[len("foundry:"):].strip()
+        target = path[len("foundry:") :].strip()
         if not target:
             source = FoundryDataSource(url_base=_FOUNDRY_RAW_URL)
         elif target.lower().startswith(("http://", "https://")):
             source = FoundryDataSource(url_base=target)
         else:
             source = FoundryDataSource(root=target)
-        return source.universe_tickers()
-    text = Path(path).read_text()
+        return _empty_selection(path, source.universe_tickers())
+
+    text = Path(path).read_text(encoding="utf-8")
     tickers: list[str] = []
+    metadata: dict[str, str] = {}
     for line in text.splitlines():
-        line = line.split("#")[0].strip()
-        if not line:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            comment = stripped.removeprefix("#").strip()
+            parsed: tuple[str, str] | None = None
+            for separator in (":", "="):
+                if separator in comment:
+                    key, value = comment.split(separator, 1)
+                    parsed = (key.strip().lower(), value.strip())
+                    break
+            if parsed is not None and parsed[0] in _UNIVERSE_HEADER_KEYS:
+                key, value = parsed
+                if key in metadata and metadata[key] != value:
+                    raise ValueError(f"universe header repeats {key} with a different value")
+                metadata[key] = value
             continue
-        tickers.extend(part.strip().upper() for part in line.replace(",", " ").split() if part.strip())
-    return tickers
+        content = line.split("#", 1)[0].strip()
+        if not content:
+            continue
+        tickers.extend(
+            part.strip().upper() for part in content.replace(",", " ").split() if part.strip()
+        )
+
+    if not metadata:
+        return _empty_selection(path, tickers)
+    missing = sorted(_UNIVERSE_HEADER_KEYS - set(metadata))
+    if missing:
+        raise ValueError("universe provenance header is missing: " + ", ".join(missing))
+    if not metadata["universe_id"]:
+        raise ValueError("universe_id cannot be empty")
+    try:
+        selection_asof = date.fromisoformat(metadata["asof"])
+    except ValueError as exc:
+        raise ValueError("universe header asof must be YYYY-MM-DD") from exc
+    for key in ("spec_sha256", "source_sha256"):
+        if not _SHA256.fullmatch(metadata[key]):
+            raise ValueError(f"universe header {key} must be 64 hexadecimal characters")
+    try:
+        row_count = int(metadata["row_count"])
+    except ValueError as exc:
+        raise ValueError("universe header row_count must be an integer") from exc
+    if row_count < 0 or row_count != len(tickers):
+        raise ValueError(
+            f"universe header row_count={row_count} does not match {len(tickers)} tickers"
+        )
+    if len(set(tickers)) != len(tickers):
+        raise ValueError("provenance-carrying universe contains duplicate tickers")
+    return UniverseSelection(
+        tickers=tickers,
+        universe_id=metadata["universe_id"],
+        asof=selection_asof,
+        spec_sha256=metadata["spec_sha256"],
+        source_sha256=metadata["source_sha256"],
+        path=path,
+    )
+
+
+def _load_universe(path: str) -> list[str]:
+    """Backward-compatible ticker-only universe loader."""
+    return _load_universe_selection(path).tickers
+
+
+def _validate_universe_selection_asof(selection: UniverseSelection, requested_asof: date) -> None:
+    """Refuse future-selected membership and universe artifacts older than one year."""
+    if selection.asof is None:
+        return
+    if requested_asof < selection.asof:
+        raise SystemExit(
+            f"universe {selection.path} was selected as of {selection.asof} and cannot be used "
+            f"for earlier signal date {requested_asof}"
+        )
+    age_days = (requested_asof - selection.asof).days
+    if age_days > 365:
+        raise SystemExit(
+            f"universe {selection.path} is {age_days} days old for signal date {requested_asof}; "
+            "rebuild the quarterly universe artifact"
+        )
 
 
 def _resolve_peers(args: argparse.Namespace, tickers: list[str]) -> list[str]:
@@ -133,7 +233,10 @@ def _resolve_peers(args: argparse.Namespace, tickers: list[str]) -> list[str]:
     stated plainly in the report rather than silently producing a flat-50 grade.
     """
     if args.universe:
-        return _load_universe(args.universe)
+        selection = _load_universe_selection(args.universe)
+        requested_asof = date.fromisoformat(args.asof) if args.asof else date.today()
+        _validate_universe_selection_asof(selection, requested_asof)
+        return selection.tickers
     if args.no_peers:
         return []
     if args.asof:
@@ -162,6 +265,26 @@ def _resolve_peers(args: argparse.Namespace, tickers: list[str]) -> list[str]:
     return peers
 
 
+def _sec_provider_from_args(args: argparse.Namespace, ticker_count: int) -> SECProvider:
+    """Build one SEC client and optionally share it with the bulk Companyfacts reader."""
+    client = SECClient(
+        cache_dir=args.cache_dir,
+        contact=args.contact,
+        offline=args.no_network,
+    )
+    mode = getattr(args, "bulk_facts", "auto")
+    if mode not in {"auto", "always", "never"}:
+        raise ValueError(f"unknown --bulk-facts mode: {mode}")
+    use_bulk = mode == "always" or (mode == "auto" and ticker_count >= 200 and not args.no_network)
+    if not use_bulk:
+        return SECProvider(client)
+    bulk_cache = Path(args.cache_dir).expanduser().resolve() / "bulk" if args.cache_dir else None
+    bulk = SECBulkFacts(client, cache_dir=bulk_cache)
+    # Validate/download once per command, never inside the per-ticker exception boundary.
+    bulk.ensure(refresh=bool(args.refresh))
+    return SECProvider(client, bulk=bulk)
+
+
 def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
     """Build the dense-price chain without hiding which source the user selected.
 
@@ -171,6 +294,7 @@ def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
     mode = getattr(args, "price_provider", "auto")
     price_dir = getattr(args, "price_dir", None)
     stockanalysis = bool(getattr(args, "stockanalysis", False))
+    vault_root = getattr(args, "vault", None)
     no_network = bool(getattr(args, "no_network", False))
 
     if price_dir and mode not in ("auto", "csv"):
@@ -185,6 +309,11 @@ def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
         raise ValueError(f"--price-provider {mode} conflicts with --no-network")
 
     providers: list[PriceProvider] = []
+    if vault_root:
+        vault_cache = (
+            Path(args.cache_dir).expanduser().resolve() / "vault" if args.cache_dir else None
+        )
+        providers.append(VaultPriceProvider(VaultDataSource(vault_root), cache_dir=vault_cache))
     if mode == "auto":
         if price_dir:
             providers.append(CSVPriceProvider(price_dir))
@@ -314,7 +443,10 @@ def _reconcile_current_yahoo_share_basis(
     factor_since_observation = math.prod(
         factor for event_date, factor in events if event_date > observed
     )
-    if not math.isfinite(factor_since_observation) or not 0.001 <= factor_since_observation <= 1_000:
+    if (
+        not math.isfinite(factor_since_observation)
+        or not 0.001 <= factor_since_observation <= 1_000
+    ):
         return False
     if factor_since_observation != 1.0:
         snapshot.shares_outstanding = float(shares * factor_since_observation)
@@ -329,9 +461,7 @@ def _reconcile_current_yahoo_share_basis(
         for history_date in adjusted.index:
             timestamp = pd.Timestamp(history_date).normalize()
             factor = math.prod(
-                event_factor
-                for event_date, event_factor in events
-                if event_date > timestamp
+                event_factor for event_date, event_factor in events if event_date > timestamp
             )
             adjusted.loc[history_date] = float(adjusted.loc[history_date]) * factor
         snapshot.meta["shares_history_price_basis"] = adjusted
@@ -364,9 +494,7 @@ def _build_snapshots(
     risk_free = None
     benchmark = None
     if not args.no_network:
-        risk_free = RiskFreeProvider(cache_dir=args.cache_dir).get(
-            "3m", refresh=args.refresh
-        )
+        risk_free = RiskFreeProvider(cache_dir=args.cache_dir).get("3m", refresh=args.refresh)
         # Without this, beta / capm_alpha / idiosyncratic_volatility can never fire at all.
         benchmark = BenchmarkProvider(cache_dir=args.cache_dir).get(
             args.benchmark, refresh=args.refresh
@@ -431,7 +559,9 @@ def _build_snapshots(
                     ticker, asof=asof, pit_mode=pit_mode, refresh=args.refresh
                 )
         except Exception as exc:
-            status_console.print(f"[yellow]{ticker}: skipped ({type(exc).__name__}: {exc})[/yellow]")
+            status_console.print(
+                f"[yellow]{ticker}: skipped ({type(exc).__name__}: {exc})[/yellow]"
+            )
             continue
         if prices is not None:
             frame = prices.get(ticker, end=asof)
@@ -562,11 +692,10 @@ def _config_from_args(args: argparse.Namespace, *, profile: str | None = None) -
 
 
 def cmd_grade(args: argparse.Namespace) -> int:
-    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
-                                     offline=args.no_network))
     tickers = [t.upper() for t in args.tickers]
     peers = _resolve_peers(args, tickers)
     all_tickers = list(dict.fromkeys(tickers + peers))
+    provider = _sec_provider_from_args(args, len(all_tickers))
     snapshots = _build_snapshots(all_tickers, args, provider=provider)
     if not snapshots:
         console.print("[red]no securities could be loaded[/red]")
@@ -589,12 +718,15 @@ def cmd_grade(args: argparse.Namespace) -> int:
 
 
 def cmd_rank(args: argparse.Namespace) -> int:
-    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
-                                     offline=args.no_network))
-    tickers = _load_universe(args.universe)
+    selection = _load_universe_selection(args.universe)
+    asof_arg = getattr(args, "asof", None)
+    requested_asof = date.fromisoformat(asof_arg) if asof_arg else date.today()
+    _validate_universe_selection_asof(selection, requested_asof)
+    tickers = selection.tickers
     if not tickers:
         console.print("[red]universe file is empty[/red]")
         return 2
+    provider = _sec_provider_from_args(args, len(tickers))
     snapshots = _build_snapshots(tickers, args, provider=provider)
     if not snapshots:
         console.print("[red]no securities could be loaded[/red]")
@@ -615,11 +747,11 @@ def cmd_rank(args: argparse.Namespace) -> int:
 
 
 def cmd_consensus(args: argparse.Namespace) -> int:
-    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
-                                     offline=args.no_network))
     tickers = [t.upper() for t in args.tickers]
     peers = _resolve_peers(args, tickers)
-    snapshots = _build_snapshots(list(dict.fromkeys(tickers + peers)), args, provider=provider)
+    identifiers = list(dict.fromkeys(tickers + peers))
+    provider = _sec_provider_from_args(args, len(identifiers))
+    snapshots = _build_snapshots(identifiers, args, provider=provider)
     # Pass the scoring flags through. Without this, --weighting/--normalizer/--rho/--curve and
     # --sector-neutral were accepted and silently discarded, so `consensus` answered a different
     # question than the one asked.
@@ -657,8 +789,7 @@ def cmd_consensus(args: argparse.Namespace) -> int:
                     next(iter(report.warnings), "no metrics could be computed") if report else ""
                 )
                 console.print(
-                    f"\n[bold]{result.ticker}[/bold]: "
-                    f"[yellow]not gradeable[/yellow] — {reason}"
+                    f"\n[bold]{result.ticker}[/bold]: [yellow]not gradeable[/yellow] — {reason}"
                 )
                 continue
             console.print(f"\n[bold]{result.ticker}[/bold] by profile:")
@@ -680,16 +811,10 @@ def cmd_consensus(args: argparse.Namespace) -> int:
 def cmd_research(args: argparse.Namespace) -> int:
     """Build one evidence-rich analyst dossier with an explicit peer manifest."""
 
-    provider = SECProvider(
-        SECClient(
-            cache_dir=args.cache_dir,
-            contact=args.contact,
-            offline=args.no_network,
-        )
-    )
     ticker = args.ticker.upper()
     peer_identifiers = _resolve_peers(args, [ticker])
     identifiers = list(dict.fromkeys([ticker, *peer_identifiers]))
+    provider = _sec_provider_from_args(args, len(identifiers))
     snapshots = _build_snapshots(identifiers, args, provider=provider)
     by_ticker = {snapshot.ticker.upper(): snapshot for snapshot in snapshots}
     target = by_ticker.get(ticker)
@@ -751,6 +876,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         panel = pd.read_parquet(path)
     else:
         panel = pd.read_csv(path)
+    allow_mixed_universes = bool(getattr(args, "allow_mixed_universes", False))
     report = evaluate_walk_forward(
         panel,
         BacktestConfig(
@@ -762,9 +888,12 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             bootstrap_block_periods=args.bootstrap_block_periods,
             seed=args.seed,
         ),
+        allow_mixed_universes=allow_mixed_universes,
     )
     failed_contract = [
-        name for name, passed in report.input_contract.items() if not passed
+        name
+        for name, passed in report.input_contract.items()
+        if not passed and not (allow_mixed_universes and name == "single_universe_id")
     ]
     if failed_contract and not args.allow_unverified_panel:
         raise ValueError(
@@ -824,9 +953,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             # Non-finite metrics are stored as None (JSON null), never NaN: a NaN
             # in the ledger is contagious across every later deflation.
             metrics={
-                "per_period_sharpe": (
-                    this_sharpe if math.isfinite(this_sharpe) else None
-                ),
+                "per_period_sharpe": (this_sharpe if math.isfinite(this_sharpe) else None),
                 "mean_net_spread": report.mean_net_spread,
                 "mean_rank_ic": report.mean_rank_ic,
                 "deflated_sharpe": (
@@ -852,8 +979,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         ),
     )
     status_console.print(
-        f"[dim]trial recorded in {ledger_path} "
-        f"(lifetime trials: {len(trial_sharpes)})[/dim]"
+        f"[dim]trial recorded in {ledger_path} (lifetime trials: {len(trial_sharpes)})[/dim]"
     )
 
     if args.format == "json":
@@ -906,13 +1032,17 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     panels answer *which* style lens has an edge rather than merely whether one
     blend does. The deflated-Sharpe ledger already charges for the extra trials.
     """
-    provider = SECProvider(SECClient(cache_dir=args.cache_dir, contact=args.contact,
-                                     offline=args.no_network))
-    tickers = _load_universe(args.universe) if args.universe else _resolve_peers(args, [])
+    signal_date = date.fromisoformat(args.asof) if args.asof else date.today()
+    if args.universe:
+        selection = _load_universe_selection(args.universe)
+        _validate_universe_selection_asof(selection, signal_date)
+        tickers = selection.tickers
+    else:
+        tickers = _resolve_peers(args, [])
+        selection = _empty_selection("bundled_current_survivor_universe", tickers)
     if not tickers:
         console.print("[red]no universe to freeze[/red]")
         return 2
-    signal_date = date.fromisoformat(args.asof) if args.asof else date.today()
     out_dir = Path(args.out)
     profiles = profile_names() if getattr(args, "all_profiles", False) else [args.profile]
 
@@ -930,6 +1060,7 @@ def cmd_freeze(args: argparse.Namespace) -> int:
 
     # Built once and graded under every pending profile: the whole point of the
     # multi-profile freeze is that the fetch is the expensive part.
+    provider = _sec_provider_from_args(args, len(tickers))
     snapshots = _build_snapshots(tickers, args, provider=provider)
     if not snapshots:
         console.print("[red]no securities could be loaded[/red]")
@@ -939,9 +1070,19 @@ def cmd_freeze(args: argparse.Namespace) -> int:
 
     commit = current_commit()
     refused: list[str] = []
+    configs = {profile: _config_from_args(args, profile=profile) for profile in pending}
+    from . import pipeline as pipeline_module
+
+    multi = getattr(pipeline_module, "grade_universe_multi", None)
+    if len(pending) > 1 and callable(multi):
+        reports_by_profile = multi(snapshots, [configs[profile] for profile in pending])
+    else:
+        reports_by_profile = {
+            profile: grade_universe(snapshots, configs[profile]) for profile in pending
+        }
     for profile in pending:
-        config = _config_from_args(args, profile=profile)
-        reports = grade_universe(snapshots, config)
+        config = configs[profile]
+        reports = reports_by_profile[profile]
 
         # A panel where (nearly) nothing is graded is a data outage — an EDGAR
         # blackout on freeze day makes every gate refuse — not a signal, and once a
@@ -976,6 +1117,8 @@ def cmd_freeze(args: argparse.Namespace) -> int:
                 "profile": report.profile,
                 "config_fingerprint": report.meta.get("config_fingerprint"),
                 "universe_fingerprint": report.meta.get("universe_fingerprint"),
+                "universe_id": selection.universe_id,
+                "universe_spec_sha256": selection.spec_sha256,
                 "code_commit": commit,
                 "schema_version": "1.0",
             }
@@ -998,13 +1141,15 @@ def cmd_freeze(args: argparse.Namespace) -> int:
         # is how real alarms get trained away. Fail only on genuinely new
         # information: the profile the paper trader actually trades refusing, a
         # profile that HAS frozen before refusing now (a regression), or a month
-        # where nothing was written at all.
+        # where no requested profile has a same-date panel at all. Counting
+        # already-frozen siblings makes unchanged structural refusals idempotent.
         regressed = sorted(p for p in refused if _has_prior_panel(out_dir, p, signal_date))
+        has_same_date_output = any(panel_path(profile).is_file() for profile in profiles)
         console.print(
             f"[red]{len(refused)} of {len(pending)} profiles were refused: "
             f"{', '.join(refused)}[/red]"
         )
-        if TRADED_PROFILE in refused or regressed or len(refused) == len(pending):
+        if TRADED_PROFILE in refused or regressed or not has_same_date_output:
             if regressed:
                 console.print(
                     f"[red]regression: {', '.join(regressed)} froze a panel before and "
@@ -1047,8 +1192,12 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     from rich.box import SIMPLE
     from rich.table import Table
 
-    table = Table(box=SIMPLE, title=f"{len(METRICS)} registered metrics", title_justify="left",
-                  header_style="bold")
+    table = Table(
+        box=SIMPLE,
+        title=f"{len(METRICS)} registered metrics",
+        title_justify="left",
+        header_style="bold",
+    )
     table.add_column("metric", style="cyan")
     table.add_column("pillar")
     table.add_column("dir", justify="center")
@@ -1072,7 +1221,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Grade stocks from fundamentals, statistics and risk, with pluggable weighting.",
     )
     parser.add_argument("--version", action="version", version=f"stock-grader {__version__}")
-    parser.add_argument("-v", "--verbose", action="store_true", help="show warnings from data layers")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="show warnings from data layers"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(p: argparse.ArgumentParser, *, needs_universe: bool = False) -> None:
@@ -1095,16 +1246,29 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p.add_argument("--sector-neutral", action="store_true", help="score within sector")
         p.add_argument("--universe", required=needs_universe, help="file of tickers, one per line")
-        p.add_argument("--no-peers", action="store_true",
-                       help="skip the default peer universe (grade will carry no cross-sectional "
-                            "information and says so)")
+        p.add_argument(
+            "--no-peers",
+            action="store_true",
+            help="skip the default peer universe (grade will carry no cross-sectional "
+            "information and says so)",
+        )
         p.add_argument("--asof", help="grade as of this date (YYYY-MM-DD)")
-        p.add_argument("--pit", action="store_true",
-                       help="point-in-time: use only figures filed on or before --asof")
-        p.add_argument("--price", action="append",
-                       help="manual price, TICKER=123.45 (repeatable); enables valuation metrics "
-                            "with no market-data feed")
+        p.add_argument(
+            "--pit",
+            action="store_true",
+            help="point-in-time: use only figures filed on or before --asof",
+        )
+        p.add_argument(
+            "--price",
+            action="append",
+            help="manual price, TICKER=123.45 (repeatable); enables valuation metrics "
+            "with no market-data feed",
+        )
         p.add_argument("--price-dir", help="directory of TICKER.csv price files")
+        p.add_argument(
+            "--vault",
+            help="local Stock-Vault clone root; its verified EOD archive leads the price chain",
+        )
         p.add_argument(
             "--price-provider",
             default="auto",
@@ -1115,28 +1279,53 @@ def build_parser() -> argparse.ArgumentParser:
                 "scalar prices; 'none' disables the daily-price chain"
             ),
         )
-        p.add_argument("--synthetic-prices", action="store_true",
-                       help="fabricate a price series where none is available; clearly labelled "
-                            "in the report and never real market history")
-        p.add_argument("--sec-prices", action=argparse.BooleanOptionalAction, default=True,
-                       help="derive prices from SEC insider-transaction filings (default: on) — "
-                            "the only keyless price source, sparse but real")
-        p.add_argument("--max-price-age", type=int, default=400,
-                       help="refuse any SEC-derived price older than this many days (default 400)")
-        p.add_argument("--stockanalysis", action="store_true",
-                       help="opt-in StockAnalysis in the auto chain (equivalent to "
-                            "--price-provider stockanalysis when used alone). It is an undocumented "
-                            "commercial endpoint, not a licensed feed — read their ToS first")
-        p.add_argument("--benchmark", default="SP500",
-                       help="FRED index for beta/alpha (SP500, NASDAQ, DJIA); price-only, so alpha "
-                            "is overstated by roughly beta x the index dividend yield")
+        p.add_argument(
+            "--synthetic-prices",
+            action="store_true",
+            help="fabricate a price series where none is available; clearly labelled "
+            "in the report and never real market history",
+        )
+        p.add_argument(
+            "--sec-prices",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="derive prices from SEC insider-transaction filings (default: on) — "
+            "the only keyless price source, sparse but real",
+        )
+        p.add_argument(
+            "--max-price-age",
+            type=int,
+            default=400,
+            help="refuse any SEC-derived price older than this many days (default 400)",
+        )
+        p.add_argument(
+            "--stockanalysis",
+            action="store_true",
+            help="opt-in StockAnalysis in the auto chain (equivalent to "
+            "--price-provider stockanalysis when used alone). It is an undocumented "
+            "commercial endpoint, not a licensed feed — read their ToS first",
+        )
+        p.add_argument(
+            "--benchmark",
+            default="SP500",
+            help="FRED index for beta/alpha (SP500, NASDAQ, DJIA); price-only, so alpha "
+            "is overstated by roughly beta x the index dividend yield",
+        )
         p.add_argument("--no-network", action="store_true", help="SEC cache only, no price fetches")
-        p.add_argument("--foundry",
-                       help="Stock-Data foundry location (local clone path or raw URL): supplies "
-                            "reconstructed dividends-per-share as a fallback for dividend metrics")
+        p.add_argument(
+            "--foundry",
+            help="Stock-Data foundry location (local clone path or raw URL): supplies "
+            "reconstructed dividends-per-share as a fallback for dividend metrics",
+        )
         p.add_argument("--refresh", action="store_true", help="bypass the cache")
         p.add_argument("--cache-dir")
         p.add_argument("--contact", help="contact address sent to SEC in the User-Agent")
+        p.add_argument(
+            "--bulk-facts",
+            choices=["auto", "always", "never"],
+            default="auto",
+            help="SEC bulk Companyfacts policy (auto above 200 tickers when online)",
+        )
         p.add_argument("--format", default="text", choices=["text", "json", "md"])
 
     p_grade = sub.add_parser("grade", help="grade one or more securities")
@@ -1154,12 +1343,18 @@ def build_parser() -> argparse.ArgumentParser:
         "freeze",
         help="freeze today's scores into the append-only forward panel (never overwrites)",
     )
-    p_freeze.add_argument("--out", default="frozen_scores",
-                          help="directory of immutable <profile>/<date>.parquet files")
-    p_freeze.add_argument("--all-profiles", action="store_true",
-                          help="grade the one set of snapshots under every registered profile "
-                               "and write a panel for each (no extra network calls); --profile "
-                               "is ignored")
+    p_freeze.add_argument(
+        "--out",
+        default="frozen_scores",
+        help="directory of immutable <profile>/<date>.parquet files",
+    )
+    p_freeze.add_argument(
+        "--all-profiles",
+        action="store_true",
+        help="grade the one set of snapshots under every registered profile "
+        "and write a panel for each (no extra network calls); --profile "
+        "is ignored",
+    )
     common(p_freeze, needs_universe=True)
     p_freeze.set_defaults(func=cmd_freeze)
 
@@ -1195,8 +1390,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=(-0.02, 0.05, 0.12),
         help="illustrative annual cash-flow growth assumptions as decimals",
     )
-    p_research.add_argument("--discount-rate", type=float, default=None,
-                                help="explicit required equity return; omit to derive risk-free + equity risk premium")
+    p_research.add_argument(
+        "--discount-rate",
+        type=float,
+        default=None,
+        help="explicit required equity return; omit to derive risk-free + equity risk premium",
+    )
     p_research.add_argument("--terminal-growth", type=float, default=0.025)
     common(p_research)
     p_research.set_defaults(func=cmd_research)
@@ -1213,9 +1412,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_backtest.add_argument("--bootstrap-samples", type=int, default=1_000)
     p_backtest.add_argument("--bootstrap-block-periods", type=_positive_int, default=3)
     p_backtest.add_argument("--seed", type=int, default=0)
-    p_backtest.add_argument("--ledger", default="research_ledger.jsonl",
-                            help="append-only trial ledger; the deflated-Sharpe "
-                                 "correction counts every trial ever recorded here")
+    p_backtest.add_argument(
+        "--ledger",
+        default="research_ledger.jsonl",
+        help="append-only trial ledger; the deflated-Sharpe "
+        "correction counts every trial ever recorded here",
+    )
     p_backtest.add_argument(
         "--allow-unverified-panel",
         action="store_true",
@@ -1223,6 +1425,11 @@ def build_parser() -> argparse.ArgumentParser:
             "run despite missing PIT-universe, total-return, delisting, filing-cutoff, or "
             "permanent-identifier evidence; the report will retain those caveats"
         ),
+    )
+    p_backtest.add_argument(
+        "--allow-mixed-universes",
+        action="store_true",
+        help="explicitly allow panels containing more than one universe_id",
     )
     p_backtest.add_argument("--format", default="text", choices=["text", "json", "md"])
     p_backtest.set_defaults(func=cmd_backtest)
@@ -1267,9 +1474,9 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("--discount-rate must be a finite rate greater than -1")
             if args.discount_rate <= args.terminal_growth:
                 parser.error("--discount-rate must be greater than --terminal-growth")
-    if (
-        getattr(args, "rho", None) is not None
-        and getattr(args, "aggregator", None) not in (None, "ces")
+    if getattr(args, "rho", None) is not None and getattr(args, "aggregator", None) not in (
+        None,
+        "ces",
     ):
         parser.error("--rho applies only when the pillar aggregator is ces")
     if getattr(args, "rho", None) is not None and (

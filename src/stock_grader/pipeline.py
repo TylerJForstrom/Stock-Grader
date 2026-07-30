@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -50,7 +51,13 @@ from .weighting import WEIGHT_METHOD_INFO, WeightingContext, compute_weights
 
 log = logging.getLogger(__name__)
 
-__all__ = ["GradeConfig", "build_metric_matrix", "grade_one", "grade_universe"]
+__all__ = [
+    "GradeConfig",
+    "build_metric_matrix",
+    "grade_one",
+    "grade_universe",
+    "grade_universe_multi",
+]
 
 MIN_COVERAGE_TO_GRADE = 0.35
 
@@ -82,6 +89,7 @@ class GradeConfig:
         # produce meaningless within-group statistics. Opt out for genuinely
         # homogeneous universes (e.g. an all-bank peer list).
         sector_neutral: bool = True,
+        sector_neutral_key: str = "business_model",
         curve: str = "cross_sectional",
         absolute_weight: float = 0.5,
         seed: int = 0,
@@ -270,7 +278,14 @@ class GradeConfig:
         if min_letter_peers < 2:
             raise ValueError("min_letter_peers must be at least 2")
         self.min_letter_peers = min_letter_peers
+        valid_sector_neutral_keys = {"business_model", "sic2", "sic3"}
+        if not isinstance(sector_neutral_key, str) or sector_neutral_key not in valid_sector_neutral_keys:
+            raise ValueError(
+                "sector_neutral_key must be one of "
+                + ", ".join(sorted(valid_sector_neutral_keys))
+            )
         self.sector_neutral = sector_neutral
+        self.sector_neutral_key = sector_neutral_key
         self.curve = curve
         self.absolute_weight = absolute_weight
         self.seed = seed
@@ -333,6 +348,10 @@ def _config_manifest(config: GradeConfig) -> tuple[dict[str, object], str]:
         "required_pillars": sorted(config.required_pillars),
         "require_defining_pillar": config.require_defining_pillar,
     }
+    # Keep the legacy default manifest byte-for-byte stable: frozen panels use this hash as a
+    # comparability contract. Non-default grouping is a methodology change and must fingerprint.
+    if config.sector_neutral_key != "business_model":
+        manifest["sector_neutral_key"] = config.sector_neutral_key
     encoded = json.dumps(
         manifest, sort_keys=True, separators=(",", ":"), default=str
     ).encode()
@@ -450,17 +469,34 @@ def build_metric_matrix(
     return matrix, results
 
 
+def _normalization_groups(
+    snapshots: list[SecuritySnapshot],
+    config: GradeConfig,
+) -> pd.Series | None:
+    """Grouping key for sector-neutral normalization, aligned by ticker."""
+    if not config.sector_neutral:
+        return None
+    if config.sector_neutral_key == "business_model":
+        # Preserve the historical dtype and values exactly for the default path.
+        return pd.Series({snapshot.ticker: snapshot.sector.value for snapshot in snapshots})
+
+    width = 2 if config.sector_neutral_key == "sic2" else 3
+    groups: dict[str, str | None] = {}
+    for snapshot in snapshots:
+        digits = "".join(character for character in str(snapshot.sic or "") if character.isdigit())
+        # Missing/invalid SIC stays ungrouped, so sector_neutral retains the global score for that
+        # row rather than manufacturing one giant "unknown SIC" pseudo-industry.
+        groups[snapshot.ticker] = digits[:width] if len(digits) >= width else None
+    return pd.Series(groups, dtype="string")
+
+
 def _normalize_matrix(
     matrix: pd.DataFrame,
     snapshots: list[SecuritySnapshot],
     config: GradeConfig,
 ) -> pd.DataFrame:
     """Convert raw metric values to 0..100 scores, one cross-section at a time."""
-    sectors = (
-        pd.Series({s.ticker: s.sector.value for s in snapshots})
-        if config.sector_neutral
-        else None
-    )
+    sectors = _normalization_groups(snapshots, config)
     scored: dict[str, pd.Series] = {}
     for name in matrix.columns:
         spec = METRICS.maybe(name)
@@ -570,12 +606,132 @@ def _sensitivity_range_and_letter_frequencies(
     return ((float(low), float(high)), frequencies)
 
 
+def _combined_metric_names(configs: Sequence[GradeConfig]) -> list[str] | None:
+    """One metric request that covers every config without evaluating a metric twice."""
+    if any(config.metric_whitelist is None for config in configs):
+        return None
+    return list(
+        dict.fromkeys(
+            metric_name
+            for config in configs
+            for metric_name in (config.metric_whitelist or ())
+        )
+    )
+
+
+def _scope_metric_inputs(
+    matrix: pd.DataFrame,
+    results: dict[str, dict[str, MetricResult]],
+    config: GradeConfig,
+) -> tuple[pd.DataFrame, dict[str, dict[str, MetricResult]]]:
+    """Restore the exact per-config metric view after a union evaluation."""
+    if config.metric_whitelist is None:
+        return matrix, results
+    wanted = list(config.metric_whitelist)
+    scoped_matrix = matrix.reindex(columns=wanted)
+    scoped_results = {
+        ticker: {
+            metric_name: result_map[metric_name]
+            for metric_name in wanted
+            if metric_name in result_map
+        }
+        for ticker, result_map in results.items()
+    }
+    return scoped_matrix, scoped_results
+
+
 def grade_universe(
     snapshots: list[SecuritySnapshot],
     config: GradeConfig | None = None,
     *,
     forward_returns: pd.Series | None = None,
     previous_letters: dict[str, str] | None = None,
+) -> dict[str, GradeReport]:
+    """Grade every security against the others. The primitive operation.
+
+    ``config=None`` and the validation order are retained for public-API compatibility.
+    """
+    config = config or GradeConfig()
+    _validate_supervised_weighting_safety(config)
+    if not snapshots:
+        return {}
+    matrix, results = build_metric_matrix(snapshots, names=config.metric_whitelist)
+    return _grade_from_matrix(
+        snapshots,
+        matrix,
+        results,
+        config,
+        forward_returns=forward_returns,
+        previous_letters=previous_letters,
+    )
+
+
+def grade_universe_multi(
+    snapshots: list[SecuritySnapshot],
+    configs: Sequence[GradeConfig],
+    *,
+    forward_returns: pd.Series | None = None,
+    previous_letters: dict[str, str] | None = None,
+) -> dict[str, dict[str, GradeReport]]:
+    """Grade one metric cross-section under several profiles without repeated shared work."""
+    active = list(configs)
+    for config in active:
+        _validate_supervised_weighting_safety(config)
+    if not active:
+        return {}
+    if not snapshots:
+        return {config.name: {} for config in active}
+
+    matrix, results = build_metric_matrix(
+        snapshots,
+        names=_combined_metric_names(active),
+    )
+    normalized_cache: dict[
+        tuple[str, bool, str, tuple[str, ...] | None],
+        pd.DataFrame,
+    ] = {}
+    reports_by_config: dict[str, dict[str, GradeReport]] = {}
+    for config in active:
+        scoped_matrix, scoped_results = _scope_metric_inputs(matrix, results, config)
+        normalized_matrix = None
+        if not scoped_matrix.empty:
+            whitelist_key = (
+                None
+                if config.metric_whitelist is None
+                else tuple(sorted(config.metric_whitelist))
+            )
+            cache_key = (
+                config.normalizer,
+                bool(config.sector_neutral),
+                config.sector_neutral_key,
+                whitelist_key,
+            )
+            if cache_key not in normalized_cache:
+                normalized_cache[cache_key] = _normalize_matrix(scoped_matrix, snapshots, config)
+            normalized_matrix = normalized_cache[cache_key]
+            if config.metric_whitelist is not None:
+                normalized_matrix = normalized_matrix.reindex(columns=config.metric_whitelist)
+        reports_by_config[config.name] = _grade_from_matrix(
+            snapshots,
+            scoped_matrix,
+            scoped_results,
+            config,
+            forward_returns=forward_returns,
+            previous_letters=previous_letters,
+            normalized_matrix=normalized_matrix,
+        )
+    return reports_by_config
+
+
+def _grade_from_matrix(
+    snapshots: list[SecuritySnapshot],
+    matrix: pd.DataFrame,
+    results: dict[str, dict[str, MetricResult]],
+    config: GradeConfig,
+    *,
+    forward_returns: pd.Series | None = None,
+    previous_letters: dict[str, str] | None = None,
+    normalized_matrix: pd.DataFrame | None = None,
 ) -> dict[str, GradeReport]:
     """Grade every security against the others. The primitive operation.
 
@@ -609,7 +765,6 @@ def grade_universe(
             len(snapshots),
         )
 
-    matrix, results = build_metric_matrix(snapshots, names=config.metric_whitelist)
     if matrix.empty:
         log.warning("no metrics registered or evaluated; returning ungraded reports")
         return {
@@ -620,7 +775,7 @@ def grade_universe(
             for s in snapshots
         }
 
-    scores = _normalize_matrix(matrix, snapshots, config)
+    scores = normalized_matrix if normalized_matrix is not None else _normalize_matrix(matrix, snapshots, config)
     pillars = _pillar_members(list(scores.columns))
     # Time-series diagnostics (Hurst, variance ratio, autocorrelation) carry
     # near-zero cross-sectional pricing content at these universe sizes; they

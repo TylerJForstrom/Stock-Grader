@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from stock_grader.data.vault import VaultDataSource, VaultError, VaultPriceProvider
@@ -25,8 +26,9 @@ def _manifest(directory: Path, names: list[str], *, corrupt: str | None = None) 
             digest = "0" * 64
         files.append({"name": name, "sha256": digest, "bytes": (directory / name).stat().st_size})
     (directory / "manifest.json").write_text(
-        json.dumps({"schema_version": "1.0", "source_urls": [], "license_note": "private",
-                    "files": files})
+        json.dumps(
+            {"schema_version": "1.0", "source_urls": [], "license_note": "private", "files": files}
+        )
     )
 
 
@@ -34,12 +36,36 @@ def build_vault(root: Path, *, corrupt: str | None = None) -> Path:
     eod = root / "data" / "market_eod" / "2026-07"
     eod.mkdir(parents=True)
     day1 = [
-        {"symbol": "AAPL", "open": 210.0, "high": 214.0, "low": 209.0, "close": 213.0,
-         "volume": 1e6, "vwap": 212.0, "transactions": 1000},
-        {"symbol": "DEADCO", "open": 4.0, "high": 4.2, "low": 3.8, "close": 4.0,
-         "volume": 5e4, "vwap": 4.0, "transactions": 42},
-        {"symbol": "BRK.B", "open": 470.0, "high": 472.0, "low": 468.0, "close": 471.0,
-         "volume": 2e5, "vwap": 470.5, "transactions": 500},
+        {
+            "symbol": "AAPL",
+            "open": 210.0,
+            "high": 214.0,
+            "low": 209.0,
+            "close": 213.0,
+            "volume": 1e6,
+            "vwap": 212.0,
+            "transactions": 1000,
+        },
+        {
+            "symbol": "DEADCO",
+            "open": 4.0,
+            "high": 4.2,
+            "low": 3.8,
+            "close": 4.0,
+            "volume": 5e4,
+            "vwap": 4.0,
+            "transactions": 42,
+        },
+        {
+            "symbol": "BRK.B",
+            "open": 470.0,
+            "high": 472.0,
+            "low": 468.0,
+            "close": 471.0,
+            "volume": 2e5,
+            "vwap": 470.5,
+            "transactions": 500,
+        },
     ]
     day2 = [dict(day1[0], close=215.0), dict(day1[2], close=473.0)]  # DEADCO delisted
     (eod / "2026-07-27.jsonl.gz").write_bytes(_gz_jsonl(day1))
@@ -49,22 +75,44 @@ def build_vault(root: Path, *, corrupt: str | None = None) -> Path:
     borrow = root / "data" / "borrow" / "2026-07"
     borrow.mkdir(parents=True)
     snapshot = [
-        {"symbol": "AAPL", "fee_rate": 0.25, "rebate_rate": 3.9,
-         "available": 10_000_000, "available_capped": True, "currency": "USD"},
-        {"symbol": "BRK B", "fee_rate": 0.30, "rebate_rate": 3.8,
-         "available": 50_000, "available_capped": False, "currency": "USD"},
-        {"symbol": "GME", "fee_rate": 13.75, "rebate_rate": -12.5,
-         "available": 450_000, "available_capped": False, "currency": "USD"},
+        {
+            "symbol": "AAPL",
+            "fee_rate": 0.25,
+            "rebate_rate": 3.9,
+            "available": 10_000_000,
+            "available_capped": True,
+            "currency": "USD",
+        },
+        {
+            "symbol": "BRK B",
+            "fee_rate": 0.30,
+            "rebate_rate": 3.8,
+            "available": 50_000,
+            "available_capped": False,
+            "currency": "USD",
+        },
+        {
+            "symbol": "GME",
+            "fee_rate": 13.75,
+            "rebate_rate": -12.5,
+            "available": 450_000,
+            "available_capped": False,
+            "currency": "USD",
+        },
     ]
     (borrow / "usa_20260728T2318.jsonl.gz").write_bytes(_gz_jsonl(snapshot))
     _manifest(borrow, ["usa_20260728T2318.jsonl.gz"])
 
     dead = root / "data" / "delisted_prices" / "2023"
     dead.mkdir(parents=True)
-    history = {"data": {"data": [
-        {"t": 1672531200, "o": 10.0, "h": 11.0, "l": 9.5, "c": 10.5, "a": 10.5, "v": 1000},
-        {"t": 1672617600, "o": 10.5, "h": 10.8, "l": 10.0, "c": 10.2, "a": 10.2, "v": 900},
-    ]}}
+    history = {
+        "data": {
+            "data": [
+                {"t": 1672531200, "o": 10.0, "h": 11.0, "l": 9.5, "c": 10.5, "a": 10.5, "v": 1000},
+                {"t": 1672617600, "o": 10.5, "h": 10.8, "l": 10.0, "c": 10.2, "a": 10.2, "v": 900},
+            ]
+        }
+    }
     (dead / "SIVB.json.gz").write_bytes(gzip.compress(json.dumps(history).encode()))
     (dead / "cohort_index.json").write_text("{}")
     _manifest(dead, ["SIVB.json.gz", "cohort_index.json"])
@@ -118,3 +166,84 @@ def test_price_provider_adapter_shapes_frames(tmp_path):
     frame = provider._fetch("AAPL")
     assert list(frame.columns) == ["open", "high", "low", "close", "volume"]
     assert frame["close"].iloc[-1] == pytest.approx(215.0)
+
+
+def test_market_eod_panel_reads_each_day_once_and_series_matches_fixture(
+    tmp_path,
+    monkeypatch,
+):
+    from stock_grader.data import vault as vault_module
+
+    root = build_vault(tmp_path / "vault")
+    vault = VaultDataSource(root)
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(vault_module, "default_cache_dir", lambda *_parts: cache)
+    calls: list[tuple[str, str]] = []
+    original = vault._read_verified
+
+    def counted(dataset_dir: str, name: str) -> bytes:
+        calls.append((dataset_dir, name))
+        return original(dataset_dir, name)
+
+    monkeypatch.setattr(vault, "_read_verified", counted)
+    panel = vault.market_eod_panel()
+    assert list(panel.columns) == [
+        "date",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "vwap",
+        "transactions",
+    ]
+    day_reads = [name for dataset, name in calls if dataset.startswith("data/market_eod/")]
+    assert day_reads == ["2026-07-27.jsonl.gz", "2026-07-28.jsonl.gz"]
+
+    series = vault.market_eod_series("BRK-B")
+    assert series is not None
+    assert list(series["close"]) == [471.0, 473.0]
+    expected = panel[panel["symbol"].eq("BRK.B")].set_index("date").sort_index()
+    pd.testing.assert_frame_equal(series, expected)
+    assert [name for dataset, name in calls if dataset.startswith("data/market_eod/")] == day_reads
+
+
+def test_vault_price_provider_is_a_real_chained_provider_and_holds_panel(
+    tmp_path,
+    monkeypatch,
+):
+    root = build_vault(tmp_path / "vault")
+    vault = VaultDataSource(root)
+    builds = 0
+    original = vault.market_eod_panel
+
+    def counted_panel(*args, **kwargs):
+        nonlocal builds
+        builds += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(vault, "market_eod_panel", counted_panel)
+    provider = VaultPriceProvider(vault, cache_dir=tmp_path / "cache")
+    first = provider.get("AAPL", end=dt.date(2026, 7, 28))
+    second = provider.get("BRK-B", end=dt.date(2026, 7, 28))
+    assert first is not None and first["close"].iloc[-1] == pytest.approx(215.0)
+    assert second is not None and second["close"].iloc[-1] == pytest.approx(473.0)
+    assert builds == 1
+
+
+@pytest.mark.parametrize("bad_value", ["not-a-number", True])
+def test_market_eod_panel_refuses_unparseable_numeric_feed_values(tmp_path, bad_value):
+    root = build_vault(tmp_path / "vault")
+    eod = root / "data" / "market_eod" / "2026-07"
+    path = eod / "2026-07-27.jsonl.gz"
+    rows = [json.loads(line) for line in gzip.decompress(path.read_bytes()).decode().splitlines()]
+    rows[0]["close"] = bad_value
+    path.write_bytes(_gz_jsonl(rows))
+    _manifest(eod, ["2026-07-27.jsonl.gz", "2026-07-28.jsonl.gz"])
+    with pytest.raises(VaultError, match="unparseable numeric"):
+        VaultDataSource(root).market_eod_panel(cache_dir=tmp_path / "cache")
+
+    provider = VaultPriceProvider(VaultDataSource(root), cache_dir=tmp_path / "provider-cache")
+    with pytest.raises(VaultError, match="unparseable numeric"):
+        provider.get("AAPL", end=dt.date(2026, 7, 28))

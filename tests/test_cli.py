@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from stock_grader import cli
+from stock_grader import cli, pipeline
 from stock_grader.profiles import ConsensusResult, profile_names
 from stock_grader.types import GradeReport, SecuritySnapshot
 
@@ -63,7 +63,11 @@ def test_rank_json_applies_top_and_canonical_order(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _patch_data_loading(monkeypatch)
-    monkeypatch.setattr(cli, "_load_universe", lambda _path: ["LOW", "HIGH", "REFUSED"])
+    monkeypatch.setattr(
+        cli,
+        "_load_universe_selection",
+        lambda path: cli._empty_selection(path, ["LOW", "HIGH", "REFUSED"]),
+    )
     monkeypatch.setattr(cli, "_config_from_args", lambda _args: object())
     monkeypatch.setattr(
         cli,
@@ -87,7 +91,9 @@ def test_rank_markdown_is_a_ranked_table_and_applies_top(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _patch_data_loading(monkeypatch)
-    monkeypatch.setattr(cli, "_load_universe", lambda _path: ["LOW", "HIGH"])
+    monkeypatch.setattr(
+        cli, "_load_universe_selection", lambda path: cli._empty_selection(path, ["LOW", "HIGH"])
+    )
     monkeypatch.setattr(cli, "_config_from_args", lambda _args: object())
     monkeypatch.setattr(
         cli,
@@ -271,9 +277,7 @@ def test_current_yahoo_split_events_rebase_dated_dei_shares() -> None:
         {"close": [18.0, 20.0]},
         index=pd.to_datetime(["2024-12-31", "2026-07-28"]),
     )
-    frame.attrs["split_events"] = [
-        {"date": "2025-06-01", "factor": 4.0, "ratio": "4:1"}
-    ]
+    frame.attrs["split_events"] = [{"date": "2025-06-01", "factor": 4.0, "ratio": "4:1"}]
 
     reconciled = cli._reconcile_current_yahoo_share_basis(
         snapshot,
@@ -302,6 +306,173 @@ def test_parser_rejects_non_positive_top_and_accepts_explicit_price_provider() -
 
     with pytest.raises(SystemExit):
         parser.parse_args(["rank", "--universe", "tickers.txt", "--top", "0"])
+
+
+def test_universe_selection_parses_provenance_and_plain_loader_stays_compatible(
+    tmp_path: Path,
+) -> None:
+    universe = tmp_path / "wide.txt"
+    universe.write_text(
+        "\n".join(
+            [
+                "# universe_id: liq1000_v1",
+                "# asof: 2026-07-31",
+                f"# spec_sha256: {'a' * 64}",
+                f"# source_sha256: {'b' * 64}",
+                "# row_count: 2",
+                "brk-b",
+                "aapl",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    selection = cli._load_universe_selection(str(universe))
+    assert selection.tickers == ["BRK-B", "AAPL"]
+    assert cli._load_universe(str(universe)) == selection.tickers
+    assert selection.universe_id == "liq1000_v1"
+    assert selection.asof == date(2026, 7, 31)
+    assert selection.spec_sha256 == "a" * 64
+    assert selection.source_sha256 == "b" * 64
+
+
+def test_universe_selection_refuses_bad_count_future_use_and_staleness(tmp_path: Path) -> None:
+    universe = tmp_path / "wide.txt"
+    universe.write_text(
+        "\n".join(
+            [
+                "# universe_id=liq1000_v1",
+                "# asof=2026-07-31",
+                f"# spec_sha256={'a' * 64}",
+                f"# source_sha256={'b' * 64}",
+                "# row_count=2",
+                "AAPL",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="row_count"):
+        cli._load_universe_selection(str(universe))
+
+    selection = cli.UniverseSelection(
+        ["AAPL"], "liq1000_v1", date(2026, 7, 31), "a" * 64, "b" * 64, str(universe)
+    )
+    with pytest.raises(SystemExit, match="earlier signal date"):
+        cli._validate_universe_selection_asof(selection, date(2026, 7, 30))
+    with pytest.raises(SystemExit, match="days old"):
+        cli._validate_universe_selection_asof(selection, date(2027, 8, 1))
+
+
+def test_rank_enforces_explicit_universe_selection_clock(tmp_path: Path) -> None:
+    universe = tmp_path / "wide.txt"
+    universe.write_text(
+        "\n".join(
+            [
+                "# universe_id: liq1000_v1",
+                "# asof: 2026-07-31",
+                f"# spec_sha256: {'a' * 64}",
+                f"# source_sha256: {'b' * 64}",
+                "# row_count: 1",
+                "AAPL",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = _common_args(
+        universe=str(universe),
+        asof="2027-08-01",
+        top=None,
+    )
+    with pytest.raises(SystemExit, match="days old"):
+        cli.cmd_rank(args)
+
+
+def test_bulk_provider_policy_uses_shared_client_at_threshold(monkeypatch) -> None:
+    clients: list[object] = []
+
+    def client_factory(**_kwargs):
+        client = object()
+        clients.append(client)
+        return client
+
+    class Bulk:
+        def __init__(self, client, *, cache_dir=None):
+            self.client = client
+            self.cache_dir = cache_dir
+            self.ensure_calls: list[bool] = []
+
+        def ensure(self, refresh: bool = False):
+            self.ensure_calls.append(refresh)
+
+    monkeypatch.setattr(cli, "SECClient", client_factory)
+    monkeypatch.setattr(cli, "SECBulkFacts", Bulk)
+    base = Namespace(
+        cache_dir=None,
+        contact=None,
+        no_network=False,
+        refresh=False,
+        bulk_facts="auto",
+    )
+    assert cli._sec_provider_from_args(base, 199).bulk is None
+    at_threshold = cli._sec_provider_from_args(base, 200)
+    assert at_threshold.bulk is not None
+    assert at_threshold.client is at_threshold.bulk.client
+    assert at_threshold.bulk.ensure_calls == [False]
+    offline = Namespace(**{**vars(base), "no_network": True})
+    assert cli._sec_provider_from_args(offline, 1_000).bulk is None
+    always = Namespace(**{**vars(offline), "bulk_facts": "always"})
+    always_provider = cli._sec_provider_from_args(always, 1)
+    assert always_provider.bulk is not None
+    assert always_provider.bulk.ensure_calls == [False]
+    assert len(clients) == 4
+
+
+def test_new_grading_flags_are_registered_after_the_subcommand(tmp_path: Path) -> None:
+    args = cli.build_parser().parse_args(
+        [
+            "freeze",
+            "--universe",
+            str(tmp_path / "u.txt"),
+            "--bulk-facts",
+            "always",
+            "--vault",
+            str(tmp_path / "Stock-Vault"),
+        ]
+    )
+    assert args.bulk_facts == "always"
+    assert args.vault.endswith("Stock-Vault")
+
+
+def test_vault_price_provider_leads_the_cli_price_chain(monkeypatch, tmp_path: Path) -> None:
+    created: list[tuple[object, Path | None]] = []
+
+    class FakeProvider:
+        name = "vault"
+
+    def source_factory(path):
+        return ("source", path)
+
+    def provider_factory(source, *, cache_dir=None):
+        created.append((source, cache_dir))
+        return FakeProvider()
+
+    monkeypatch.setattr(cli, "VaultDataSource", source_factory)
+    monkeypatch.setattr(cli, "VaultPriceProvider", provider_factory)
+    args = _common_args(
+        vault=str(tmp_path / "Stock-Vault"),
+        price_provider="auto",
+        price_dir=str(tmp_path / "prices"),
+        no_network=True,
+        cache_dir=str(tmp_path / "cache"),
+    )
+
+    providers = cli._price_providers_from_args(args)
+    assert providers[0].name == "vault"
+    assert providers[1].name == "csv"
+    assert created == [
+        (("source", str(tmp_path / "Stock-Vault")), (tmp_path / "cache" / "vault").resolve())
+    ]
 
 
 def test_backtest_cli_requires_and_reports_a_verifiable_input_contract(
@@ -338,6 +509,7 @@ def test_backtest_cli_requires_and_reports_a_verifiable_input_contract(
         seed=0,
         allow_unverified_panel=False,
         format="json",
+        allow_mixed_universes=False,
         # Point at a scratch ledger: without this the run appends a junk trial
         # to the repo's real research_ledger.jsonl, deflating every future DSR.
         ledger=str(tmp_path / "ledger.jsonl"),
@@ -348,7 +520,16 @@ def test_backtest_cli_requires_and_reports_a_verifiable_input_contract(
     assert all(payload["input_contract"].values())
     assert payload["periods"][0]["top_turnover"] == 1.0
 
-    frame = pd.read_csv(path).drop(columns=["universe_is_pit"])
+    frame = pd.read_csv(path)
+    frame["universe_id"] = ["narrow"] * 10 + ["wide"] * 10
+    frame.to_csv(path, index=False)
+    args.allow_mixed_universes = True
+    assert cli.cmd_backtest(args) == 0
+    mixed_payload = json.loads(capsys.readouterr().out)
+    assert mixed_payload["input_contract"]["single_universe_id"] is False
+
+    # The explicit waiver is narrow: a separate failed contract item still refuses the run.
+    frame = frame.drop(columns=["universe_is_pit"])
     frame.to_csv(path, index=False)
     with pytest.raises(ValueError, match="strict input contract"):
         cli.cmd_backtest(args)
@@ -382,9 +563,17 @@ def test_backtest_records_trials_and_deflates_by_ledger_history(
 
     def run() -> dict:
         args = Namespace(
-            panel=str(path), quantiles=2, min_cross_section=10, periods_per_year=12,
-            transaction_cost_bps=10.0, bootstrap_samples=0, bootstrap_block_periods=1,
-            seed=0, allow_unverified_panel=False, format="json", ledger=str(ledger),
+            panel=str(path),
+            quantiles=2,
+            min_cross_section=10,
+            periods_per_year=12,
+            transaction_cost_bps=10.0,
+            bootstrap_samples=0,
+            bootstrap_block_periods=1,
+            seed=0,
+            allow_unverified_panel=False,
+            format="json",
+            ledger=str(ledger),
         )
         assert cli.cmd_backtest(args) == 0
         return json.loads(capsys.readouterr().out)
@@ -435,9 +624,17 @@ def test_backtest_null_sharpe_trial_does_not_poison_later_deflation(
 
     def run(panel: Path) -> dict:
         args = Namespace(
-            panel=str(panel), quantiles=2, min_cross_section=10, periods_per_year=12,
-            transaction_cost_bps=10.0, bootstrap_samples=0, bootstrap_block_periods=1,
-            seed=0, allow_unverified_panel=False, format="json", ledger=str(ledger),
+            panel=str(panel),
+            quantiles=2,
+            min_cross_section=10,
+            periods_per_year=12,
+            transaction_cost_bps=10.0,
+            bootstrap_samples=0,
+            bootstrap_block_periods=1,
+            seed=0,
+            allow_unverified_panel=False,
+            format="json",
+            ledger=str(ledger),
         )
         assert cli.cmd_backtest(args) == 0
         return json.loads(capsys.readouterr().out)
@@ -467,12 +664,31 @@ def _freeze_args(out: Path, **overrides) -> Namespace:
     return _common_args(**values)
 
 
+def _patch_freeze_universe(monkeypatch, snapshots, **metadata) -> None:
+    selection = cli.UniverseSelection(
+        tickers=[snapshot.ticker for snapshot in snapshots],
+        universe_id=metadata.get("universe_id"),
+        asof=metadata.get("asof"),
+        spec_sha256=metadata.get("spec_sha256"),
+        source_sha256=metadata.get("source_sha256"),
+        path="ignored.txt",
+    )
+    monkeypatch.setattr(cli, "_load_universe_selection", lambda _path: selection)
+
+
 def test_freeze_writes_immutable_dated_panel(tmp_path, monkeypatch):
     """The forward panel: one parquet per profile per date, never overwritten."""
     from tests.test_pipeline import _universe
 
     snapshots = _universe(16, with_prices=False)
-    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    _patch_freeze_universe(
+        monkeypatch,
+        snapshots,
+        universe_id="liq1000_v1",
+        asof=date(2026, 7, 29),
+        spec_sha256="a" * 64,
+        source_sha256="b" * 64,
+    )
     monkeypatch.setattr(cli, "_build_snapshots", lambda tickers, args, provider: snapshots)
 
     args = _freeze_args(tmp_path / "frozen", profile="all_weather")
@@ -484,10 +700,19 @@ def test_freeze_writes_immutable_dated_panel(tmp_path, monkeypatch):
     frame = pd.read_parquet(out)
     assert len(frame) == 16
     assert set(frame.columns) >= {
-        "signal_date", "ticker", "cik", "score", "letter", "graded",
-        "config_fingerprint", "universe_fingerprint", "code_commit",
+        "signal_date",
+        "ticker",
+        "cik",
+        "score",
+        "letter",
+        "graded",
+        "config_fingerprint",
+        "universe_fingerprint",
+        "code_commit",
     }
     before = out.read_bytes()
+    assert set(frame["universe_id"]) == {"liq1000_v1"}
+    assert set(frame["universe_spec_sha256"]) == {"a" * 64}
     assert cli.cmd_freeze(args) == 0  # second run: skip, never overwrite
     assert out.read_bytes() == before
 
@@ -501,7 +726,7 @@ def test_freeze_refuses_a_nearly_ungraded_panel(
     from tests.test_pipeline import _universe
 
     snapshots = _universe(16, with_prices=False)
-    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    _patch_freeze_universe(monkeypatch, snapshots)
     monkeypatch.setattr(cli, "_build_snapshots", lambda tickers, args, provider: snapshots)
     # Every gate refused a letter: scores exist but nothing is graded.
     monkeypatch.setattr(
@@ -527,15 +752,19 @@ def test_freeze_all_profiles_writes_one_panel_per_registered_profile(tmp_path, m
         builds.append(tickers)
         return snapshots
 
-    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    _patch_freeze_universe(monkeypatch, snapshots)
     monkeypatch.setattr(cli, "_build_snapshots", build_snapshots)
-    monkeypatch.setattr(
-        cli,
-        "grade_universe",
-        lambda snaps, config: {
-            s.ticker: _report(s.ticker, 50.0, "B", profile=config.name) for s in snaps
-        },
-    )
+
+    def grade_all(snaps, configs):
+        return {
+            config.name: {
+                snapshot.ticker: _report(snapshot.ticker, 50.0, "B", profile=config.name)
+                for snapshot in snaps
+            }
+            for config in configs
+        }
+
+    monkeypatch.setattr(pipeline, "grade_universe_multi", grade_all)
 
     args = _freeze_args(tmp_path / "frozen", all_profiles=True)
     assert cli.cmd_freeze(args) == 0
@@ -558,21 +787,24 @@ def _refusing_universe(monkeypatch, refuse: set[str]):
     from tests.test_pipeline import _universe
 
     snapshots = _universe(16, with_prices=False)
-    monkeypatch.setattr(cli, "_load_universe", lambda path: [s.ticker for s in snapshots])
+    _patch_freeze_universe(monkeypatch, snapshots)
     monkeypatch.setattr(cli, "_build_snapshots", lambda tickers, args, provider: snapshots)
-    monkeypatch.setattr(
-        cli,
-        "grade_universe",
-        lambda snaps, config: {
-            s.ticker: _report(
-                s.ticker,
-                50.0,
-                "N/A" if config.name in refuse else "B",
-                profile=config.name,
-            )
-            for s in snaps
-        },
-    )
+
+    def grade_all(snaps, configs):
+        return {
+            config.name: {
+                snapshot.ticker: _report(
+                    snapshot.ticker,
+                    50.0,
+                    "N/A" if config.name in refuse else "B",
+                    profile=config.name,
+                )
+                for snapshot in snaps
+            }
+            for config in configs
+        }
+
+    monkeypatch.setattr(pipeline, "grade_universe_multi", grade_all)
 
 
 def test_freeze_all_profiles_skips_one_refused_profile_without_failing(
@@ -598,6 +830,29 @@ def test_freeze_all_profiles_skips_one_refused_profile_without_failing(
     assert "refusing to freeze" in out
     assert "momentum" in out  # the refusal names the profile that was skipped
     assert "structural" in out
+
+
+def test_freeze_structural_refusals_are_idempotent_when_sibling_panels_exist(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A rerun may find only known refusals pending after siblings were frozen."""
+    refused = {"momentum", "low_volatility"}
+    _refusing_universe(monkeypatch, refused)
+    args = _freeze_args(tmp_path / "frozen", all_profiles=True)
+
+    assert cli.cmd_freeze(args) == 0
+    existing = {
+        path: path.read_bytes() for path in (tmp_path / "frozen").rglob("*.parquet")
+    }
+    assert set(profile_names()) - refused == {path.parent.name for path in existing}
+
+    # On the old alarm, both remaining pending profiles refusing made this exit
+    # 2 even though all profiles capable of grading already had same-date panels.
+    assert cli.cmd_freeze(args) == 0
+    assert {
+        path: path.read_bytes() for path in (tmp_path / "frozen").rglob("*.parquet")
+    } == existing
 
 
 def test_freeze_fails_when_a_profile_that_froze_before_refuses_now(
@@ -651,8 +906,7 @@ def test_shipped_panels_live_under_their_profile_directory() -> None:
 def test_monthly_freeze_workflow_fails_fast_without_sec_contact() -> None:
     """An unset SEC_CONTACT_EMAIL must abort the freeze, not degrade the SEC User-Agent."""
     workflow = (
-        Path(__file__).resolve().parent.parent
-        / ".github" / "workflows" / "monthly-freeze.yml"
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
     ).read_text(encoding="utf-8")
 
     guard = workflow.find('if [ -z "$STOCK_GRADER_CONTACT" ]')
@@ -667,12 +921,29 @@ def test_monthly_freeze_workflow_fails_fast_without_sec_contact() -> None:
 def test_monthly_freeze_workflow_freezes_every_profile() -> None:
     """The monthly clock is the only source of forward evidence — it must cover all profiles."""
     workflow = (
-        Path(__file__).resolve().parent.parent
-        / ".github" / "workflows" / "monthly-freeze.yml"
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
     ).read_text(encoding="utf-8")
 
-    invocation = next(
-        line for line in workflow.splitlines() if "stock-grader freeze" in line
-    )
+    invocation = next(line for line in workflow.splitlines() if "stock-grader freeze" in line)
     assert "--all-profiles" in invocation
     assert "--profile " not in invocation  # not pinned to one lens any more
+
+
+def test_monthly_freeze_workflow_keeps_deep_clock_and_adds_wide_bulk_clock() -> None:
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "timeout-minutes: 300" in workflow
+    assert "df -h" in workflow
+    invocations = [line.strip() for line in workflow.splitlines() if "stock-grader freeze" in line]
+    assert invocations[0] == (
+        "stock-grader freeze --all-profiles --universe config/universe_default.txt "
+        "--out frozen_scores"
+    )
+    assert len(invocations) == 2
+    assert "--universe config/universe_liq1000_2026-07-30.txt" in workflow
+    assert "--out frozen_scores_wide" in workflow
+    assert "--bulk-facts auto" in workflow
+    assert "--price-provider sec" in workflow
+    assert "git add -A frozen_scores frozen_scores_wide" in workflow

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from datetime import date
 
@@ -9,16 +10,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import stock_grader.pipeline as pipeline_module
+
 # Importing these populates the registries.
 from stock_grader import aggregate, normalize, weighting  # noqa: F401
 from stock_grader.data.sectors import classify_sic
 from stock_grader.data.synthetic import generate_panel, generate_prices
 from stock_grader.metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from stock_grader.metrics.engine import evaluate_metrics
-from stock_grader.pipeline import GradeConfig, grade_universe
+from stock_grader.pipeline import GradeConfig, grade_universe, grade_universe_multi
 from stock_grader.profiles import consensus_grade, get_profile, profile_names
 from stock_grader.registry import METRICS, WEIGHTINGS
-from stock_grader.types import Coverage, Fundamentals, SectorClass, SecuritySnapshot
+from stock_grader.types import Coverage, Fundamentals, PitMode, SectorClass, SecuritySnapshot
 
 
 def _fundamentals(scale: float = 1.0, *, quality: float = 1.0) -> Fundamentals:
@@ -108,6 +111,207 @@ def _universe(n: int = 16, *, with_prices: bool = True) -> list[SecuritySnapshot
             )
         )
     return snapshots
+
+
+def _assert_matching_report_fields(actual, expected) -> None:
+    assert actual.letter == expected.letter
+    assert actual.graded is expected.graded
+    assert actual.score == pytest.approx(expected.score, nan_ok=True)
+    assert actual.coverage == pytest.approx(expected.coverage, nan_ok=True)
+    if expected.percentile is None:
+        assert actual.percentile is None
+    else:
+        assert actual.percentile == pytest.approx(expected.percentile, nan_ok=True)
+    assert actual.meta.get("config_fingerprint") == expected.meta.get("config_fingerprint")
+    assert actual.meta.get("universe_fingerprint") == expected.meta.get("universe_fingerprint")
+
+
+def test_grade_universe_multi_matches_per_profile_grade_universe() -> None:
+    snapshots = _universe(4, with_prices=False)
+    configs = [get_profile(name) for name in profile_names()]
+
+    combined = grade_universe_multi(snapshots, configs)
+
+    assert set(combined) == set(profile_names())
+    for config in configs:
+        individual = grade_universe(snapshots, config)
+        assert set(combined[config.name]) == set(individual)
+        for ticker, expected in individual.items():
+            _assert_matching_report_fields(combined[config.name][ticker], expected)
+
+
+def test_grade_universe_multi_builds_and_normalizes_once_for_shared_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"build": 0, "normalize": 0}
+    original_build = pipeline_module.build_metric_matrix
+    original_normalize = pipeline_module._normalize_matrix
+
+    def counted_build(*args, **kwargs):
+        calls["build"] += 1
+        return original_build(*args, **kwargs)
+
+    def counted_normalize(*args, **kwargs):
+        calls["normalize"] += 1
+        return original_normalize(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "build_metric_matrix", counted_build)
+    monkeypatch.setattr(pipeline_module, "_normalize_matrix", counted_normalize)
+
+    grade_universe_multi(
+        _universe(3, with_prices=False),
+        [get_profile(name) for name in profile_names()],
+    )
+
+    assert calls == {"build": 1, "normalize": 1}
+
+
+def test_grade_universe_multi_unions_then_restores_metric_whitelists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshots = _universe(3, with_prices=False)
+    configs = [
+        GradeConfig(
+            name="health_only",
+            metric_whitelist=["current_ratio"],
+            pillar_weights={"health": 1.0},
+            gates=False,
+            min_letter_peers=2,
+        ),
+        GradeConfig(
+            name="shareholder_only",
+            metric_whitelist=["payout_ratio"],
+            pillar_weights={"shareholder": 1.0},
+            gates=False,
+            min_letter_peers=2,
+        ),
+        GradeConfig(name="empty", metric_whitelist=[]),
+    ]
+    expected = {config.name: grade_universe(snapshots, config) for config in configs}
+    requested_names: list[list[str] | None] = []
+    original_build = pipeline_module.build_metric_matrix
+
+    def capture_names(*args, **kwargs):
+        requested_names.append(kwargs.get("names"))
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "build_metric_matrix", capture_names)
+    combined = grade_universe_multi(snapshots, configs)
+
+    assert requested_names == [["current_ratio", "payout_ratio"]]
+    for config in configs:
+        for ticker, expected_report in expected[config.name].items():
+            _assert_matching_report_fields(combined[config.name][ticker], expected_report)
+
+
+
+def test_clean_dated_frame_cache_matches_uncached() -> None:
+    periods = pd.to_datetime(["2024-12-31", "2025-03-31"])
+    quarterly = pd.DataFrame({"revenue": [10.0, 20.0]}, index=periods)
+    filed = pd.Series(pd.to_datetime(["2025-02-01", "2025-05-01"]), index=periods)
+    fundamentals = Fundamentals(
+        quarterly=quarterly,
+        annual=quarterly.copy(),
+        filed=filed,
+        pit_mode=PitMode.PIT,
+    )
+    asof = date(2025, 4, 1)
+
+    first = fundamentals._clean_dated_frame(quarterly, ["revenue"], asof=asof)
+    cached = fundamentals._clean_dated_frame(quarterly, ["revenue"], asof=asof)
+    assert first is cached
+    assert first is not None
+    assert list(first.index) == [pd.Timestamp("2024-12-31")]
+
+    fundamentals._frame_cache.clear()
+    uncached = fundamentals._clean_dated_frame(quarterly, ["revenue"], asof=asof)
+    pd.testing.assert_frame_equal(cached, uncached)
+
+    assert fundamentals._clean_dated_frame(quarterly, ["missing"], asof=asof) is None
+    assert any(entry[2] is None for entry in fundamentals._frame_cache.values())
+
+
+def test_clean_dated_frame_cache_does_not_leak_across_shallow_copy_or_pit_mode() -> None:
+    periods = pd.to_datetime(["2024-12-31", "2025-03-31"])
+    quarterly = pd.DataFrame({"revenue": [10.0, 20.0]}, index=periods)
+    filed = pd.Series(pd.to_datetime(["2025-02-01", "2025-05-01"]), index=periods)
+    fundamentals = Fundamentals(quarterly, quarterly.copy(), filed, pit_mode=PitMode.PIT)
+    asof = date(2025, 4, 1)
+    fundamentals._clean_dated_frame(quarterly, ["revenue"], asof=asof)
+
+    replaced = copy.copy(fundamentals)
+    replaced_frame = quarterly.copy()
+    replaced_frame.loc[periods[0], "revenue"] = 999.0
+    replaced.quarterly = replaced_frame
+    replaced_result = replaced._clean_dated_frame(replaced_frame, ["revenue"], asof=asof)
+    assert replaced_result is not None
+    assert replaced_result.iloc[0, 0] == pytest.approx(999.0)
+
+    latest = copy.copy(fundamentals)
+    latest.pit_mode = PitMode.LATEST
+    latest_result = latest._clean_dated_frame(quarterly, ["revenue"], asof=asof)
+    assert latest_result is not None
+    assert len(latest_result) == 2
+
+
+def test_sector_neutral_key_validates_and_default_preserves_business_model() -> None:
+    with pytest.raises(ValueError, match="sector_neutral_key"):
+        GradeConfig(sector_neutral_key=["sic2"])
+    with pytest.raises(ValueError, match="sector_neutral_key"):
+        GradeConfig(sector_neutral_key="gics")
+
+    snapshots = [
+        SecuritySnapshot(
+            ticker=f"T{index}",
+            asof=date(2026, 1, 31),
+            sic=(f"35{index:02d}" if index < 5 else f"60{index:02d}"),
+            sector=SectorClass.GENERAL,
+        )
+        for index in range(10)
+    ]
+    matrix = pd.DataFrame(
+        {"current_ratio": [1.0, 2.0, 3.0, 4.0, 5.0, 101.0, 102.0, 103.0, 104.0, 105.0]},
+        index=[snapshot.ticker for snapshot in snapshots],
+    )
+
+    default_scores = pipeline_module._normalize_matrix(matrix, snapshots, GradeConfig())
+    explicit_scores = pipeline_module._normalize_matrix(
+        matrix,
+        snapshots,
+        GradeConfig(sector_neutral_key="business_model"),
+    )
+    sic_scores = pipeline_module._normalize_matrix(
+        matrix,
+        snapshots,
+        GradeConfig(sector_neutral_key="sic2"),
+    )
+
+    pd.testing.assert_frame_equal(default_scores, explicit_scores)
+    assert not np.allclose(default_scores["current_ratio"], sic_scores["current_ratio"])
+
+
+def test_default_sector_key_preserves_frozen_panel_config_fingerprint() -> None:
+    expected = "751441e6b469c806e7df459d3be71c0219e98364921160608243f791498540c7"
+
+    implicit_manifest, implicit_fingerprint = pipeline_module._config_manifest(
+        get_profile("all_weather")
+    )
+    explicit_manifest, explicit_fingerprint = pipeline_module._config_manifest(
+        get_profile("all_weather", sector_neutral_key="business_model")
+    )
+    sic2_manifest, sic2_fingerprint = pipeline_module._config_manifest(
+        get_profile("all_weather", sector_neutral_key="sic2")
+    )
+    sic3_manifest, sic3_fingerprint = pipeline_module._config_manifest(
+        get_profile("all_weather", sector_neutral_key="sic3")
+    )
+
+    assert implicit_fingerprint == explicit_fingerprint == expected
+    assert "sector_neutral_key" not in implicit_manifest
+    assert "sector_neutral_key" not in explicit_manifest
+    assert sic2_manifest["sector_neutral_key"] == "sic2"
+    assert sic3_manifest["sector_neutral_key"] == "sic3"
+    assert len({expected, sic2_fingerprint, sic3_fingerprint}) == 3
 
 
 class TestGradeUniverse:

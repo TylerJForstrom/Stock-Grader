@@ -19,10 +19,21 @@ implementation, not edge-case disclaimers.
   performs automatic selection from its supplied candidate pool.
 - The bundled universe is a present-day convenience list, not an industry comp set or historical
   membership database.
+- The dated wide universe is a separate forward record. It must not be pooled with the bundled
+  universe: the population, cross-sectional percentiles, and portfolio breadth differ.
+- Fixed percentile letter cutoffs change their practical breadth with universe size. An A+ covers
+  roughly two or three names at N=82 but about 30 at N=1,000; letters are not comparable across
+  those universes.
 - `select_peers` narrows caller-supplied snapshots and cannot fix survivorship or selection bias
   upstream.
 - SIC and coarse business-model classes do not capture segment mix, geography, life-cycle stage,
   capital intensity, or accounting comparability.
+- Business-model sector neutralization retains a large GENERAL catch-all. The additive `sic2` and
+  `sic3` alternatives require a separately pre-registered trial; the production default remains
+  unchanged.
+- Coverage is universe-dependent because the denominator includes metrics computable by at least
+  one member of the run. Adding mid-caps can make more metrics enter that denominator and can
+  reduce otherwise identical companies' reported coverage.
 - Peer membership is fixed inside the reported sensitivity simulation.
 
 ## Fundamental data

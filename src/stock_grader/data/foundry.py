@@ -31,6 +31,13 @@ __all__ = ["FoundryDataSource", "FoundryError"]
 SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0"})
 
 _LISTED_EXCHANGES = frozenset({"NYSE", "Nasdaq", "NYSE American", "NYSE Arca", "CBOE", "BATS"})
+_SYMBOL_DIRECTORY_FILES = frozenset(
+    {
+        "nasdaqlisted.jsonl",
+        "otherlisted.jsonl",
+        "sec_company_tickers_exchange.jsonl",
+    }
+)
 
 
 class FoundryError(RuntimeError):
@@ -40,8 +47,14 @@ class FoundryError(RuntimeError):
 class FoundryDataSource:
     """Read-only view over the foundry's published datasets."""
 
-    def __init__(self, root: str | Path | None = None, url_base: str | None = None,
-                 *, verify_hashes: bool = True, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        url_base: str | None = None,
+        *,
+        verify_hashes: bool = True,
+        timeout: float = 60.0,
+    ) -> None:
         if (root is None) == (url_base is None):
             raise ValueError("provide exactly one of root (local clone) or url_base (raw URL)")
         self.root = Path(root).resolve() if root is not None else None
@@ -65,7 +78,8 @@ class FoundryDataSource:
         url = f"{self.url_base}/{relpath}"
         try:
             response = requests.get(
-                url, timeout=self.timeout,
+                url,
+                timeout=self.timeout,
                 headers={"User-Agent": "Stock-Grader foundry adapter"},
             )
         except requests.RequestException as exc:
@@ -110,6 +124,13 @@ class FoundryDataSource:
         blob = self._read_dataset_file("data/symbols/events", "events.jsonl")
         return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
 
+    def symbol_directory(self, name: str) -> list[dict[str, Any]]:
+        """Read one manifest-verified current symbol directory used by universe screens."""
+        if name not in _SYMBOL_DIRECTORY_FILES:
+            raise ValueError(f"unsupported symbol directory: {name}")
+        blob = self._read_dataset_file("data/symbols/current", name)
+        return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
+
     def universe(
         self, *, listed_only: bool = True, asof: str | None = None
     ) -> list[dict[str, Any]]:
@@ -128,9 +149,7 @@ class FoundryDataSource:
         reaches back to its first snapshot (2026-07-28); earlier asof values
         raise rather than silently serving today's survivors.
         """
-        blob = self._read_dataset_file(
-            "data/symbols/current", "sec_company_tickers_exchange.jsonl"
-        )
+        blob = self._read_dataset_file("data/symbols/current", "sec_company_tickers_exchange.jsonl")
         records = [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
         if asof is not None:
             members = {(r.get("cik"), r.get("ticker")): r for r in records}
@@ -143,9 +162,7 @@ class FoundryDataSource:
             if earliest is not None:
                 import datetime as _dt
 
-                boundary = (
-                    _dt.date.fromisoformat(earliest) - _dt.timedelta(days=1)
-                ).isoformat()
+                boundary = (_dt.date.fromisoformat(earliest) - _dt.timedelta(days=1)).isoformat()
                 if asof < boundary:
                     raise FoundryError(
                         f"asof {asof} predates the event archive (reconstructable "
@@ -172,9 +189,7 @@ class FoundryDataSource:
             records = [r for r in records if r.get("exchange") in _LISTED_EXCHANGES]
         return records
 
-    def universe_tickers(
-        self, *, listed_only: bool = True, asof: str | None = None
-    ) -> list[str]:
+    def universe_tickers(self, *, listed_only: bool = True, asof: str | None = None) -> list[str]:
         seen: set[str] = set()
         out: list[str] = []
         for record in self.universe(listed_only=listed_only, asof=asof):
@@ -213,8 +228,7 @@ class FoundryDataSource:
         """
         table = self.dividends()
         rows = table[
-            table["ticker"].eq(ticker.upper())
-            & table["span_type"].isin(("quarterly", "monthly"))
+            table["ticker"].eq(ticker.upper()) & table["span_type"].isin(("quarterly", "monthly"))
         ]
         if rows.empty:
             return None

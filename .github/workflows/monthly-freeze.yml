@@ -11,13 +11,16 @@ permissions:
 jobs:
   freeze:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e .
+      - name: Report runner disk before SEC bulk archive
+        run: df -h
+
       - name: Freeze scores (bundled universe, every profile)
         env:
           STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
@@ -32,12 +35,29 @@ jobs:
           # One SEC fetch, one snapshot build, a panel per profile: the extra
           # profiles are free in network terms and multiply the forward evidence.
           stock-grader freeze --all-profiles --universe config/universe_default.txt --out frozen_scores
+      - name: Freeze wide SEC-float universe (fundamentals-first)
+        env:
+          STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
+        run: |
+          # The public workflow cannot read the private vault. SEC insider prices
+          # remain sparse, so price-defined profiles may refuse under the existing
+          # alarm policy; their gates are intentionally not weakened here.
+          # If this ever exceeds budget, shard by profile while retaining the
+          # full cross-section in every job. Never shard by ticker: each shard
+          # would normalize against a different peer set.
+          stock-grader freeze \
+            --all-profiles \
+            --universe config/universe_liq1000_2026-07-30.txt \
+            --out frozen_scores_wide \
+            --bulk-facts auto \
+            --price-provider sec
+
       - name: Commit
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A frozen_scores
+          git add -A frozen_scores frozen_scores_wide
           if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
           git commit -m "freeze: $(date -u +%Y-%m)"
           for attempt in 1 2 3; do

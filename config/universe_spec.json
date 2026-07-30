@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "universe_id": "liq1000_v1",
+  "target_size": 1000,
+  "rank_key": "dei:EntityPublicFloat",
+  "window_trading_days": 63,
+  "min_observations": 40,
+  "min_median_close_usd": 5.0,
+  "exclude_etf": true,
+  "exclude_test_issue": true,
+  "require_sec_cik": true,
+  "listed_exchanges": [
+    "NYSE",
+    "Nasdaq",
+    "CBOE",
+    "NYSE American",
+    "NYSE Arca",
+    "BATS"
+  ],
+  "tie_break": "ticker_ascending",
+  "issuer_ticker_rule": "one_per_cik_sec_dash_ticker_ascending",
+  "rebuild_cadence": "quarterly",
+  "asof_rule": "Use only facts whose measurement end and SEC filed date are on or before the selection as-of date; a frozen panel may use the selection only on or after that date.",
+  "survivorship_note": "The public SEC-float membership rule is forward-only from the first archived symbol snapshot. The separate private liquidity diagnostic can look back no earlier than the Massive market_eod archive, which begins in 2024-07. Neither rule may be represented as a historical universe before its source archive begins.",
+  "license_note": "US-government public-domain source data (17 USC 105); derived work, freely redistributable.",
+  "rank_observation_rule": "For each listed, non-ETF, non-test-issue SEC CIK, select the latest positive finite dei:EntityPublicFloat observation whose measurement end and filed date are both on or before asof; rank descending and break equal values by SEC-dash ticker ascending.",
+  "comment": "Licensing decision made during M5 implementation on 2026-07-30: Massive Market Data Terms section 5(c) prohibits distributing Derived Works, so no Massive-derived membership, value, rank, or rank order enters this public repository. The legacy liq1000_v1 identifier is retained for the pre-registered milestone contract. The 63-day/minimum-observation/minimum-close fields define the private Vault liquidity diagnostic and are not public-membership filters under the SEC-float fallback. Target 1000 is retained because the repository's null simulation estimates E[max IC] at 0.122 for N=500 versus 0.306 for N=82, while a 1000-name large-public-float cross-section remains appropriate for paper-scale research."
+}
