@@ -53,14 +53,16 @@ def _peak_rss_bytes() -> int:
     return int(counters.PeakWorkingSetSize)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--universe", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--foundry", required=True)
     parser.add_argument("--contact", required=True)
     parser.add_argument("--timing-output", required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    root = Path(args.out)
+    preexisting_panels = {path.resolve() for path in root.glob("*/*.parquet")}
 
     measurements: dict[str, object] = {
         "snapshot_seconds": 0.0,
@@ -102,24 +104,29 @@ def main() -> int:
     pipeline._grade_from_matrix = timed_residual
 
     started = time.perf_counter()
-    exit_code = cli.main(
-        [
-            "freeze",
-            "--all-profiles",
-            "--universe",
-            args.universe,
-            "--out",
-            args.out,
-            "--bulk-facts",
-            "auto",
-            "--price-provider",
-            "sec",
-            "--foundry",
-            args.foundry,
-            "--contact",
-            args.contact,
-        ]
-    )
+    try:
+        exit_code = cli.main(
+            [
+                "freeze",
+                "--all-profiles",
+                "--universe",
+                args.universe,
+                "--out",
+                args.out,
+                "--bulk-facts",
+                "auto",
+                "--price-provider",
+                "sec",
+                "--foundry",
+                args.foundry,
+                "--contact",
+                args.contact,
+            ]
+        )
+    finally:
+        cli._build_snapshots = original_snapshots
+        pipeline.build_metric_matrix = original_matrix
+        pipeline._grade_from_matrix = original_residual
     measurements["total_seconds"] = time.perf_counter() - started
     residuals = measurements["profile_residual_seconds"]
     assert isinstance(residuals, list)
@@ -128,8 +135,11 @@ def main() -> int:
         sum(residuals) / len(residuals) if residuals else 0.0
     )
     measurements["peak_rss_bytes"] = _peak_rss_bytes()
-    root = Path(args.out)
-    panels = sorted(root.glob("*/2026-07-30.parquet"))
+    panels = sorted(
+        path
+        for path in root.glob("*/*.parquet")
+        if path.resolve() not in preexisting_panels
+    )
     measurements["panel_files"] = len(panels)
     measurements["panel_bytes"] = sum(path.stat().st_size for path in panels)
     rows = [pd.read_parquet(path, columns=["graded"]) for path in panels]
@@ -140,9 +150,9 @@ def main() -> int:
     measurements["graded_fraction"] = graded_count / row_count if row_count else 0.0
     measurements["exit_code"] = exit_code
 
-    encoded = json.dumps(measurements, indent=2, sort_keys=True) + "\n"
+    encoded = json.dumps(measurements, indent=2, sort_keys=True, allow_nan=False) + "\n"
     Path(args.timing_output).write_text(encoded, encoding="utf-8")
-    print("M5_TIMING=" + json.dumps(measurements, sort_keys=True))
+    print("M5_TIMING=" + json.dumps(measurements, sort_keys=True, allow_nan=False))
     return exit_code
 
 

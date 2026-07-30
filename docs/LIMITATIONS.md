@@ -30,7 +30,10 @@ implementation, not edge-case disclaimers.
   capital intensity, or accounting comparability.
 - Business-model sector neutralization retains a large GENERAL catch-all. The additive `sic2` and
   `sic3` alternatives require a separately pre-registered trial; the production default remains
-  unchanged.
+  unchanged. In the measured 1,000-name universe, GENERAL contains 703 names, while SIC2 and SIC3
+  create 8 and 46 singleton groups and put 266 and 500 names in groups smaller than 15,
+  respectively; finer labels reduce concentration but do not automatically improve statistical
+  comparability.
 - Coverage is universe-dependent because the denominator includes metrics computable by at least
   one member of the run. Adding mid-caps can make more metrics enter that denominator and can
   reduce otherwise identical companies' reported coverage.

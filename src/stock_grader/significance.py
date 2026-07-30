@@ -278,15 +278,21 @@ class SignificanceReport:
         return "\n".join(
             [
                 f"  observations: {self.n_obs}   strategies searched: {self.n_trials}",
-                f"  annualized Sharpe: {self.annual_sharpe:+.3f}   "
-                f"(95% bootstrap CI {self.sharpe_ci_low:+.2f} .. "
-                f"{self.sharpe_ci_high:+.2f})",
+                (
+                    f"  annualized Sharpe: {self.annual_sharpe:+.3f}   "
+                    f"(95% bootstrap CI {self.sharpe_ci_low:+.2f} .. "
+                    f"{self.sharpe_ci_high:+.2f})"
+                ),
                 f"  skew {self.skew:+.2f}  excess-kurtosis {self.excess_kurtosis:+.2f}",
                 f"  PSR vs 0 (ignores search): {self.psr_vs_zero:.3f}",
-                f"  deflated benchmark Sharpe (per-period): "
-                f"{self.deflated_benchmark_sr:.4f}",
-                f"  DSR (P[edge | searched {self.n_trials}]): "
-                f"{self.deflated_sharpe:.3f}",
+                (
+                    "  deflated benchmark Sharpe (per-period): "
+                    f"{self.deflated_benchmark_sr:.4f}"
+                ),
+                (
+                    f"  DSR (P[edge | searched {self.n_trials}]): "
+                    f"{self.deflated_sharpe:.3f}"
+                ),
                 f"  VERDICT: {self.verdict}",
             ]
         )

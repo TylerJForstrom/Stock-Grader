@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -55,13 +57,20 @@ jobs:
       - name: Commit
         if: always()
         run: |
+          if [ "$GITHUB_REF_TYPE" != "branch" ] || [ -z "$GITHUB_REF_NAME" ]; then
+            echo "monthly-freeze can only commit to the branch that triggered the run" >&2
+            exit 1
+          fi
+          target_branch="$GITHUB_REF_NAME"
+          remote_ref="refs/remotes/origin/$target_branch"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A frozen_scores frozen_scores_wide
           if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
           git commit -m "freeze: $(date -u +%Y-%m)"
           for attempt in 1 2 3; do
-            if git push; then exit 0; fi
-            git pull --rebase origin main || exit 1
+            git fetch origin "+refs/heads/$target_branch:$remote_ref" || exit 1
+            git rebase "$remote_ref" || exit 1
+            if git push origin "HEAD:refs/heads/$target_branch"; then exit 0; fi
           done
           exit 1

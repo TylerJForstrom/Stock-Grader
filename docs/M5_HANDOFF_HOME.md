@@ -10,8 +10,10 @@ commands that remain.
 
 Do not call M5 complete until every acceptance item in
 `docs/majors/M5-wide-universe.md` is genuinely satisfied. In particular, the
-The measured N=250/500/1000 rollout and final Grader suite are complete.
-Peer/sector diagnostics and terminal Grader workflow verification remain.
+measured N=250/500/1000 rollout and peer/sector diagnostics are complete.
+The exact-eleven SEC-only requirement remains blocked by the documented dense
+price contradiction. Terminal verification of the repaired Grader workflow
+also remains until the final branch dispatch below is recorded.
 
 ## 1. Safety first on the home computer
 
@@ -222,7 +224,14 @@ bd02dccb979fd57cfc059e608be2bfea7bb7e7f3dd25ce34c1364c71371ebe94
 ```
 
 It parses as schema version `1.0` and contains every milestone key plus the
-additive issuer-ticker and observation rules.
+additive issuer-ticker and observation rules. The registered hash is the exact
+CRLF byte representation created on Windows. Git had previously normalized the
+committed blob to LF, whose different SHA-256 is
+`d1c876cbbd4e8006185f9efd098e2342e6ee286b635a53ad26e5b0d352d377d2`.
+The continuation fix commits the registered CRLF bytes and pins the spec and
+membership paths as `-text` in `.gitattributes`; the membership hashes below
+remain unchanged. `tests/test_m5_artifact_provenance.py` now locks all four raw
+hashes on every platform.
 
 ### Public Stock-Grader universe files
 
@@ -287,8 +296,17 @@ Exact values:
 | As-of | `2026-07-30` |
 | `volume_is_fractional` | `true` |
 
-The private spec SHA is deliberately different from the public spec SHA:
-these are different licensed artifacts and different selection rules.
+The manifest-recorded private spec SHA is deliberately different from the
+public spec SHA: these are different licensed artifacts and different
+selection rules. A continuation audit found a separate historical provenance
+gap: the current committed private spec hashes to
+`74116827f8d76b0d74a506a0f6c8b42dd429e50009e79884ae5145b22c5b8680`
+as LF and
+`e85a57bbc9dcbb69cb30260d2a8eaa13f950bfa78f30f69732c8438291ba8e50`
+as CRLF, neither of which equals the manifest's `8bbeb...`. A read-only rerun
+still reproduced the ranked gzip bytes exactly. Preserve the ranked file and
+manifest as immutable historical evidence; do not rewrite either merely to
+hide this mismatch.
 
 Do not copy the ranked private artifact, its membership, its values, or its
 rank order into Stock-Grader or Stock-Data.
@@ -307,9 +325,19 @@ Stock-Vault collector dispatch:
 - pre-check, universe-screen step, and commit step were green;
 - the run produced branch HEAD `200c6e4`.
 
-Stock-Grader's M5 workflow has **not** yet been validly dispatched from the M5
-branch. The visible successful Grader monthly-freeze run `30557005303` ran on
-`main` before the M5 branch and does not satisfy M5 acceptance.
+Stock-Grader run `30579474350` was dispatched from
+`codex/m5-wide-universe` at `806e896`. Both freeze steps succeeded and the wide
+step generated nine panels while honestly refusing `momentum` and
+`low_volatility`, but the run concluded `failure` in job `90995842573`. The
+runner committed the panels locally as `7ebeb32`; its push lost a concurrent
+branch race, and the old retry incorrectly ran
+`git pull --rebase origin main` in a shallow checkout. The resulting rebase
+conflicts prevented any panel from reaching the branch.
+
+The repaired workflow checks out full history, derives the exact triggering
+branch from `GITHUB_REF_NAME`, fetches and rebases that remote branch before
+every explicit push attempt, and never substitutes `main`. Run
+`30579474350` is failure evidence, not M5 acceptance evidence.
 
 > **PRIMARY FILL - final Stock-Grader workflow evidence:**
 >
@@ -437,6 +465,10 @@ pre-M5 file/version, then the new file was restored:
 | Vault manifest row counts | The old `write_manifest` rejected `row_counts` with `TypeError`. |
 | Vault CLI | The old CLI had no `universe-screen` subcommand. |
 | SEC CDN split generation | Old code raised `SECBulkFactsError: expected 327801, received 146`; new focused set has 14 passing tests. |
+| Reusable wide-freeze harness | At `c276a0a`, collection failed with `ImportError: cannot import name 'measure_wide_freeze' from 'scripts'`; pytest exit 2. |
+| Trigger-branch workflow retry | At `806e896`, the regression first failed because `fetch-depth: 0` was absent and exposed the old `git pull --rebase origin main`; pytest exit 1. |
+| Cross-platform artifact bytes | At `392e4e2`, the raw spec SHA was `d1c876...`, not the registered `bd02dcc...`; pytest exit 1. |
+| Missing-cap and sector diagnostics | At `392e4e2`, the exact new test file failed collection because `measure_sector_key_concentration` did not exist. Isolating the behavioral tests then failed on the absent peer-count schema and the old loader's rejection of a missing cap; pytest exit 1. |
 
 If any new behavior is added while finishing the measured rollout, repeat the
 same old-file failure proof before committing it. Do not treat "the old code
@@ -500,12 +532,13 @@ ground truth, real data, licensing, or live services contradicted one another.
    evidence, so their defining-pillar gates refuse. The implementation does
    not weaken safety gates.
 
-6. **The required second SEC-only invocation conflicts with the alarm
-   policy.** After successful profiles already exist, only structurally
-   refusing profiles remain pending. `cmd_freeze` returns 2 when every pending
-   profile refuses. Therefore the literal "exactly 11 files, second invocation
-   exits 0" criterion cannot be met by the specified SEC-only command without
-   a dense licensed provider or an explicit acceptance amendment.
+6. **The exact-eleven part of the SEC-only requirement conflicts with the
+   defining-pillar gates.** After the nine viable profiles exist, only the two
+   structural refusals remain pending. `cmd_freeze` now treats that unchanged
+   state as idempotent and exits 0, so the second-invocation half can be met.
+   It still cannot create `momentum` or `low_volatility` evidence from sparse
+   SEC prices. Exactly eleven files requires a dense licensed provider or an
+   explicit acceptance amendment.
 
 7. **The private archive contained zero-volume bars.** Step 3 said volume must
    be positive. The implementation treats a finite zero-volume bar as no
@@ -542,6 +575,23 @@ ground truth, real data, licensing, or live services contradicted one another.
     issuer-level, so the final public rule retains exactly one deterministic
     ticker per CIK; otherwise one issuer could consume several ranked slots.
 
+15. **The registered public spec hash was a Windows working-tree hash, not the
+    normalized Git blob hash.** The raw CRLF bytes hash to the registered
+    `bd02dcc...`; Git's previous LF blob hashed to `d1c876...`. The final
+    `.gitattributes` rule and raw-hash regression preserve the registered bytes
+    across platforms without changing the logical JSON or membership files.
+
+16. **The immutable private manifest's historical spec hash does not match the
+    current committed private spec.** Neither current LF nor CRLF bytes match
+    `8bbeb...`. The ranked output reproduces exactly, so the continuation audit
+    records the gap and leaves the restricted artifact untouched instead of
+    rewriting history.
+
+17. **The continuation runtime exposed a macOS workspace despite the Windows
+    handoff target.** The expensive N=250/500/1000 timings remain the recorded
+    Windows measurements. The continuation used the exact cloned commits and
+    Python 3.12, and the final cloud proof runs on GitHub's Linux runner.
+
 ## 11. Current acceptance status
 
 | Acceptance item | Status at handoff |
@@ -557,12 +607,12 @@ ground truth, real data, licensing, or live services contradicted one another.
 | SEC bulk regression set | Met; final CDN addition has 14 focused passes |
 | Vault panel one-read/exact-series test | Met |
 | Mixed-universe guard | Met |
-| SEC-only exactly 11 + second exit 0 | **Blocked by documented price/alarm contradiction** |
+| SEC-only exactly 11 + second exit 0 | **Partial:** second invocation is idempotent and exits 0; exactly 11 remains blocked by the dense-price contradiction |
 | N=250/500/1000 timing table | Met; measured rows are below and in `docs/UNIVERSE.md` |
 | N=1000 under 100 minutes | Met: 1,253.896 seconds (20.90 minutes) |
-| Grader workflow branch dispatch green | Dispatched as run `30579474350`; terminal green result pending |
+| Grader workflow branch dispatch green | Run `30579474350` failed only in its incorrect branch-race push retry; repaired exact-branch dispatch pending |
 | Exactly one pre-registration ledger record + valid chain | Met and committed in `27b385d` |
-| Coverage/graded and retuning measurements documented | Partial: same-date 82-to-1,000 coverage and unchanged 0.35 gate are documented; peer/sector measurements remain |
+| Coverage/graded and retuning measurements documented | Met: coverage retains 0.35; fixed peer grid retains 8/30/5x; measured sector concentration retains `business_model`; 15-name outage floor retained |
 | Ecosystem and Vault docs | Met |
 | `docs/REVIEW_FEEDBACK.md` M5 commit-hash line | Met in `806e896` |
 
@@ -602,10 +652,10 @@ Staged-run provenance:
 
 ## 13. Remaining work, in order
 
-The measured work described in Steps 4-7 below is now complete on the source
-machine. Those steps are retained as reproducibility instructions only; the
-home agent should verify the committed table and timing JSON summary, then
-continue at Step 8 unless a rerun is specifically needed.
+The measured work described in Steps 4-8 below is now complete. Those steps
+are retained as reproducibility instructions only; verify the committed
+tables, hashes, and timing summary, then continue at Step 9 unless a rerun is
+specifically needed.
 
 ### Step 1: preserve and verify the continuation branch
 
@@ -670,7 +720,6 @@ stock-grader freeze `
   --out C:/tmp/m5-stage-250 `
   --bulk-facts auto `
   --price-provider sec `
-  --vault C:/Users/tforstrom/Desktop/Stock-Vault `
   --asof 2026-07-30
 ```
 
@@ -701,7 +750,6 @@ stock-grader freeze `
   --out C:/tmp/m5-stage-500 `
   --bulk-facts auto `
   --price-provider sec `
-  --vault C:/Users/tforstrom/Desktop/Stock-Vault `
   --asof 2026-07-30
 ```
 
@@ -716,7 +764,6 @@ stock-grader freeze `
   --out C:/tmp/m5-stage-1000 `
   --bulk-facts auto `
   --price-provider sec `
-  --vault C:/Users/tforstrom/Desktop/Stock-Vault `
   --asof 2026-07-30
 ```
 
@@ -759,6 +806,22 @@ Measure and document:
 
 Every production decision must cite the measured value or explicitly say
 "left unchanged, measured X."
+
+This step is now complete. The exact metadata export SHA-256 is
+`b92ce934a22a9855ad73a77b3c637357a36e959af68efe893f989b90bb57cade`;
+it contains 1,000 fundamentals-bearing snapshots, 957 usable target market
+caps, and 994 usable SICs. The fixed seed-0 grid produced no insufficient
+target under any of 8/5x, 12/5x, 8/3x, or 12/3x. Only 8/5x kept every selected
+known-cap peer inside the requested band; the other settings forced 45, 40,
+and 100 outside-band peers, respectively. The production peer settings are
+therefore left unchanged at 8/30/5x.
+
+GENERAL contains 703/1,000 names. `business_model`, SIC2, and SIC3 form 7, 62,
+and 173 groups with HHI 0.509956, 0.050184, and 0.024693. SIC2 has 8 singleton
+groups and 266 names in groups below 15; SIC3 has 46 singletons and 500 names
+in groups below 15. The production sector key remains `business_model`; the
+15-name outage floor and coverage gate 0.35 also remain unchanged. Exact grid
+tables and JSON hashes are in `docs/UNIVERSE.md`.
 
 ### Step 9: update documentation and the Agent log
 
@@ -875,10 +938,12 @@ ledger record.
 
 Finish the remaining work in the handoff's order:
   1. verify the committed N=250/500/1000 table and public artifacts;
-  2. run the remaining peer and sector-key measurements (same-date coverage
-     and the unchanged 0.35 threshold are already documented);
-  3. run the final Grader full suite and Ruff and preserve exact summaries;
-  4. dispatch monthly-freeze.yml on the branch and verify
+  2. verify the completed peer/sector grid, its four JSON hashes, and the
+     documented no-change decisions;
+  3. run any still-pending final Grader full suite and Ruff and preserve exact
+     summaries;
+  4. if the repaired workflow has not yet been proved green, dispatch
+     monthly-freeze.yml on the branch and verify
      the completed run with gh run list;
   5. perform the final three-repo status and acceptance audit.
 
@@ -887,10 +952,11 @@ overwrite immutable artifacts, pool universe IDs, leak Vault-derived data into
 public repos, or shard scoring by ticker.
 
 The milestone contains a known unresolved contradiction: the specified
-SEC-only command cannot honestly write exactly eleven panels, and its second
-invocation returns 2 when only structurally refusing profiles remain. Do not
-claim M5 complete unless a dense licensed source or an explicit acceptance
-amendment resolves that criterion. Report the contradiction precisely.
+SEC-only command cannot honestly write exactly eleven panels. Its unchanged
+structural-refusal rerun is now idempotent and exits 0, but SEC sparse prices
+still cannot create momentum or low-volatility evidence. Do not claim M5
+complete unless a dense licensed source or an explicit acceptance amendment
+resolves the exact-eleven criterion. Report the contradiction precisely.
 
 When done, report every M5 acceptance criterion as met/not met with evidence,
 the exact pytest/Ruff summary lines for all touched repos, all discrepancies,

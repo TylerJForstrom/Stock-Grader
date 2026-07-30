@@ -947,3 +947,23 @@ def test_monthly_freeze_workflow_keeps_deep_clock_and_adds_wide_bulk_clock() -> 
     assert "--bulk-facts auto" in workflow
     assert "--price-provider sec" in workflow
     assert "git add -A frozen_scores frozen_scores_wide" in workflow
+
+
+def test_monthly_freeze_workflow_retries_the_triggering_branch() -> None:
+    """A concurrent branch push must not make the retry rebase onto main."""
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
+    ).read_text(encoding="utf-8")
+    commit_step = workflow.split("- name: Commit", 1)[1]
+
+    assert "fetch-depth: 0" in workflow
+    branch_guard = 'if [ "$GITHUB_REF_TYPE" != "branch" ]'
+    target = 'target_branch="$GITHUB_REF_NAME"'
+    fetch = 'git fetch origin "+refs/heads/$target_branch:$remote_ref"'
+    rebase = 'git rebase "$remote_ref"'
+    push = 'git push origin "HEAD:refs/heads/$target_branch"'
+    for required in (branch_guard, target, fetch, rebase, push):
+        assert required in commit_step
+    assert commit_step.index(fetch) < commit_step.index(rebase) < commit_step.index(push)
+    assert "git pull --rebase origin main" not in commit_step
+    assert "if git push;" not in commit_step

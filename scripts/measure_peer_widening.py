@@ -40,7 +40,9 @@ def _read_table(path: Path) -> pd.DataFrame:
         raise ValueError(f"snapshot table does not exist: {path}")
     if path.suffix.lower() in {".parquet", ".pq"}:
         return pd.read_parquet(path)
-    return pd.read_csv(path)
+    # Preserve raw tokens where formatting is meaningful: a present "NaN" market cap must be
+    # rejected rather than treated as a blank, and a leading-zero SIC must retain its industry.
+    return pd.read_csv(path, converters={"market_cap": str, "sic": str})
 
 
 def _strict_booleans(values: pd.Series, *, column: str) -> pd.Series:
@@ -56,6 +58,28 @@ def _strict_booleans(values: pd.Series, *, column: str) -> pd.Series:
         else:
             raise ValueError(f"{column} contains an unparseable boolean: {value!r}")
     return pd.Series(parsed, index=values.index, dtype="bool")
+
+
+def _optional_market_caps(values: pd.Series) -> dict[Any, float | None]:
+    parsed: dict[Any, float | None] = {}
+    for index, value in values.items():
+        missing = value is None or value is pd.NA
+        if not missing and not isinstance(value, str):
+            try:
+                missing = bool(pd.isna(value))
+            except (TypeError, ValueError):
+                missing = False
+        if missing or (isinstance(value, str) and not value.strip()):
+            parsed[index] = None
+            continue
+        try:
+            market_cap = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("market_cap contains an unparseable numeric value") from exc
+        if not math.isfinite(market_cap) or market_cap <= 0.0:
+            raise ValueError("market_cap values must be missing or finite and positive")
+        parsed[index] = market_cap
+    return parsed
 
 
 def load_snapshots(path: str | Path) -> list[SecuritySnapshot]:
@@ -81,15 +105,7 @@ def load_snapshots(path: str | Path) -> list[SecuritySnapshot]:
     if asof.dt.normalize().nunique() != 1:
         raise ValueError("all snapshot rows must share one asof date")
 
-    try:
-        market_caps = pd.to_numeric(frame["market_cap"], errors="raise")
-    except (TypeError, ValueError) as exc:
-        raise ValueError("market_cap contains an unparseable numeric value") from exc
-    invalid_cap = market_caps.isna() | (
-        ~np.isfinite(market_caps.astype("float64")) | (market_caps <= 0.0)
-    )
-    if invalid_cap.any():
-        raise ValueError("market_cap must contain only finite positive values")
+    market_caps = _optional_market_caps(frame["market_cap"])
 
     fundamentals_available = _strict_booleans(
         frame["fundamentals_available"],
@@ -102,8 +118,8 @@ def load_snapshots(path: str | Path) -> list[SecuritySnapshot]:
             sector = SectorClass(str(frame.at[index, "sector"]).strip().lower())
         except ValueError as exc:
             raise ValueError(f"unknown sector for {tickers.at[index]}: {frame.at[index, 'sector']!r}") from exc
-        cap = market_caps.at[index]
-        has_cap = pd.notna(cap)
+        cap = market_caps[index]
+        has_cap = cap is not None
         fundamentals = (
             Fundamentals(empty.copy(), empty.copy(), pd.Series(dtype="object"))
             if fundamentals_available.at[index]
@@ -148,6 +164,104 @@ def _quantiles(values: list[float]) -> dict[str, float] | None:
     }
 
 
+def _sector_group_label(snapshot: SecuritySnapshot, key: str) -> str | None:
+    if key == "business_model":
+        return snapshot.sector.value
+    width = 2 if key == "sic2" else 3
+    digits = "".join(character for character in str(snapshot.sic or "") if character.isdigit())
+    return digits[:width] if len(digits) >= width else None
+
+
+def _sector_group_statistics(
+    snapshots: list[SecuritySnapshot],
+    *,
+    key: str,
+) -> dict[str, Any]:
+    labels = [_sector_group_label(snapshot, key) for snapshot in snapshots]
+    assigned_labels = [label for label in labels if label is not None]
+    counts = Counter(assigned_labels)
+    ordered_counts = [(label, counts[label]) for label in sorted(counts)]
+    group_sizes = [float(count) for _, count in ordered_counts]
+    assigned_count = len(assigned_labels)
+    snapshot_count = len(snapshots)
+
+    largest = (
+        min(ordered_counts, key=lambda item: (-item[1], item[0]))
+        if ordered_counts
+        else None
+    )
+    largest_count = largest[1] if largest is not None else None
+    shrink_weights = [size / (size + 5.0) for size in group_sizes]
+
+    def groups_below(limit: int) -> int:
+        return sum(1 for size in group_sizes if size < limit)
+
+    def names_below(limit: int) -> int:
+        return int(sum(size for size in group_sizes if size < limit))
+
+    return {
+        "assigned_count": assigned_count,
+        "assigned_fraction": (
+            float(assigned_count / snapshot_count) if snapshot_count else None
+        ),
+        "unassigned_count": snapshot_count - assigned_count,
+        "unassigned_fraction": (
+            float((snapshot_count - assigned_count) / snapshot_count)
+            if snapshot_count
+            else None
+        ),
+        "group_count": len(ordered_counts),
+        "largest_group_label": largest[0] if largest is not None else None,
+        "largest_group_count": largest_count,
+        "largest_group_fraction": (
+            float(largest_count / assigned_count)
+            if largest_count is not None and assigned_count
+            else None
+        ),
+        "hhi": (
+            float(sum((count / assigned_count) ** 2 for _, count in ordered_counts))
+            if assigned_count
+            else None
+        ),
+        "group_size_quantiles": _quantiles(group_sizes),
+        "singleton_group_count": groups_below(2),
+        "singleton_name_count": names_below(2),
+        "groups_below_5": groups_below(5),
+        "names_below_5": names_below(5),
+        "groups_below_15": groups_below(15),
+        "names_below_15": names_below(15),
+        "shrink_weight_n_over_n_plus_5_quantiles": _quantiles(shrink_weights),
+    }
+
+
+def measure_sector_key_concentration(
+    snapshots: list[SecuritySnapshot],
+) -> dict[str, Any]:
+    """Measure grouping concentration using the pipeline's three sector-neutral key rules."""
+    snapshot_count = len(snapshots)
+    general_count = sum(snapshot.sector is SectorClass.GENERAL for snapshot in snapshots)
+    return {
+        "snapshot_count": snapshot_count,
+        "general_count": general_count,
+        "general_fraction": (
+            float(general_count / snapshot_count) if snapshot_count else None
+        ),
+        "keys": {
+            key: _sector_group_statistics(snapshots, key=key)
+            for key in ("business_model", "sic2", "sic3")
+        },
+    }
+
+
+def _has_finite_positive_market_cap(snapshot: SecuritySnapshot) -> bool:
+    market_cap = snapshot.market_cap
+    return (
+        market_cap is not None
+        and math.isfinite(market_cap)
+        and market_cap > 0.0
+    )
+
+
 def measure_peer_widening(
     snapshots: list[SecuritySnapshot],
     *,
@@ -164,7 +278,8 @@ def measure_peer_widening(
         (
             snapshot
             for snapshot in snapshots
-            if snapshot.fundamentals is not None and snapshot.market_cap is not None
+            if snapshot.fundamentals is not None
+            and _has_finite_positive_market_cap(snapshot)
         ),
         key=lambda snapshot: snapshot.ticker,
     )
@@ -181,6 +296,11 @@ def measure_peer_widening(
     target_relative_minima: list[float] = []
     target_relative_maxima: list[float] = []
     within_set_spreads: list[float] = []
+    peer_counts: Counter[int] = Counter()
+    insufficient_target_count = 0
+    selected_peers_with_market_cap = 0
+    selected_peers_without_market_cap = 0
+    selected_peers_outside_requested_size_band = 0
     for target in targets:
         peers, manifest = select_peers(
             target,
@@ -197,13 +317,36 @@ def measure_peer_widening(
         )
         if len(peers) < minimum:
             fill_pass = "insufficient peers after all passes"
+            insufficient_target_count += 1
         fill_passes[fill_pass] += 1
+        peer_counts[len(peers)] += 1
 
-        ratios = [
-            float(peer.market_cap / target.market_cap)
-            for peer in peers
-            if peer.market_cap is not None and target.market_cap is not None
-        ]
+        target_market_cap = target.market_cap
+        assert target_market_cap is not None
+        ratios: list[float] = []
+        peers_with_market_cap = 0
+        peers_without_market_cap = 0
+        peers_outside_requested_size_band = 0
+        for peer in peers:
+            peer_market_cap = peer.market_cap
+            if (
+                peer_market_cap is None
+                or not math.isfinite(peer_market_cap)
+                or peer_market_cap <= 0.0
+            ):
+                peers_without_market_cap += 1
+                continue
+            peers_with_market_cap += 1
+            ratio = float(peer_market_cap / target_market_cap)
+            ratios.append(ratio)
+            if ratio < 1.0 / size_band_multiple or ratio > size_band_multiple:
+                peers_outside_requested_size_band += 1
+
+        selected_peers_with_market_cap += peers_with_market_cap
+        selected_peers_without_market_cap += peers_without_market_cap
+        selected_peers_outside_requested_size_band += (
+            peers_outside_requested_size_band
+        )
         ratio_min = min(ratios) if ratios else None
         ratio_max = max(ratios) if ratios else None
         spread = ratio_max / ratio_min if ratio_min and ratio_max else None
@@ -217,6 +360,11 @@ def measure_peer_widening(
             {
                 "target": target.ticker,
                 "peer_count": len(peers),
+                "peers_with_market_cap": peers_with_market_cap,
+                "peers_without_market_cap": peers_without_market_cap,
+                "peers_outside_requested_size_band": (
+                    peers_outside_requested_size_band
+                ),
                 "fill_pass": fill_pass,
                 "min_peer_to_target_market_cap": ratio_min,
                 "max_peer_to_target_market_cap": ratio_max,
@@ -237,10 +385,26 @@ def measure_peer_widening(
             "maximum": maximum,
             "size_band_multiple": size_band_multiple,
         },
+        "peer_count_quantiles": _quantiles(
+            [float(peer_count) for peer_count in peer_counts.elements()]
+        ),
+        "peer_count_distribution": {
+            str(peer_count): frequency
+            for peer_count, frequency in sorted(peer_counts.items())
+        },
+        "insufficient_target_count": insufficient_target_count,
+        "selected_peer_market_cap_counts": {
+            "with_market_cap": selected_peers_with_market_cap,
+            "without_market_cap": selected_peers_without_market_cap,
+            "outside_requested_size_band": (
+                selected_peers_outside_requested_size_band
+            ),
+        },
         "fill_pass_distribution": dict(sorted(fill_passes.items())),
         "min_peer_to_target_market_cap_quantiles": _quantiles(target_relative_minima),
         "max_peer_to_target_market_cap_quantiles": _quantiles(target_relative_maxima),
         "peer_set_market_cap_spread_quantiles": _quantiles(within_set_spreads),
+        "sector_key_concentration": measure_sector_key_concentration(snapshots),
         "targets": rows,
         "disclaimer": "Measured peer-selection diagnostics; not investment advice.",
     }

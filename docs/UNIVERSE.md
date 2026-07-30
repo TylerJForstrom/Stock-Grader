@@ -127,6 +127,49 @@ retuning `MIN_COVERAGE_TO_GRADE`; it remains 0.35 so M5 does not confound a
 universe change with a gate change. The exact diagnostic is preserved outside
 git at `C:/tmp/m5-coverage.json`.
 
+The continuation audit exported the exact 1,000 loaded snapshots, rather than
+reconstructing classifications from a frozen score panel. The metadata export
+has SHA-256
+`b92ce934a22a9855ad73a77b3c637357a36e959af68efe893f989b90bb57cade`
+and contains 1,000 fundamentals-bearing rows, 957 finite positive market caps,
+994 usable SICs, and the seven business-model counts BANK 59, ENERGY 24,
+GENERAL 703, HOLDING 41, INSURANCE 57, REIT 62, and UTILITY 54. Its inputs were
+the `2026-07-30` SEC bulk generation (SHA-256
+`0a03ce48f35903bebeb81d2d1caf40897f404291ed7b58b5633b0b36f83b1a72`,
+20,122 members) and the verified Stock-Data current-symbol manifest (SHA-256
+`67b0e3c7301d05a74e67ca8c5b94604464295313d95a4d8495ab1c78f5a60182`).
+
+A fixed 50-target, seed-0 sample was measured under the predeclared
+minimum/size-band grid. `Maximum` stayed 30 in every row. “Relaxed” counts
+targets that had to leave the requested size band; “outside” counts selected
+known-cap peers outside it.
+
+| Minimum | Size band | Peer count p25 / median / p75 | At maximum | Relaxed targets | Outside peers | Insufficient targets | JSON SHA-256 |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 8 | 5x | 11 / 16 / 30 | 16/50 | 0/50 | 0/937 | 0/50 | `b4508904a1d133c96e0bc5a6ebb2417b4e3fdfe45557718fe28034dc98d3faf4` |
+| 12 | 5x | 15 / 27 / 30 | 24/50 | 3/50 | 45/1,137 | 0/50 | `6cc83618707d544c9a21c1a11efc6ec05abf175a3d5b44906c6cc391ece349e2` |
+| 8 | 3x | 10 / 16.5 / 30 | 15/50 | 2/50 | 40/930 | 0/50 | `bb2907ac7e28b2280ec7dabc1e923ff7ccb07143faa76d6854b0303f9e31575f` |
+| 12 | 3x | 16 / 25 / 30 | 21/50 | 8/50 | 100/1,165 | 0/50 | `fc64271a356202f23244299f8ee62e864280eaadec45ebb5b126b323f0ca5808` |
+
+At the production 8/30/5x setting, 21 targets filled within SIC4, 4 at SIC3,
+14 at SIC2, and 11 at the business-model tier; none left the requested size
+band. Raising the minimum to 12 or tightening the band to 3x forced relaxed
+comparisons, including maximum within-set cap spreads above 500x. The peer
+minimum, maximum, and size band are therefore **left unchanged at 8, 30, and
+5x**. This is a measured no-change decision, not an unexamined default.
+
+The sector-key measurement likewise supports keeping the production default.
+`business_model` forms seven groups, has HHI 0.509956, and leaves all 1,000
+names assigned; its GENERAL bucket alone is 703 names. SIC2 lowers HHI to
+0.050184 across 62 groups, but has 8 singleton groups and 266 names in groups
+smaller than 15. SIC3 lowers HHI to 0.024693 across 173 groups, but has 46
+singletons and 500 names in groups smaller than 15. Because those sparse groups
+make a silent methodology flip unsafe, `sector_neutral_key` is **left
+unchanged at `business_model`**; SIC2/SIC3 remain separately fingerprinted
+experimental choices. Finally, `min_letter_peers` remains 15: all nine healthy
+wide panels have hundreds of graded names, while the floor still correctly
+interlocks the two profiles with no defining price evidence.
+
 ## Measured 82-name refactor speedup
 
 On this Windows machine, the same cache-only command (`stock-grader freeze
