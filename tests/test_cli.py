@@ -966,6 +966,7 @@ def test_monthly_freeze_workflow_retries_the_triggering_branch() -> None:
         assert required in commit_step
     assert commit_step.index(fetch) < commit_step.index(rebase) < commit_step.index(push)
     assert "git pull --rebase origin main" not in commit_step
+    assert "if git push;" not in commit_step
 
 
 def test_monthly_freeze_commits_panels_even_when_a_profile_refuses() -> None:
@@ -983,17 +984,30 @@ def test_monthly_freeze_commits_panels_even_when_a_profile_refuses() -> None:
         Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
     ).read_text(encoding="utf-8")
 
-    steps = workflow.split("      - name: ")
-    commit_step = next(step for step in steps if step.startswith("Commit"))
-    # The guard must sit in the step's own `if:`, above the run block it protects.
-    body = commit_step.split("run: |", 1)[0]
-    assert "if: always()" in body, (
+    def step_block(name: str) -> list[str]:
+        """The lines of exactly one step: its `- name:` line to the next list item."""
+        chunk = workflow.split(f"      - name: {name}", 1)[1]
+        lines: list[str] = []
+        for line in chunk.splitlines():
+            if line.startswith("      - "):  # the next step begins
+                break
+            lines.append(line)
+        return lines
+
+    def has_always_guard(block: list[str]) -> bool:
+        # Match the step KEY, not the prose. The step is commented, and those
+        # comments quote `if: always()` — a substring search over the raw text is
+        # satisfied by the explanation of the guard rather than the guard itself.
+        return any(
+            line.strip() == "if: always()"
+            for line in block
+            if not line.lstrip().startswith("#")
+        )
+
+    assert has_always_guard(step_block("Commit")), (
         "the Commit step must run even after a freeze exits 2, or a single profile "
         "refusal discards every valid panel from that run"
     )
-
-    wide_step = next(step for step in steps if step.startswith("Freeze wide"))
-    assert "if: always()" in wide_step.split("run: |", 1)[0], (
+    assert has_always_guard(step_block("Freeze wide")), (
         "the wide freeze must still run when the narrow freeze refused"
     )
-    assert "if git push;" not in commit_step

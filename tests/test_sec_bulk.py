@@ -577,11 +577,18 @@ def test_rank_observations_are_bounded_for_plausibility_and_recency() -> None:
     assert seated["AAA"] == 100.0, "the quadrillion tag must not become the rank key"
     assert "BBB" not in seated, "a 2009 float cannot rank a 2026 issuer"
 
-    reasons = {(d.ticker, d.reason) for d in build.drops}
-    assert ("AAA", "float_exceeds_plausibility_ceiling") in reasons
-    assert ("BBB", "float_observation_too_stale") in reasons
-    # Loud, not silent: every rejection is named in the manifest.
-    assert all(d.detail for d in build.drops if d.reason.startswith("float_"))
+    # AAA is still seated on its older sane value, so the ceiling breach is an
+    # annotation; BBB has nothing left to rank on, so it is a genuine exclusion.
+    assert ("AAA", "float_exceeds_plausibility_ceiling") in {
+        (d.ticker, d.reason) for d in build.notes
+    }
+    assert ("BBB", "float_observation_too_stale") in {
+        (d.ticker, d.reason) for d in build.drops
+    }
+    # Loud, not silent: every rejection carries the values that triggered it.
+    assert all(d.detail for d in [*build.drops, *build.notes] if d.reason.startswith("float_"))
+    # A seated ticker must never appear as an exclusion.
+    assert not ({c.ticker for c in build.candidates} & {d.ticker for d in build.drops})
 
 
 def test_dropped_and_substituted_listings_are_recorded_in_a_manifest() -> None:
@@ -606,10 +613,14 @@ def test_dropped_and_substituted_listings_are_recorded_in_a_manifest() -> None:
     assert {"excluded_etf", "excluded_test_issue"} <= by_reason
     # Published CIKs are uniformly zero-padded strings, never a mix of int and str.
     assert all(d.cik is None or (isinstance(d.cik, str) and len(d.cik) == 10) for d in build.drops)
+    # The reason the whole manifest exists: a CIK with no dei block is named, not
+    # swallowed by a bare continue. NOFLAG has no listing-directory row.
+    assert "listing_directory_row_missing" in by_reason
 
     rendered = json.loads(
         render_drop_manifest(
             build.drops,
+            notes=build.notes,
             universe_id="liq1000_v1",
             asof=date(2026, 7, 31),
             spec_sha256="0" * 64,
@@ -620,9 +631,14 @@ def test_dropped_and_substituted_listings_are_recorded_in_a_manifest() -> None:
     )
     assert rendered["drop_count"] == len(build.drops)
     assert rendered["reason_counts"]["duplicate_cik"] >= 1
-    # The manifest carries no float value or rank order for SEATED members.
-    seated = {item.ticker for item in build.candidates}
-    assert not (seated & {d["ticker"] for d in rendered["drops"]})
+    # The schema itself carries no float value and no rank position for any member,
+    # which is what makes the artifact publishable next to the membership file.
+    assert all(
+        set(d) == {"ticker", "cik", "reason", "detail"}
+        for d in [*rendered["drops"], *rendered["notes"]]
+    )
+    # Exclusions are disjoint from the universe, so the pool is the complement.
+    assert not ({item.ticker for item in build.candidates} & {d["ticker"] for d in rendered["drops"]})
 
 
 def test_filer_cik_substitution_recovers_an_issuer_behind_a_registrant_shell() -> None:
@@ -672,10 +688,12 @@ def test_filer_cik_substitution_recovers_an_issuer_behind_a_registrant_shell() -
     seated = build.candidates[0]
     assert seated.cik == "0000000099"
     assert seated.resolved_from_cik == "0000000009"
-    substitution = next(d for d in build.drops if d.reason == "filer_cik_substituted")
+    substitution = next(d for d in build.notes if d.reason == "filer_cik_substituted")
     # Recorded as an inference, not attested as proven succession.
     assert "unattested" in substitution.detail
     assert "seated_cik=0000000099" in substitution.detail
+    # NEW is in the universe, so it must not also be listed as an exclusion.
+    assert "NEW" not in {d.ticker for d in build.drops}
 
 
 def test_cached_archive_is_rejected_when_its_bytes_do_not_match_the_recorded_sha256(

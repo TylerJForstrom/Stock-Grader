@@ -85,7 +85,14 @@ class UniverseDrop:
 @dataclass(frozen=True, slots=True)
 class UniverseBuild:
     candidates: list[FloatCandidate]
+    #: Candidates the rule EXCLUDED. Disjoint from ``candidates`` by construction,
+    #: so a consumer can reconstruct the eligible pool by complement.
     drops: list[UniverseDrop]
+    #: Things worth recording about candidates that WERE seated — a rejected
+    #: observation, a substituted filer CIK. These are not exclusions and must
+    #: never be mixed into ``drops``, or the universe and its manifest contradict
+    #: each other about whether a name is a member.
+    notes: list[UniverseDrop]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,13 +116,15 @@ _SOURCE_MANIFESTS = ("data/symbols/current", "data/symbols/events")
 # $4.43 QUADRILLION and ranked first in the committed N=1000 universe.
 _DEFAULT_MAX_PUBLIC_FLOAT_USD = 1e13
 
-# Recency ceiling for the rank observation, in days before asof.
+# Recency ceiling for the rank observation, measured on the FILED date, in days
+# before asof.
 #
-# EntityPublicFloat is a 10-K cover-page value measured on the last business day
-# of the most recent second fiscal quarter, so a current filer refreshes it every
-# year. Two years tolerates a late filer plus one missed annual cycle while
-# rejecting the 2009 and 2010 observations that were otherwise ranking issuers on
-# a float sixteen years stale.
+# It must be `filed`, not the cover-page `end`. `end` is a value the filer writes,
+# and real filers repeat a stale one: AMD's 10-K filed 2026-02-04 still carries
+# end=2024-06-28, so an `end`-based window drops a $232 billion constituent and
+# labels it dormant. `filed` is the fact that matters — the date the issuer last
+# told SEC this number. Two years tolerates a late filer plus one missed annual
+# cycle while still rejecting issuers whose only float tag was filed in 2010.
 _DEFAULT_MAX_OBSERVATION_AGE_DAYS = 730
 
 # How far after asof the bulk archive may have been generated. One week absorbs a
@@ -264,7 +273,7 @@ def _latest_float(
     )
     if not isinstance(records, list):
         raise ValueError("EntityPublicFloat USD units must be a list")
-    oldest_admissible = asof - timedelta(days=max_age_days)
+    oldest_filed = asof - timedelta(days=max_age_days)
     eligible: list[tuple[date, date, float]] = []
     for record in records:
         if not isinstance(record, dict):
@@ -280,16 +289,16 @@ def _latest_float(
     # selected. A superseded historical value is ordinary filing history, not a
     # defect, so it must not be reported; the value that WOULD have set this
     # issuer's rank is the one worth objecting to.
-    for end, filed, value in sorted(eligible, key=lambda item: (item[0], item[1]), reverse=True):
-        if end < oldest_admissible:
-            # Everything older is staler still, so this issuer has no current float.
+    for end, filed, value in sorted(eligible, key=lambda item: (item[1], item[0]), reverse=True):
+        if filed < oldest_filed:
+            # Sorted by filed descending, so everything after this is staler too.
             if rejections is not None:
                 rejections.append(
                     (
                         "float_observation_too_stale",
                         (
                             f"end={end.isoformat()} filed={filed.isoformat()} "
-                            f"oldest_admissible={oldest_admissible.isoformat()}"
+                            f"oldest_filed={oldest_filed.isoformat()}"
                         ),
                     )
                 )
@@ -450,11 +459,20 @@ def build_sec_float_universe_with_drops(
     flags = _listing_flags(source, asof)
     candidates: list[FloatCandidate] = []
     drops: list[UniverseDrop] = []
+    notes: list[UniverseDrop] = []
     seen: set[str] = set()
-    seen_ciks: set[str] = set()
+    # cik -> the ticker actually seated for that issuer. A seat is claimed only
+    # when a candidate is successfully ranked, so a security that fails the float
+    # check does not take the issuer's seat down with it: Aegon's real NYSE
+    # listing AEG was being dropped as a "duplicate" of AEFC, a sibling that had
+    # itself been rejected, leaving the issuer represented by nothing at all.
+    seated_ciks: dict[str, str] = {}
 
     def drop(ticker: str, cik: object, reason: str, detail: str = "") -> None:
         drops.append(UniverseDrop(ticker, _cik_text(cik), reason, detail))
+
+    def note(ticker: str, cik: object, reason: str, detail: str = "") -> None:
+        notes.append(UniverseDrop(ticker, _cik_text(cik), reason, detail))
 
     # EntityPublicFloat is issuer-level evidence. Sort so the securities contending for one
     # CIK are considered in seating order and the winner is deterministic.
@@ -470,10 +488,12 @@ def build_sec_float_universe_with_drops(
         ticker = _canonical_ticker(record.get("ticker"))
         if not ticker or ticker in seen:
             continue
-        seen.add(ticker)
         if record.get("exchange") not in listed:
+            # Deliberately NOT marked seen: a later listed record for the same
+            # canonical ticker must still be able to claim it, exactly as before.
             drop(ticker, record.get("cik"), "exchange_not_listed", str(record.get("exchange", "")))
             continue
+        seen.add(ticker)
         listing_flags = flags.get(ticker)
         if listing_flags is None:
             if exclude_etf or exclude_test_issue:
@@ -507,26 +527,28 @@ def build_sec_float_universe_with_drops(
         if cik_number <= 0 or cik_number > 9_999_999_999:
             raise ValueError(f"{ticker} has an invalid SEC CIK")
         cik = str(cik_number).zfill(10)
-        if cik in seen_ciks:
-            # Another security already represents this issuer. Record which one won so a
-            # displaced primary listing (BRK-B behind BRK-A) is visible rather than lost.
-            retained = next((c.ticker for c in candidates if c.cik == cik), "")
-            drop(ticker, cik, "duplicate_cik", f"retained_ticker={retained}" if retained else "")
+        if cik in seated_ciks:
+            # Another security already represents this issuer. Name it, so a
+            # displaced primary listing (BRK-B behind BRK-A) is visible rather
+            # than lost.
+            drop(ticker, cik, "duplicate_cik", f"retained_ticker={seated_ciks[cik]}")
             continue
-        seen_ciks.add(cik)
+        # Deliberately not memoised: the payloads are megabytes each and holding
+        # a few thousand of them costs more than the occasional re-read. A CIK is
+        # only read twice when its first security failed, and the archive read is
+        # cheap next to keeping the whole cross-section resident.
         facts = facts_source.company_facts(cik)
         resolved_from: str | None = None
         if facts is None:
             drop(ticker, cik, "no_companyfacts_member")
             continue
         if not _has_dei_taxonomy(facts):
-            resolution = _resolve_filer_cik(facts_source, cik, facts, seen_ciks)
+            resolution = _resolve_filer_cik(facts_source, cik, facts, set(seated_ciks))
             if resolution is None:
                 drop(ticker, cik, "companyfacts_member_has_no_dei_taxonomy")
                 continue
             filer_cik, facts, matched_key = resolution
             resolved_from, cik = cik, filer_cik
-            seen_ciks.add(filer_cik)
             log.warning(
                 "%s: directory CIK %s reports no dei taxonomy; inferring filer CIK %s from "
                 "registrant name %r (inference, not proven succession)",
@@ -535,13 +557,11 @@ def build_sec_float_universe_with_drops(
                 filer_cik,
                 matched_key,
             )
-            drops.append(
-                UniverseDrop(
-                    ticker,
-                    resolved_from,
-                    "filer_cik_substituted",
-                    f"seated_cik={filer_cik} basis=entity_name_match_unattested key={matched_key}",
-                )
+            note(
+                ticker,
+                resolved_from,
+                "filer_cik_substituted",
+                f"seated_cik={filer_cik} basis=entity_name_match_unattested key={matched_key}",
             )
         rejections: list[tuple[str, str]] = []
         observation = _latest_float(
@@ -551,14 +571,18 @@ def build_sec_float_universe_with_drops(
             log.warning(
                 "%s (cik %s): rejected EntityPublicFloat observation: %s", ticker, cik, detail
             )
-            drop(ticker, cik, reason, detail)
+            # A rejected observation is an exclusion only if it left the candidate
+            # with nothing to rank on; otherwise the candidate is seated on an
+            # older value and this is an annotation, not a drop.
+            (note if observation is not None else drop)(ticker, cik, reason, detail)
         if observation is None:
             drop(ticker, cik, "no_eligible_float_observation")
             continue
         value, observation_end, filed = observation
+        seated_ciks[cik] = ticker
         candidates.append(FloatCandidate(ticker, cik, value, observation_end, filed, resolved_from))
     ranked = sorted(candidates, key=lambda item: (-item.public_float, item.ticker))
-    return UniverseBuild(ranked, drops)
+    return UniverseBuild(ranked, drops, notes)
 
 
 def render_public_universe(
@@ -584,6 +608,7 @@ def render_public_universe(
 def render_drop_manifest(
     drops: Sequence[UniverseDrop],
     *,
+    notes: Sequence[UniverseDrop] = (),
     universe_id: str,
     asof: date,
     spec_sha256: str,
@@ -596,6 +621,13 @@ def render_drop_manifest(
     Published next to the membership file, never inside it: the membership format
     is hash-locked, is parsed by the existing loader, and carries no values or
     rank order.
+
+    ``drops`` are exclusions and are disjoint from the seated universe, so the
+    eligible pool really is the complement. ``notes`` records things worth knowing
+    about names that WERE seated — a substituted filer CIK, an observation the
+    bounds rejected while an older one still ranked the issuer. Keeping them apart
+    matters: a ticker appearing in both the universe file and its drop list makes
+    the two artifacts contradict each other.
 
     Disclosure note, stated rather than pretended away: this file names every
     candidate considered, so the eligible pool is reconstructable from it by
@@ -621,6 +653,7 @@ def render_drop_manifest(
             "freely redistributable."
         ),
         "drop_count": len(drops),
+        "dropped_ticker_count": len({d.ticker for d in drops}),
         "reason_counts": {
             reason: sum(1 for d in drops if d.reason == reason)
             for reason in sorted({d.reason for d in drops})
@@ -628,6 +661,11 @@ def render_drop_manifest(
         "drops": [
             {"ticker": d.ticker, "cik": d.cik, "reason": d.reason, "detail": d.detail}
             for d in sorted(drops, key=lambda d: (d.reason, d.ticker))
+        ],
+        "note_count": len(notes),
+        "notes": [
+            {"ticker": d.ticker, "cik": d.cik, "reason": d.reason, "detail": d.detail}
+            for d in sorted(notes, key=lambda d: (d.reason, d.ticker))
         ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -788,6 +826,7 @@ def emit_sec_float_universes(
         Path(out_dir) / f"universe_drops_{asof.isoformat()}.json",
         render_drop_manifest(
             build.drops,
+            notes=build.notes,
             universe_id=universe_id,
             asof=asof,
             spec_sha256=spec_sha256,
