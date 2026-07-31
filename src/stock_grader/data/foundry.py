@@ -38,6 +38,13 @@ _SYMBOL_DIRECTORY_FILES = frozenset(
         "sec_company_tickers_exchange.jsonl",
     }
 )
+# The event stream tags each diff with the directory it came from. Replaying a
+# directory point-in-time needs that tag, so map file name -> event source.
+_SYMBOL_DIRECTORY_EVENT_SOURCE = {
+    "nasdaqlisted.jsonl": "nasdaqlisted",
+    "otherlisted.jsonl": "otherlisted",
+    "sec_company_tickers_exchange.jsonl": "sec_company_tickers_exchange",
+}
 
 
 class FoundryError(RuntimeError):
@@ -124,12 +131,67 @@ class FoundryDataSource:
         blob = self._read_dataset_file("data/symbols/events", "events.jsonl")
         return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
 
-    def symbol_directory(self, name: str) -> list[dict[str, Any]]:
-        """Read one manifest-verified current symbol directory used by universe screens."""
+    def _assert_reconstructable(self, stream: list[dict[str, Any]], asof: str) -> None:
+        """Refuse an asof the event archive cannot testify about.
+
+        An event dated D proves snapshots existed on D-1 and D, so the earliest
+        reconstructable membership date is earliest_event - 1. Before that the
+        stream cannot testify: refuse rather than serve today's survivors dressed
+        up as history.
+        """
+        earliest = min((str(e.get("date", "")) for e in stream), default=None)
+        if earliest is None:
+            return
+        import datetime as _dt
+
+        boundary = (_dt.date.fromisoformat(earliest) - _dt.timedelta(days=1)).isoformat()
+        if asof < boundary:
+            raise FoundryError(
+                f"asof {asof} predates the event archive (reconstructable "
+                f"from {boundary}); point-in-time membership unavailable"
+            )
+
+    def symbol_directory(self, name: str, *, asof: str | None = None) -> list[dict[str, Any]]:
+        """Read one manifest-verified symbol directory used by universe screens.
+
+        ``asof`` (ISO date) reconstructs the directory point-in-time by replaying
+        the event stream BACKWARD from the current snapshot, exactly as
+        :meth:`universe` does: rows added after asof are removed, rows removed
+        after asof are restored, rows changed after asof revert to their recorded
+        previous state.
+
+        Without ``asof`` this returns TODAY's directory. Filtering a historical
+        universe through today's listing directory silently drops every issuer
+        delisted since — which is precisely the survivorship bias the
+        point-in-time contract exists to eliminate — so any caller building a
+        dated artifact must pass ``asof``.
+        """
         if name not in _SYMBOL_DIRECTORY_FILES:
             raise ValueError(f"unsupported symbol directory: {name}")
         blob = self._read_dataset_file("data/symbols/current", name)
-        return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
+        records = [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
+        if asof is None:
+            return records
+        source_key = _SYMBOL_DIRECTORY_EVENT_SOURCE[name]
+        stream = self.events()
+        self._assert_reconstructable(stream, asof)
+        # Directory rows are keyed by ticker alone; the SEC exchange directory
+        # additionally carries a CIK, and universe() owns that (cik, ticker) form.
+        members = {str(r.get("ticker", "")): r for r in records}
+        replayed = [
+            e for e in stream if e.get("source") == source_key and str(e.get("date", "")) > asof
+        ]
+        for event in sorted(replayed, key=lambda e: str(e.get("date", "")), reverse=True):
+            record = event.get("record") or {}
+            key = str(record.get("ticker", ""))
+            kind = event.get("event")
+            if kind == "added":
+                members.pop(key, None)
+            elif kind == "removed":
+                members[key] = record
+            elif kind == "changed" and event.get("previous"):
+                members[key] = event["previous"]
+        return list(members.values())
 
     def universe(
         self, *, listed_only: bool = True, asof: str | None = None
@@ -154,20 +216,7 @@ class FoundryDataSource:
         if asof is not None:
             members = {(r.get("cik"), r.get("ticker")): r for r in records}
             stream = self.events()
-            # An event dated D proves snapshots existed on D-1 and D, so the
-            # earliest reconstructable membership date is earliest_event - 1.
-            # Before that the stream cannot testify: refuse rather than serve
-            # today's survivors dressed up as history.
-            earliest = min((str(e.get("date", "")) for e in stream), default=None)
-            if earliest is not None:
-                import datetime as _dt
-
-                boundary = (_dt.date.fromisoformat(earliest) - _dt.timedelta(days=1)).isoformat()
-                if asof < boundary:
-                    raise FoundryError(
-                        f"asof {asof} predates the event archive (reconstructable "
-                        f"from {boundary}); point-in-time membership unavailable"
-                    )
+            self._assert_reconstructable(stream, asof)
             replayed = [
                 e
                 for e in stream

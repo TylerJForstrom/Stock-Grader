@@ -36,6 +36,10 @@ __all__ = ["SECBulkFacts", "SECBulkFactsError"]
 
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 _ARCHIVE_NAME = re.compile(r"^companyfacts_(\d{4}-\d{2}-\d{2})\.zip$")
+_ARCHIVE_MEMBER_CIK = re.compile(r"^CIK(\d{10})\.json$")
+_ENTITY_NAME = re.compile(r'"entityName"\s*:\s*"((?:[^"\\]|\\.)*)"')
+# entityName sits in the first object of every member, well inside this window.
+_ENTITY_NAME_PROBE_BYTES = 512
 
 
 class SECBulkFactsError(RuntimeError):
@@ -113,6 +117,11 @@ class SECBulkFacts:
         self._archive_path: Path | None = None
         self._ensured = False
         self._ensured_path: Path | None = None
+        # path -> digest already re-verified in THIS process. The threat is a
+        # forged archive appearing between processes, so a fresh process always
+        # re-hashes; within one process the file is not re-read.
+        self._verified_digests: dict[Path, str] = {}
+        self._entity_names: dict[str, list[str]] | None = None
 
     @staticmethod
     def _last_modified(value: str) -> tuple[str, datetime]:
@@ -128,6 +137,39 @@ class SECBulkFacts:
     @staticmethod
     def _sidecar_path(archive: Path) -> Path:
         return archive.with_suffix(".json")
+
+    def _file_digest(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def _verify_recorded_digest(self, archive: Path, expected: str) -> None:
+        """Re-hash a cached archive and compare against its recorded sha256.
+
+        Byte length is not integrity. The sidecar's digest is published verbatim
+        as ``source_sha256`` in the public universe artifacts, so accepting a
+        same-length archive on the strength of ``stat().st_size`` alone means an
+        unverified digest becomes the provenance of a public file. Recompute
+        instead — measured at well under a second for the real 1.39 GB archive, and
+        memoised per process so a repeated ``ensure()`` does not pay it twice.
+
+        A mismatch means the cache is corrupt or tampered with, so it raises
+        rather than silently re-downloading: a provenance-publishing system must
+        report that its inputs were not what it recorded, not quietly repair
+        itself and carry on.
+        """
+        if self._verified_digests.get(archive) == expected:
+            return
+        actual = self._file_digest(archive)
+        if actual != expected:
+            raise SECBulkFactsError(
+                f"SEC Companyfacts archive {archive} does not match its recorded sha256: "
+                f"sidecar says {expected}, file hashes to {actual}. The cached archive is "
+                f"corrupt or was replaced; refusing to publish its digest as provenance."
+            )
+        self._verified_digests[archive] = expected
 
     def _read_sidecar(self, archive: Path) -> dict[str, Any] | None:
         sidecar_path = self._sidecar_path(archive)
@@ -152,6 +194,7 @@ class SECBulkFacts:
             return None
         if actual_bytes != expected_bytes:
             return None
+        self._verify_recorded_digest(archive, digest.lower())
         payload["bytes"] = expected_bytes
         payload["member_count"] = member_count
         payload["_last_modified_date"] = modified.date().isoformat()
@@ -188,6 +231,44 @@ class SECBulkFacts:
             except (OSError, zipfile.BadZipFile):
                 continue
         return None
+
+    def entity_name_index(self) -> dict[str, list[str]]:
+        """Map normalised registrant name -> sorted CIKs reporting under it.
+
+        Reads only the leading bytes of each member, so ``entityName`` is
+        recovered without decompressing ~4.8 GB of facts (measured: about 1.5
+        seconds over 20,122 members). Used to find the operating company behind a
+        holding-company shell whose ticker SEC has already reassigned.
+        """
+        if self._entity_names is not None:
+            return self._entity_names
+        index: dict[str, list[str]] = {}
+        path = self.ensure()
+        if path is None:
+            self._entity_names = index
+            return index
+        from .sec_float_universe import normalized_entity_name
+
+        archive = self._open(path)
+        for member in archive.namelist():
+            matched = _ARCHIVE_MEMBER_CIK.fullmatch(member)
+            if matched is None:
+                continue
+            with archive.open(member) as handle:
+                head = handle.read(_ENTITY_NAME_PROBE_BYTES).decode("utf-8", "ignore")
+            found = _ENTITY_NAME.search(head)
+            if found is None:
+                continue
+            try:
+                raw = json.loads(f'"{found.group(1)}"')
+            except json.JSONDecodeError:
+                continue
+            key = normalized_entity_name(raw)
+            if not key:
+                continue
+            index.setdefault(key, []).append(matched.group(1))
+        self._entity_names = {key: sorted(value) for key, value in index.items()}
+        return self._entity_names
 
     @staticmethod
     def _archive_metadata(path: Path) -> tuple[str, int]:
@@ -272,6 +353,8 @@ class SECBulkFacts:
         destination = self.cache_dir / f"companyfacts_{generation}.zip"
 
         if not refresh and destination.is_file() and destination.stat().st_size == expected_bytes:
+            # A size match is not an integrity match: _read_sidecar re-verifies the
+            # recorded digest, and a missing sidecar is rebuilt from freshly hashed bytes.
             sidecar = self._read_sidecar(destination)
             if sidecar is None:
                 digest, member_count = self._archive_metadata(destination)
@@ -281,6 +364,7 @@ class SECBulkFacts:
                     digest=digest,
                     member_count=member_count,
                 )
+                self._verified_digests[destination] = digest
             self._remove_old_generations(destination)
             self._ensured = True
             self._ensured_path = destination

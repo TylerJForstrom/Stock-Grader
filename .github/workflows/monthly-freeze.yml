@@ -38,6 +38,9 @@ jobs:
           # profiles are free in network terms and multiply the forward evidence.
           stock-grader freeze --all-profiles --universe config/universe_default.txt --out frozen_scores
       - name: Freeze wide SEC-float universe (fundamentals-first)
+        # Runs even if the narrow freeze refused, so one profile's refusal on one
+        # universe cannot cost the other universe a whole month of forward evidence.
+        if: always()
         env:
           STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
         run: |
@@ -55,6 +58,17 @@ jobs:
             --price-provider sec
 
       - name: Commit
+        # Every scheduled workflow in this ecosystem commits under `if: always()`,
+        # and this one must too. cmd_freeze refuses a profile BEFORE writing its
+        # parquet and writes each panel atomically (tmp + replace), so there is no
+        # such thing as a partial panel for this step to publish. What a skipped
+        # commit does destroy is real: both freeze steps write their valid panels
+        # to disk before the alarm policy runs, so a single profile exiting 2 —
+        # and all nine wide profiles now have a prior panel, which makes any
+        # refusal a regression and therefore exit 2 — discards every good panel
+        # from that run. Frozen panels are point-in-time evidence that cannot be
+        # backfilled; the run still reports red, which is the alarm.
+        if: always()
         run: |
           if [ "$GITHUB_REF_TYPE" != "branch" ] || [ -z "$GITHUB_REF_NAME" ]; then
             echo "monthly-freeze can only commit to the branch that triggered the run" >&2

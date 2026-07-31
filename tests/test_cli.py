@@ -966,5 +966,34 @@ def test_monthly_freeze_workflow_retries_the_triggering_branch() -> None:
         assert required in commit_step
     assert commit_step.index(fetch) < commit_step.index(rebase) < commit_step.index(push)
     assert "git pull --rebase origin main" not in commit_step
-    assert "if: always()" not in commit_step
+
+
+def test_monthly_freeze_commits_panels_even_when_a_profile_refuses() -> None:
+    """Regression: a refusal must not discard the panels that DID freeze.
+
+    Both freeze steps write their valid parquet panels before cmd_freeze's alarm
+    policy runs, and that policy exits 2 whenever a profile with a prior panel
+    refuses — which every one of the nine wide profiles now has. Without
+    `if: always()` on the commit step, one profile refusing throws away every good
+    panel from that run, and a frozen panel is point-in-time evidence that cannot
+    be backfilled on the next tick. The run still goes red; it just stops taking
+    the month's evidence down with it.
+    """
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
+    ).read_text(encoding="utf-8")
+
+    steps = workflow.split("      - name: ")
+    commit_step = next(step for step in steps if step.startswith("Commit"))
+    # The guard must sit in the step's own `if:`, above the run block it protects.
+    body = commit_step.split("run: |", 1)[0]
+    assert "if: always()" in body, (
+        "the Commit step must run even after a freeze exits 2, or a single profile "
+        "refusal discards every valid panel from that run"
+    )
+
+    wide_step = next(step for step in steps if step.startswith("Freeze wide"))
+    assert "if: always()" in wide_step.split("run: |", 1)[0], (
+        "the wide freeze must still run when the narrow freeze refused"
+    )
     assert "if git push;" not in commit_step
