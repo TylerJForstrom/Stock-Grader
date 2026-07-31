@@ -1,6 +1,6 @@
 # M5 home-computer handoff
 
-Last updated: 2026-07-30 (America/New_York)
+Last updated: 2026-07-31 (America/New_York)
 
 This document is the continuation record for M5, "Widen the frozen universe from
 82 to 500-1000 names." It is intentionally operational: it records what is
@@ -9,11 +9,175 @@ to the home computer, what has been proved, what is still incomplete, and the
 commands that remain.
 
 Do not call M5 complete until every acceptance item in
-`docs/majors/M5-wide-universe.md` is genuinely satisfied. In particular, the
-measured N=250/500/1000 rollout and peer/sector diagnostics are complete.
-The exact-eleven SEC-only requirement remains blocked by the documented dense
-price contradiction. Terminal verification of the repaired Grader workflow
-also remains until the final branch dispatch below is recorded.
+`docs/majors/M5-wide-universe.md` is genuinely satisfied. The measured rollout
+and peer/sector diagnostics are complete. Both repaired-workflow dispatches are
+green, including the idempotent no-write run. The exact-eleven SEC-only
+requirement remains blocked by the documented dense-price contradiction, so M5
+is still not complete.
+
+## 0. Authoritative continuation status (2026-07-31)
+
+This section supersedes any later placeholder or pending-status wording in this
+document. The older sections remain as an audit trail of how M5 was developed.
+
+### Final branch commits and artifacts
+
+- Stock-Grader implementation/fix commit: `a136252`; workflow panel commit and
+  current implementation-era head before this documentation update: `e9b4e92`.
+- Stock-Vault implementation: `4a607e1`; collector artifact commit: `200c6e4`;
+  exact private-spec byte pin and regression: `09e8b32`.
+- Stock-Data ecosystem documentation: `01eddae`.
+- No prior line in `research_ledger.jsonl` was edited. Exactly one record has
+  experiment `universe:liq1000_v1`, verdict `PRE-REGISTERED`, and the full
+  ledger chain verifies `True`.
+
+### Green workflow and panel evidence
+
+The repaired workflow was dispatched from `a136252` on
+`codex/m5-wide-universe`. Run
+[`30632292769`](https://github.com/TylerJForstrom/Stock-Grader/actions/runs/30632292769)
+completed successfully and pushed panel commit `e9b4e92`. The exact required
+`gh run list` line was:
+
+```text
+completed	success	monthly-freeze	monthly-freeze	codex/m5-wide-universe	workflow_dispatch	30632292769	17m47s	2026-07-31T12:53:20Z
+```
+
+The branch contains nine wide files for `2026-07-31`: `all_weather`,
+`deep_value`, `dividend_growth`, `dividend_income`, `garp`, `growth`,
+`quality`, `turnaround`, and `value`. Every file has exactly 1,000 rows,
+`universe_id=liq1000_v1`, and
+`universe_spec_sha256=bd02dccb979fd57cfc059e608be2bfea7bb7e7f3dd25ce34c1364c71371ebe94`.
+Their graded counts range from 891 to 969. Every panel records
+`code_commit=a136252`.
+
+`low_volatility` and `momentum` are absent by design: the green run logged zero
+gradable names out of 1,000 for each under SEC-only sparse prices. No safety
+gate was weakened and no empty or misleading parquet was written.
+
+A second dispatch,
+[`30633530115`](https://github.com/TylerJForstrom/Stock-Grader/actions/runs/30633530115),
+also completed successfully. Its exact `gh run list` line was:
+
+```text
+completed	success	monthly-freeze	monthly-freeze	codex/m5-wide-universe	workflow_dispatch	30633530115	13m9s	2026-07-31T13:12:28Z
+```
+
+That run logged all nine existing wide panels as `already frozen; nothing to
+do`, retried only the two structural refusals, and the commit step printed
+`nothing to commit`. This is the required second-invocation no-write/exit-zero
+evidence.
+
+### Final validation evidence
+
+- Stock-Grader focused M5 set: `48 passed in 19.97s`.
+- Stock-Grader pre-commit full run: `633 passed in 1090.09s (0:18:10)`.
+- Stock-Grader post-`a136252` full run: `633 passed in 902.87s (0:15:02)`.
+- Stock-Grader Ruff: `All checks passed!`.
+- Stock-Vault `python -m pytest -q` exited 0 with:
+
+  ```text
+  ........................................................................ [ 75%]
+  .......................                                                  [100%]
+  ```
+
+  This is 95 tests; its configured double-quiet output suppresses the count.
+  Stock-Vault Ruff: `All checks passed!`.
+- Stock-Data `python -m pytest -q` exited 0 with:
+
+  ```text
+  ......................................                                   [100%]
+  ```
+
+  This is 38 tests. Stock-Data Ruff: `All checks passed!`.
+
+The literal acceptance demand for a green full suite before and after every
+intermediate commit is not fully satisfied historically: home commit
+`6bc96e3` contained the Windows timing-newline defect, and its new regression
+correctly failed there. The defect is fixed in `a136252`; current pre/post
+full suites are green. Do not rewrite that history as if `6bc96e3` was green.
+
+### Provenance and regression closure
+
+- Public spec bytes hash to `bd02dcc...ebe94`; the 1,000-name file has 1,000
+  unique, sorted ticker-only members and no member contains a digit.
+- Vault spec bytes are exactly 1,054 bytes and hash to
+  `8bbeb245...ff48c`, matching the immutable private manifest. Commit
+  `09e8b32` pins those bytes with `-text`; no private ranked artifact or
+  manifest was rewritten.
+- The peer-measurement JSON generator now records a stable basename, adds the
+  input-table SHA-256, and writes canonical LF bytes. The four hashes in the
+  historical table are still valid identifiers for the archived `6bc96e3`
+  files, but are not cross-machine reproduction hashes. Corrected hashes
+  require the off-git metadata export with SHA-256
+  `b92ce934a22a9855ad73a77b3c637357a36e959af68efe893f989b90bb57cade`.
+- The workflow commit step no longer uses `if: always()`, so failed freezes
+  cannot publish partial panels. Its retry fetches/rebases/pushes only the
+  exact triggering branch.
+- Old-code proofs were captured: the timing regression failed on Windows CRLF;
+  the peer artifact regression failed on absolute-path/native-newline output;
+  and the workflow regression failed while `if: always()` was restored.
+
+The peer diagnostic treats an explicitly blank derived `market_cap` as typed
+missingness to mirror production peer selection; it never invents a numeric
+default, never uses a missing cap in cap ratios, and reports missing-cap peers
+explicitly. A present malformed/non-finite/non-positive value raises. Broker
+and feed numeric parsers remain fail-closed.
+
+### What remains
+
+M5 has one substantive methodology blocker: the milestone demands exactly 11
+SEC-only panels, but SEC-only sparse prices provide no defining evidence for
+`momentum` or `low_volatility`. The owner must either supply a licensed,
+point-in-time dense daily-price artifact that fits the one-direction DAG, or
+explicitly amend the acceptance criterion to the nine honest
+fundamentals-first panels. Do not weaken defining-pillar or letter-floor gates.
+
+### Ready-to-paste home-computer prompt
+
+```text
+Continue the M5 wide-universe task on my home Windows computer.
+
+Repositories:
+  C:/Users/tforstrom/Desktop/Stock-Grader   PUBLIC
+  C:/Users/tforstrom/Desktop/Stock-Vault    PRIVATE; never make public
+  C:/Users/tforstrom/Desktop/Stock-Data     PUBLIC
+
+First pull all three repos and run git status. Stop if any tree has unexpected
+changes. Work only on codex/m5-wide-universe; never push directly to main.
+
+Read in order:
+  Stock-Grader/docs/MAJOR_IMPROVEMENTS.md
+  Stock-Grader/docs/majors/ORIENTATION.md
+  Stock-Grader/docs/majors/M5-wide-universe.md
+  Stock-Grader/docs/HANDOFF.md
+  Stock-Grader/docs/M5_HANDOFF_HOME.md
+
+Authoritative state: Grader implementation a136252 and panel commit e9b4e92;
+Vault 09e8b32; Data 01eddae. Workflow runs 30632292769 and 30633530115 are
+green. The second run skipped all nine existing wide panels and printed
+`nothing to commit`. Verify these facts and artifact hashes; do not rebuild
+completed M5 infrastructure.
+
+The only substantive blocker is exact 11 SEC-only panels. Nine honest panels
+exist; momentum and low_volatility each have zero gradable names without dense
+daily prices. Continue only if I provide one of these decisions:
+  A. a licensed point-in-time dense daily-price source/artifact to integrate
+     without violating the ecosystem DAG or public/private boundary; or
+  B. an explicit amendment accepting nine fundamentals-first panels.
+Do not weaken gates, fabricate prices, edit old ledger lines, overwrite dated
+artifacts, expose Vault-derived data, or mix universe fingerprints.
+
+If corrected peer JSON hashes are requested, first locate the exact off-git
+metadata export whose SHA-256 is
+b92ce934a22a9855ad73a77b3c637357a36e959af68efe893f989b90bb57cade;
+otherwise preserve the four listed hashes as historical 6bc96e3 evidence.
+
+After any authorized change, add an old-code regression proof, run full pytest
+and Ruff in every touched repo, dispatch any changed workflow and verify it
+green with gh run list, then report every M5 acceptance item as met/not met.
+Do not call M5 complete while exact 11 remains unresolved.
+```
 
 ## 1. Safety first on the home computer
 
@@ -59,19 +223,25 @@ Read these files in order before continuing:
 - Core M5 implementation commit: `c276a0a`
 - SEC CDN fix, public artifacts, ledger, measurements, and handoff commit:
   `27b385d`.
-- Agent-log/final handoff update: `806e896`.
-- Remote after push: `origin/codex/m5-wide-universe`.
+- Initial Agent-log/handoff update: `806e896`.
+- Measurement and validation documentation: `b11683f`, `392e4e2`, and
+  `6bc96e3`.
+- Workflow/artifact reproducibility repair: `a136252`.
+- Verified workflow panel commit: `e9b4e92`.
+- Remote after push: `origin/codex/m5-wide-universe` at `e9b4e92` before this
+  documentation-only update.
 
 ### Stock-Vault
 
 - Branch: `codex/m5-wide-universe`
 - M5 collector implementation commit: `4a607e1`
-- Current branch HEAD after the verified collector dispatch: `200c6e4`
+- Current branch HEAD after exact spec-byte pinning: `09e8b32`
 - Remote: `origin/codex/m5-wide-universe`
 - Working tree was clean during the final independent audit.
 
 The `200c6e4` commit is the normal data/heartbeat commit produced by the
-successful collector workflow; the M5 code itself is in `4a607e1`.
+successful collector workflow; the M5 code itself is in `4a607e1`, and
+`09e8b32` pins the already-registered spec bytes without editing `data/`.
 
 ### Stock-Data
 
@@ -296,17 +466,13 @@ Exact values:
 | As-of | `2026-07-30` |
 | `volume_is_fractional` | `true` |
 
-The manifest-recorded private spec SHA is deliberately different from the
-public spec SHA: these are different licensed artifacts and different
-selection rules. A continuation audit found a separate historical provenance
-gap: the current committed private spec hashes to
-`74116827f8d76b0d74a506a0f6c8b42dd429e50009e79884ae5145b22c5b8680`
-as LF and
-`e85a57bbc9dcbb69cb30260d2a8eaa13f950bfa78f30f69732c8438291ba8e50`
-as CRLF, neither of which equals the manifest's `8bbeb...`. A read-only rerun
-still reproduced the ranked gzip bytes exactly. Preserve the ranked file and
-manifest as immutable historical evidence; do not rewrite either merely to
-hide this mismatch.
+The private and public spec hashes deliberately differ because they describe
+different licensed rules. The audit found Git had normalized the private spec
+blob even though the Windows checkout happened to match the immutable
+manifest. Vault commit `09e8b32` stages the exact registered 1,054 bytes, whose
+SHA-256 is `8bbeb245...ff48c`, and adds a `-text` attribute plus regression.
+The immutable ranked file and manifest were not edited; current checkout bytes
+now match the manifest on every platform.
 
 Do not copy the ranked private artifact, its membership, its values, or its
 rank order into Stock-Grader or Stock-Data.
@@ -336,18 +502,24 @@ conflicts prevented any panel from reaching the branch.
 
 The repaired workflow checks out full history, derives the exact triggering
 branch from `GITHUB_REF_NAME`, fetches and rebases that remote branch before
-every explicit push attempt, and never substitutes `main`. Run
-`30579474350` is failure evidence, not M5 acceptance evidence.
+every explicit push attempt, never substitutes `main`, and omits `if: always()`
+from the commit step so a failed freeze cannot publish partial output. Run
+`30579474350` remains useful failure evidence; runs `30632292769` and
+`30633530115` are the acceptance evidence.
 
-> **PRIMARY FILL - final Stock-Grader workflow evidence:**
+> **FINAL Stock-Grader workflow evidence:**
 >
-> - Branch pushed at commit: `<COMMIT_SHA>`
-> - Run ID: `<RUN_ID>`
-> - Run URL: `<URL>`
-> - Conclusion: `<SUCCESS_OR_FAILURE>`
-> - Exact `gh run list` line: `<PASTE_LINE>`
-> - Wide files written: `<COUNT_AND_PROFILE_LIST>`
-> - Second-invocation result: `<EXIT_CODE_AND_NOTHING_WRITTEN_EVIDENCE>`
+> - Repair commit: `a136252`
+> - First green run: `30632292769`
+> - URL: `https://github.com/TylerJForstrom/Stock-Grader/actions/runs/30632292769`
+> - Conclusion: `success`; exact `gh run list` duration: `17m47s`
+> - Bot panel commit: `e9b4e92`
+> - Wide files: nine (`all_weather`, `deep_value`, `dividend_growth`,
+>   `dividend_income`, `garp`, `growth`, `quality`, `turnaround`, `value`)
+> - Every wide file: 1,000 rows, `liq1000_v1`, registered spec SHA
+> - Second green run: `30633530115`; exact list duration: `13m9s`
+> - Second result: nine panels skipped as already frozen; only the two known
+>   structural refusals were recomputed; commit printed `nothing to commit`.
 
 ## 7. Test and performance evidence already obtained
 
@@ -401,10 +573,23 @@ The new time is 17.4% of the old time (5.73x faster), below the milestone's
 25% ceiling. Both runs attempted the same eleven profiles and refused the same
 cache-starved profiles, so the timing comparison is like-for-like.
 
-Final post-artifact validation:
+Pre-`6bc96e3` post-artifact validation:
 
 ```text
 622 passed in 681.92s (0:11:21)
+All checks passed!
+```
+
+Current repair-tree pre-commit validation:
+
+```text
+633 passed in 1090.09s (0:18:10)
+```
+
+Post-`a136252` validation:
+
+```text
+633 passed in 902.87s (0:15:02)
 All checks passed!
 ```
 
@@ -413,12 +598,12 @@ All checks passed!
 `python -m pytest -q` exited 0:
 
 ```text
-........................................................................ [ 76%]
-......................                                                   [100%]
+........................................................................ [ 75%]
+.......................                                                  [100%]
 ```
 
-This is 94 tests. The repository's pytest configuration suppresses a separate
-`94 passed` summary.
+This is 95 tests. The repository's pytest configuration suppresses a separate
+`95 passed` summary.
 
 `python -m ruff check .`:
 
@@ -467,6 +652,10 @@ pre-M5 file/version, then the new file was restored:
 | SEC CDN split generation | Old code raised `SECBulkFactsError: expected 327801, received 146`; new focused set has 14 passing tests. |
 | Reusable wide-freeze harness | At `c276a0a`, collection failed with `ImportError: cannot import name 'measure_wide_freeze' from 'scripts'`; pytest exit 2. |
 | Trigger-branch workflow retry | At `806e896`, the regression first failed because `fetch-depth: 0` was absent and exposed the old `git pull --rebase origin main`; pytest exit 1. |
+| Failed-freeze commit guard | With the new assertion and the `6bc96e3` workflow restored via `git show`, the test failed because `if: always()` remained in the Commit step: `1 failed in 25.13s`. |
+| Wide timing LF bytes | On the `6bc96e3` Windows `write_text` implementation, the deterministic timing test observed CRLF bytes instead of LF and failed in the 15-test focused run. |
+| Portable peer artifacts | Against the unchanged `6bc96e3` script, the two-path CLI regression produced different absolute-path/native-newline JSON: `1 failed in 3.68s`. |
+| Vault registered spec bytes | Before `09e8b32`, the focused test failed because `.gitattributes` did not pin the spec; the staged old blob hashed to `741168...` rather than manifest hash `8bbeb...`. |
 | Cross-platform artifact bytes | At `392e4e2`, the raw spec SHA was `d1c876...`, not the registered `bd02dcc...`; pytest exit 1. |
 | Missing-cap and sector diagnostics | At `392e4e2`, the exact new test file failed collection because `measure_sector_key_concentration` did not exist. Isolating the behavioral tests then failed on the absent peer-count schema and the old loader's rejection of a missing cap; pytest exit 1. |
 
@@ -477,7 +666,7 @@ failure.
 
 ## 9. Research ledger
 
-Exactly one record has been appended in the current Stock-Grader working tree:
+Exactly one record is committed on the M5 branch in `27b385d`:
 
 - `experiment`: `universe:liq1000_v1`
 - `verdict`: `PRE-REGISTERED`
@@ -581,23 +770,28 @@ ground truth, real data, licensing, or live services contradicted one another.
     `.gitattributes` rule and raw-hash regression preserve the registered bytes
     across platforms without changing the logical JSON or membership files.
 
-16. **The immutable private manifest's historical spec hash does not match the
-    current committed private spec.** Neither current LF nor CRLF bytes match
-    `8bbeb...`. The ranked output reproduces exactly, so the continuation audit
-    records the gap and leaves the restricted artifact untouched instead of
-    rewriting history.
+16. **The private spec blob mismatch is resolved without rewriting data.**
+    Vault `09e8b32` commits the exact 1,054 registered bytes, adds `-text`, and
+    proves SHA `8bbeb...` equals the immutable manifest. The ranked file and
+    manifest remain byte-identical to their historical versions.
 
 17. **The continuation runtime exposed a macOS workspace despite the Windows
     handoff target.** The expensive N=250/500/1000 timings remain the recorded
     Windows measurements. The continuation used the exact cloned commits and
     Python 3.12, and the final cloud proof runs on GitHub's Linux runner.
 
+18. **The four peer JSON hashes are historical, not portable.** `6bc96e3`
+    embedded an absolute source path and native newlines. `a136252` writes LF,
+    records a stable basename, and adds the source SHA. Corrected hashes need
+    the off-git input with SHA `b92ce934...cade`; the documented numerical
+    decisions remain valid.
+
 ## 11. Current acceptance status
 
 | Acceptance item | Status at handoff |
 |---|---|
-| Grader full suite before/after core commit | Met: 582 baseline, 621 post-core |
-| Final Grader suite after CDN/artifacts/docs | Met: 622 passed in 681.92s; Ruff clean |
+| Grader full-suite cadence around every commit | **Not fully met historically:** `6bc96e3` contained the Windows timing regression; final pre/post `a136252` suites are green |
+| Final Grader suite and Ruff | Met: 633 passed in 902.87s; Ruff clean |
 | Vault suite and fixture screen | Met |
 | Public spec | Met |
 | Public 1,000-name file | Met: generated, hash-verified, committed in `27b385d` |
@@ -607,14 +801,14 @@ ground truth, real data, licensing, or live services contradicted one another.
 | SEC bulk regression set | Met; final CDN addition has 14 focused passes |
 | Vault panel one-read/exact-series test | Met |
 | Mixed-universe guard | Met |
-| SEC-only exactly 11 + second exit 0 | **Partial:** second invocation is idempotent and exits 0; exactly 11 remains blocked by the dense-price contradiction |
+| SEC-only exactly 11 + second exit 0 | **Not met:** run `30633530115` proves exit 0/no write, but exactly 11 remains blocked; only nine honest panels exist |
 | N=250/500/1000 timing table | Met; measured rows are below and in `docs/UNIVERSE.md` |
 | N=1000 under 100 minutes | Met: 1,253.896 seconds (20.90 minutes) |
-| Grader workflow branch dispatch green | Run `30579474350` failed only in its incorrect branch-race push retry; repaired exact-branch dispatch pending |
+| Grader workflow branch dispatch green | Met: `30632292769` and idempotence run `30633530115` both succeeded |
 | Exactly one pre-registration ledger record + valid chain | Met and committed in `27b385d` |
 | Coverage/graded and retuning measurements documented | Met: coverage retains 0.35; fixed peer grid retains 8/30/5x; measured sector concentration retains `business_model`; 15-name outage floor retained |
 | Ecosystem and Vault docs | Met |
-| `docs/REVIEW_FEEDBACK.md` M5 commit-hash line | Met in `806e896` |
+| `docs/REVIEW_FEEDBACK.md` M5 commit-hash line | Met; refreshed through Grader `e9b4e92`, Vault `09e8b32`, Data `01eddae` |
 
 M5 is not complete at handoff.
 
@@ -909,7 +1103,10 @@ remains incomplete.
 - Existing unrelated working-tree changes belong to the user or another
   agent. Stop rather than overwrite them.
 
-## 15. Ready-to-paste continuation prompt
+## 15. Historical continuation prompt (superseded)
+
+Use the authoritative ready-to-paste prompt in section 0. The block below is
+retained only to show the pre-verification handoff state.
 
 ```text
 Continue M5 on my home Windows computer.

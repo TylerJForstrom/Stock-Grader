@@ -164,6 +164,13 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 
 ## Agent log
 
+2026-07-31 -- (Codex) M5 continuation verification and hardening:
+Stock-Grader `a136252` with panels `e9b4e92` (green workflow runs
+`30632292769` and idempotent `30633530115`), Stock-Vault `4a607e1`/`09e8b32`,
+Stock-Data `01eddae`; nine SEC-only wide panels are verified and exact-eleven
+remains blocked only by missing dense price evidence for `momentum` and
+`low_volatility`.
+
 2026-07-30 — (Codex) M5 wide-universe implementation and measured rollout:
 Stock-Grader `c276a0a`/`27b385d`, Stock-Vault `4a607e1` (verified collector
 artifact run at `200c6e4`), Stock-Data `01eddae`; exact-eleven SEC-only panels
