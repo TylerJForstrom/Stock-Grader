@@ -164,6 +164,15 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 
 ## Agent log
 
+2026-07-31 -- (Owner-approved Codex completion) M5 COMPLETE under the amended
+acceptance contract: Stock-Grader implementation `a136252`, public panel
+commit `e9b4e92`, and handoff `3bb5a6c`; Stock-Vault `4a607e1`/`09e8b32`;
+Stock-Data `01eddae`. Nine valid SEC-only 1,000-name panels are the public
+production set; `momentum` and `low_volatility` are deferred to a licensed
+point-in-time dense-price milestone without weakening gates. The original
+`trials=11` pre-registration remains unchanged and current final HEAD must be
+green.
+
 2026-07-31 -- (Codex) M5 continuation verification and hardening:
 Stock-Grader `a136252` with panels `e9b4e92` (green workflow runs
 `30632292769` and idempotent `30633530115`), Stock-Vault `4a607e1`/`09e8b32`,

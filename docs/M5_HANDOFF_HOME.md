@@ -2,18 +2,18 @@
 
 Last updated: 2026-07-31 (America/New_York)
 
-This document is the continuation record for M5, "Widen the frozen universe from
-82 to 500-1000 names." It is intentionally operational: it records what is
-already implemented, the exact artifacts and hashes that must survive the move
-to the home computer, what has been proved, what is still incomplete, and the
-commands that remain.
+This document is the completion and continuation record for M5, "Widen the
+frozen universe from 82 to 500-1000 names." It records the implementation,
+immutable artifacts and hashes, verification evidence, owner-approved acceptance
+amendment, and the separately deferred dense-price follow-up.
 
-Do not call M5 complete until every acceptance item in
-`docs/majors/M5-wide-universe.md` is genuinely satisfied. The measured rollout
-and peer/sector diagnostics are complete. Both repaired-workflow dispatches are
-green, including the idempotent no-write run. The exact-eleven SEC-only
-requirement remains blocked by the documented dense-price contradiction, so M5
-is still not complete.
+M5 is complete under the owner's explicit 2026-07-31 amendment in
+`docs/majors/M5-wide-universe.md`: nine valid public SEC-only profiles are the
+production set, `momentum` and `low_volatility` are deferred to a licensed
+point-in-time dense-price milestone, and the historical per-commit suite cadence
+is waived while current final HEAD must remain green. The measured rollout,
+peer/sector diagnostics, repaired workflow dispatch, and idempotent no-write run
+are all complete.
 
 ## 0. Authoritative continuation status (2026-07-31)
 
@@ -91,11 +91,12 @@ evidence.
 
   This is 38 tests. Stock-Data Ruff: `All checks passed!`.
 
-The literal acceptance demand for a green full suite before and after every
-intermediate commit is not fully satisfied historically: home commit
-`6bc96e3` contained the Windows timing-newline defect, and its new regression
-correctly failed there. The defect is fixed in `a136252`; current pre/post
-full suites are green. Do not rewrite that history as if `6bc96e3` was green.
+The owner explicitly waived the historical before/after-every-intermediate-commit
+requirement on 2026-07-31. The audit fact remains: home commit `6bc96e3`
+contained the Windows timing-newline defect and its new regression correctly
+failed there. The defect is fixed in `a136252`; current final HEAD is required
+to pass the full suite and Ruff. Do not rewrite history as if `6bc96e3` was
+green; the waiver resolves the acceptance item without erasing the evidence.
 
 ### Provenance and regression closure
 
@@ -124,19 +125,19 @@ default, never uses a missing cap in cap ratios, and reports missing-cap peers
 explicitly. A present malformed/non-finite/non-positive value raises. Broker
 and feed numeric parsers remain fail-closed.
 
-### What remains
+### Deferred follow-up (not an M5 blocker)
 
-M5 has one substantive methodology blocker: the milestone demands exactly 11
-SEC-only panels, but SEC-only sparse prices provide no defining evidence for
-`momentum` or `low_volatility`. The owner must either supply a licensed,
-point-in-time dense daily-price artifact that fits the one-direction DAG, or
-explicitly amend the acceptance criterion to the nine honest
-fundamentals-first panels. Do not weaken defining-pillar or letter-floor gates.
+The owner accepted the nine honest SEC-only panels as M5's public production
+output. `momentum` and `low_volatility` remain registered lifetime research arms
+and stay charged in the ledger's `trials=11`, but their public panels are deferred
+to a separate milestone requiring a licensed point-in-time dense daily-price
+artifact. Defining-pillar and letter-floor gates remain unchanged; no placeholder
+panel may be manufactured.
 
 ### Ready-to-paste home-computer prompt
 
 ```text
-Continue the M5 wide-universe task on my home Windows computer.
+Verify the completed M5 wide-universe milestone on my home Windows computer.
 
 Repositories:
   C:/Users/tforstrom/Desktop/Stock-Grader   PUBLIC
@@ -159,24 +160,22 @@ green. The second run skipped all nine existing wide panels and printed
 `nothing to commit`. Verify these facts and artifact hashes; do not rebuild
 completed M5 infrastructure.
 
-The only substantive blocker is exact 11 SEC-only panels. Nine honest panels
-exist; momentum and low_volatility each have zero gradable names without dense
-daily prices. Continue only if I provide one of these decisions:
-  A. a licensed point-in-time dense daily-price source/artifact to integrate
-     without violating the ecosystem DAG or public/private boundary; or
-  B. an explicit amendment accepting nine fundamentals-first panels.
-Do not weaken gates, fabricate prices, edit old ledger lines, overwrite dated
-artifacts, expose Vault-derived data, or mix universe fingerprints.
+The owner approved the M5 amendment on 2026-07-31: nine valid public SEC-only
+panels are the complete production set. Momentum and low_volatility are deferred
+to a separately licensed dense-price milestone and remain charged in lifetime
+trial accounting. Do not reopen M5 to weaken gates, fabricate prices, edit old
+ledger lines, overwrite dated artifacts, expose Vault-derived data, or mix
+universe fingerprints.
 
 If corrected peer JSON hashes are requested, first locate the exact off-git
 metadata export whose SHA-256 is
 b92ce934a22a9855ad73a77b3c637357a36e959af68efe893f989b90bb57cade;
 otherwise preserve the four listed hashes as historical 6bc96e3 evidence.
 
-After any authorized change, add an old-code regression proof, run full pytest
-and Ruff in every touched repo, dispatch any changed workflow and verify it
-green with gh run list, then report every M5 acceptance item as met/not met.
-Do not call M5 complete while exact 11 remains unresolved.
+Confirm the final branch is clean and synchronized, the current Grader full suite
+and Ruff are green, and the two recorded workflow runs remain successful. Treat
+M5 as complete under the owner-approved amendment. Any future dense-price work is
+a separate milestone and must preserve the public/private licensing boundary.
 ```
 
 ## 1. Safety first on the home computer
@@ -721,13 +720,13 @@ ground truth, real data, licensing, or live services contradicted one another.
    evidence, so their defining-pillar gates refuse. The implementation does
    not weaken safety gates.
 
-6. **The exact-eleven part of the SEC-only requirement conflicts with the
-   defining-pillar gates.** After the nine viable profiles exist, only the two
-   structural refusals remain pending. `cmd_freeze` now treats that unchanged
-   state as idempotent and exits 0, so the second-invocation half can be met.
-   It still cannot create `momentum` or `low_volatility` evidence from sparse
-   SEC prices. Exactly eleven files requires a dense licensed provider or an
-   explicit acceptance amendment.
+6. **The original exact-eleven SEC-only requirement conflicts with the
+   defining-pillar gates.** `cmd_freeze` safely refuses the two price-defined
+   profiles and treats the unchanged state as idempotent. The owner's explicit
+   2026-07-31 amendment resolves this M5 acceptance conflict by accepting the
+   nine valid public panels and deferring `momentum` and `low_volatility` to a
+   licensed dense-price milestone. The data limitation remains documented;
+   the gates remain intact.
 
 7. **The private archive contained zero-volume bars.** Step 3 said volume must
    be positive. The implementation treats a finite zero-volume bar as no
@@ -790,7 +789,7 @@ ground truth, real data, licensing, or live services contradicted one another.
 
 | Acceptance item | Status at handoff |
 |---|---|
-| Grader full-suite cadence around every commit | **Not fully met historically:** `6bc96e3` contained the Windows timing regression; final pre/post `a136252` suites are green |
+| Current final-HEAD Grader suite and historical cadence amendment | **Met under owner-approved amendment:** current final HEAD is green; the waived `6bc96e3` Windows timing regression remains disclosed |
 | Final Grader suite and Ruff | Met: 633 passed in 902.87s; Ruff clean |
 | Vault suite and fixture screen | Met |
 | Public spec | Met |
@@ -801,7 +800,7 @@ ground truth, real data, licensing, or live services contradicted one another.
 | SEC bulk regression set | Met; final CDN addition has 14 focused passes |
 | Vault panel one-read/exact-series test | Met |
 | Mixed-universe guard | Met |
-| SEC-only exactly 11 + second exit 0 | **Not met:** run `30633530115` proves exit 0/no write, but exactly 11 remains blocked; only nine honest panels exist |
+| Owner-amended nine-panel SEC-only production set + second exit 0 | **Met:** nine valid 1,000-row panels are committed; the two price-defined profiles safely refuse with no placeholders; run `30633530115` proves exit 0/no write |
 | N=250/500/1000 timing table | Met; measured rows are below and in `docs/UNIVERSE.md` |
 | N=1000 under 100 minutes | Met: 1,253.896 seconds (20.90 minutes) |
 | Grader workflow branch dispatch green | Met: `30632292769` and idempotence run `30633530115` both succeeded |
@@ -810,7 +809,7 @@ ground truth, real data, licensing, or live services contradicted one another.
 | Ecosystem and Vault docs | Met |
 | `docs/REVIEW_FEEDBACK.md` M5 commit-hash line | Met; refreshed through Grader `e9b4e92`, Vault `09e8b32`, Data `01eddae` |
 
-M5 is not complete at handoff.
+M5 is complete under the owner's explicit 2026-07-31 acceptance amendment and final-HEAD validation requirement.
 
 ## 12. Completed stage results
 
@@ -844,12 +843,11 @@ Staged-run provenance:
   `momentum` were explicitly refused because SEC-only prices lack their dense
   daily histories.
 
-## 13. Remaining work, in order
+## 13. Historical completion procedure (completed)
 
-The measured work described in Steps 4-8 below is now complete. Those steps
-are retained as reproducibility instructions only; verify the committed
-tables, hashes, and timing summary, then continue at Step 9 unless a rerun is
-specifically needed.
+The steps below are retained as reproducibility and audit instructions. Their
+implementation, measured runs, workflow verification, and owner-approved
+acceptance amendment are complete; they are not an active M5 work queue.
 
 ### Step 1: preserve and verify the continuation branch
 
@@ -1057,9 +1055,9 @@ gh run list --repo TylerJForstrom/Stock-Grader --limit 5
 Inspect the run until it is terminal. A dispatch request is not evidence; only
 a green completed run is.
 
-Be explicit about the known SEC-only profile refusal contradiction. Do not
-claim the exact-eleven/second-exit-zero criterion is met unless a dense,
-licensed source or an approved criterion change resolves it.
+Record the known SEC-only profile limitation without weakening gates. The
+owner-approved criterion change accepts nine public panels and the verified
+second-run no-write/exit-zero behavior; dense-price work is a later milestone.
 
 ### Step 12: final repository audit
 
@@ -1073,9 +1071,9 @@ git -C C:/Users/tforstrom/Desktop/Stock-Vault log --oneline --decorate -8
 git -C C:/Users/tforstrom/Desktop/Stock-Data log --oneline --decorate -8
 ```
 
-Verify the ledger chain one final time and report every acceptance item as met
-or not met with evidence. If the exact-eleven contradiction remains, M5
-remains incomplete.
+Verify the ledger chain one final time and report every amended acceptance item
+with evidence. Under the owner's 2026-07-31 amendment, the nine-panel public
+output and disclosed two-profile deferral complete M5 once final HEAD is green.
 
 ## 14. Cautions and known failure classes
 

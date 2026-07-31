@@ -37,7 +37,7 @@ specs predates this work.
 
 | | Milestone | What it buys | Effort |
 |---|---|---|---|
-| **M5** | [Widen the universe to 500–1000 names](majors/M5-wide-universe.md) | Statistical power. Top-10-of-82 is noise-dominated; cross-sectional power grows roughly with √breadth. | large |
+| **M5** | [Widen the universe to 500–1000 names](majors/M5-wide-universe.md) — **COMPLETE (owner-amended 2026-07-31)** | Statistical power. Top-10-of-82 is noise-dominated; cross-sectional power grows roughly with √breadth. Nine public SEC-only profiles are live; two dense-price profiles are explicitly deferred. | large |
 | **M1** | [Forward panel builder + scheduled backtest](majors/M1-forward-panel-and-backtest.md) | **The linchpin.** Nothing currently joins frozen panels to realized returns, so evidence accrues un-evaluated. | large |
 | **M3** | [Shadow paper arms for all 11 profiles](majors/M3-shadow-arms.md) | Eleven strategy arms instead of one, replayable retroactively from frozen panels. | large |
 | **M4** | [Auxiliary signal panels from vault collectors](majors/M4-auxiliary-signals.md) | Turns borrow/short-interest/recs/ETF archives into *evaluable signals* rather than archives. | large |

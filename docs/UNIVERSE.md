@@ -97,6 +97,16 @@ command can add `--vault C:/Users/tforstrom/Desktop/Stock-Vault` after the
 `freeze` subcommand to obtain the dense, hash-verified private archive and
 evaluate all profiles.
 
+On 2026-07-31 the owner approved nine public SEC-only profiles as the complete
+M5 production set: `all_weather`, `deep_value`, `dividend_growth`,
+`dividend_income`, `garp`, `growth`, `quality`, `turnaround`, and `value`.
+`momentum` and `low_volatility` are deferred to a separate milestone that must
+supply licensed point-in-time dense daily prices. This is an acceptance-scope
+decision, not a scoring relaxation: their defining-pillar and letter-floor
+gates remain unchanged, and no empty placeholder panel is written. A local
+`--vault` evaluation is private research only; Massive-derived outputs must not
+be committed to this public repository.
+
 ## Measured wide-universe rollout
 
 The three public SEC-float memberships were exercised in order on this Windows
@@ -203,9 +213,10 @@ incomparable percentiles, letters, and universe fingerprints.
 
 ## Statistical accounting
 
-The target of eleven profile panels per month declares eleven research arms,
-even when the SEC-only price gap prevents some files from being written. Every
-eventual evaluation must remain in the lifetime trial ledger. The
+The original pre-registration declares eleven lifetime research arms. The
+owner-approved M5 public monthly target is nine SEC-only panels; `momentum` and
+`low_volatility` are deferred, not cancelled. They therefore remain charged in
+the lifetime ledger and the existing `trials=11` record stays unchanged. The
 broader cross-section nevertheless buys substantially more power: the
 repository's null simulation estimates the expected maximum spurious IC over
 105 metrics at 0.306 for N=82 and 0.122 for N=500.
