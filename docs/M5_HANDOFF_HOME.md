@@ -178,15 +178,112 @@ M5 as complete under the owner-approved amendment. Any future dense-price work i
 a separate milestone and must preserve the public/private licensing boundary.
 ```
 
+## 0b. Running any command in this document on macOS or Linux
+
+This document was written on Windows and every command block below is
+PowerShell. The commands are correct, but three things must be translated or
+they fail — or worse, succeed in the wrong place.
+
+**Scratch paths.** `C:/tmp/whatever` is an *absolute* path on Windows and a
+*relative* one on POSIX: `Path("C:/tmp/m5-stage-250").is_absolute()` is `False`
+there, and the parts are `("C:", "tmp", "m5-stage-250")`. A stage run would
+therefore create a directory literally named `C:` **inside the public repo** and
+write scratch panels into it. Substitute a real scratch root everywhere a
+`C:/tmp/...` path appears:
+
+```bash
+SCRATCH="${TMPDIR:-/tmp}/m5"; mkdir -p "$SCRATCH"
+# ...then use "$SCRATCH/m5-stage-250" wherever the block says C:/tmp/m5-stage-250
+```
+
+**Line continuations.** PowerShell continues a line with a trailing backtick;
+`sh`/`zsh` use a trailing backslash. Translate every `` ` `` at end of line to `\`.
+
+**Interpreter.** Use the repo's virtualenv explicitly (`.venv/bin/python -m ...`)
+rather than a bare `python`: Homebrew's Python refuses `pip install -e .` outside
+a venv (PEP 668), and `/usr/bin/python3` is 3.9, below this project's floor.
+
+Everything else is portable: `data/cache.py` dispatches on `os.name`, no source
+file in any of the three repos hardcodes a `C:` path, and a forced-LF checkout
+reproduces every hash-locked artifact byte-for-byte (verified: the four universe
+artifacts, all 27 parquet panels, and every Stock-Data manifest). The one
+platform-specific harness, `scripts/measure_wide_freeze.py`, now dispatches its
+peak-RSS reading per platform instead of assuming Win32.
+
+## 0c. First-run setup on macOS
+
+Verified against a forced-LF checkout of all three repos (`core.autocrlf=false`,
+`core.eol=lf`): every hash-locked artifact reproduced byte-for-byte and all
+three suites passed (Grader 633, Vault 95, Data 38), so a Mac checkout starts
+from an identical state — `git status` comes up clean, with no line-ending noise.
+
+```bash
+# 1. Toolchain
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install python@3.12 ripgrep gh    # ripgrep is used by the handoff procedures
+
+# 2. GitHub access (all three remotes are SSH)
+ssh-keygen -t ed25519 -C 'tylerjamesforstrom@gmail.com'
+gh auth login --hostname github.com --git-protocol ssh --web
+gh ssh-key add ~/.ssh/id_ed25519.pub    # or paste it at github.com/settings/keys
+
+# 3. Clone
+mkdir -p ~/dev && cd ~/dev
+git clone git@github.com:TylerJForstrom/Stock-Grader.git
+git clone git@github.com:TylerJForstrom/Stock-Data.git
+git clone git@github.com:TylerJForstrom/Stock-Vault.git   # private; not needed for M5 work
+
+# 4. Per repo: a venv is REQUIRED, not a nicety
+#    Homebrew python refuses `pip install -e .` outside a venv (PEP 668), and
+#    /usr/bin/python3 is 3.9, below this project's requires-python floor.
+for r in Stock-Grader Stock-Data Stock-Vault; do
+  cd ~/dev/$r && python3.12 -m venv .venv && .venv/bin/python -m pip install -e '.[dev]'
+done
+
+# 5. Environment (add to ~/.zshrc)
+export STOCK_GRADER_CONTACT='tylerjamesforstrom@gmail.com'   # SEC User-Agent; see the warning below
+# Vault collectors only — the Grader needs none of these:
+# export MASSIVE_API_KEY=... FINNHUB_API_KEY=... ALPHAVANTAGE_API_KEY=...
+# ALPACA_PAPER_* stay GitHub-only: the paper trader runs in Actions, not locally.
+
+# 6. Verify before changing anything
+cd ~/dev/Stock-Grader
+shasum -a 256 config/universe_spec.json config/universe_liq*_2026-07-30.txt
+# expect bd02dccb…, b2005b1e…, da00b7d1…, 9d174b5b…
+.venv/bin/python -m pytest -q      # expect 633 passed (~20-25 min)
+.venv/bin/python -m ruff check .   # expect All checks passed!
+```
+
+**Set `STOCK_GRADER_CONTACT` before any networked run.** The workflow hard-fails
+without it, but the library does not: `SECClient` falls back to a placeholder
+User-Agent and logs nothing. A thousand rate-limited SEC requests plus a 1.33 GB
+bulk download under a placeholder identity is what SEC's automated-access policy
+exists to block, and the failure surfaces as an opaque 403 rather than as "you
+forgot the contact".
+
+**The cache is ~1.9 GB and does not travel.** It lives at
+`%LOCALAPPDATA%\stock-grader` on Windows and `~/.cache/stock-grader` on macOS
+(not `~/Library/Caches` — `data/cache.py` uses the XDG convention). Contents
+measured on the Windows box: 1,092 files / 1,872.7 MB, of which
+`bulk/companyfacts_2026-07-30.zip` is 1,327.2 MB. Either let the Mac re-download
+(20-40 min on home broadband; the archive is re-fetched on each new UTC day
+anyway) or copy the directory across first — the sidecar validates by size and
+digest, so a copied archive is accepted.
+
 ## 1. Safety first on the home computer
 
 The three repositories are:
 
-| Repository | Local path | Visibility |
+| Repository | Local path (Windows) | Visibility |
 |---|---|---|
 | Stock-Grader | `C:/Users/tforstrom/Desktop/Stock-Grader` | PUBLIC |
 | Stock-Vault | `C:/Users/tforstrom/Desktop/Stock-Vault` | PRIVATE; never make public |
 | Stock-Data | `C:/Users/tforstrom/Desktop/Stock-Data` | PUBLIC |
+
+On a Mac these live wherever they were cloned (`~/dev/<repo>` in the setup
+below). Paths in this document are Windows-absolute because that is where the
+work was done; translate them to your checkout root.
 
 Before doing anything else:
 

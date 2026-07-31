@@ -5,9 +5,13 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import sys
 import time
 from pathlib import Path
+
+if os.name != "nt":  # ctypes.WinDLL is Windows-only; resource is POSIX-only.
+    import resource
 
 import pandas as pd
 
@@ -15,7 +19,19 @@ from stock_grader import cli, pipeline
 
 
 def _peak_rss_bytes() -> int:
-    """Return this process's peak resident set on Windows."""
+    """Return this process's peak resident set, on whichever platform we are on.
+
+    The measurement harness has to run on the owner's Windows box and on a Mac,
+    so this dispatches rather than assuming Win32: ``ctypes.WinDLL`` does not
+    exist off Windows, and the call sits AFTER the freeze, which meant a Mac run
+    burned the whole twenty-minute stage and then crashed with no timing JSON.
+    """
+    if os.name != "nt":
+        # ru_maxrss is bytes on Darwin and kilobytes on Linux. Getting this
+        # backwards would silently misreport peak memory by 1024x.
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return int(usage) * (1024 if sys.platform.startswith("linux") else 1)
+
 
     class ProcessMemoryCountersEx(ctypes.Structure):
         _fields_ = [

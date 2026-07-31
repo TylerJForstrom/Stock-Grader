@@ -145,6 +145,15 @@ def compare_coverage_panels(
     }
 
 
+def _portable_path(path: Path) -> str:
+    """Repo-relative POSIX form when possible, so output compares across machines."""
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("narrow_panel", help="CSV or Parquet panel for the narrow universe")
@@ -164,8 +173,10 @@ def main(argv: list[str] | None = None) -> int:
         _read_panel(wide_path),
         allow_mismatch=args.allow_mismatch,
     )
-    result["narrow_path"] = str(narrow_path.resolve())
-    result["wide_path"] = str(wide_path.resolve())
+    # Relative, POSIX-form paths: an absolute path bakes one machine's home
+    # directory into an artifact that is meant to be comparable across machines.
+    result["narrow_path"] = _portable_path(narrow_path)
+    result["wide_path"] = _portable_path(wide_path)
     payload = json.dumps(result, indent=2, sort_keys=True, allow_nan=False)
     if args.output:
         Path(args.output).write_text(payload + "\n", encoding="utf-8")

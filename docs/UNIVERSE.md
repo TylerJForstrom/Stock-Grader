@@ -127,7 +127,9 @@ nine panels and returned success while explicitly refusing `low_volatility`
 and `momentum`: SEC-only prices do not contain the dense daily histories those
 profiles require. The graded fraction is calculated over the nine panels that
 passed their safety gates; the two absent panels are not silently counted as
-graded. Scratch panels and timing JSON stay outside git under `C:/tmp`.
+graded. Scratch panels and timing JSON stay outside git under `C:/tmp` on
+Windows, or `"${TMPDIR:-/tmp}/m5"` on macOS or Linux — note that a literal
+`C:/tmp/...` is a RELATIVE path on POSIX and would write inside this repo.
 
 For the same-date `all_weather` panels, widening from 82 to 1,000 names changed
 mean coverage from 0.763932 to 0.710718, median coverage from 0.784050 to
@@ -135,7 +137,7 @@ mean coverage from 0.763932 to 0.710718, median coverage from 0.784050 to
 The modest 1.022-percentage-point graded-fraction decline does not justify
 retuning `MIN_COVERAGE_TO_GRADE`; it remains 0.35 so M5 does not confound a
 universe change with a gate change. The exact diagnostic is preserved outside
-git at `C:/tmp/m5-coverage.json`.
+git at `C:/tmp/m5-coverage.json` (`"${TMPDIR:-/tmp}/m5/m5-coverage.json"` on POSIX).
 
 The continuation audit exported the exact 1,000 loaded snapshots, rather than
 reconstructing classifications from a frozen score panel. The metadata export

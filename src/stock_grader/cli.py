@@ -278,7 +278,7 @@ def _sec_provider_from_args(args: argparse.Namespace, ticker_count: int) -> SECP
     use_bulk = mode == "always" or (mode == "auto" and ticker_count >= 200 and not args.no_network)
     if not use_bulk:
         return SECProvider(client)
-    bulk_cache = Path(args.cache_dir).expanduser().resolve() / "bulk" if args.cache_dir else None
+    bulk_cache = Path(args.cache_dir).resolve() / "bulk" if args.cache_dir else None
     bulk = SECBulkFacts(client, cache_dir=bulk_cache)
     # Validate/download once per command, never inside the per-ticker exception boundary.
     bulk.ensure(refresh=bool(args.refresh))
@@ -311,7 +311,7 @@ def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
     providers: list[PriceProvider] = []
     if vault_root:
         vault_cache = (
-            Path(args.cache_dir).expanduser().resolve() / "vault" if args.cache_dir else None
+            Path(args.cache_dir).resolve() / "vault" if args.cache_dir else None
         )
         providers.append(VaultPriceProvider(VaultDataSource(vault_root), cache_dir=vault_cache))
     if mode == "auto":
@@ -1318,7 +1318,10 @@ def build_parser() -> argparse.ArgumentParser:
             "reconstructed dividends-per-share as a fallback for dividend metrics",
         )
         p.add_argument("--refresh", action="store_true", help="bypass the cache")
-        p.add_argument("--cache-dir")
+        # expanduser at the boundary: a POSIX shell only expands a bare leading
+        # ~, so --cache-dir=~/.cache/stock-grader arrives literal and two of the
+        # consumers below expanded it while the rest made a directory named "~".
+        p.add_argument("--cache-dir", type=lambda value: str(Path(value).expanduser()))
         p.add_argument("--contact", help="contact address sent to SEC in the User-Agent")
         p.add_argument(
             "--bulk-facts",

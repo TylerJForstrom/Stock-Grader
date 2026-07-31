@@ -82,9 +82,10 @@ def _run_mocked_harness(
         patch.setattr(measure_wide_freeze.pipeline, "_grade_from_matrix", fake_residual)
         patch.setattr(measure_wide_freeze.cli, "main", fake_cli_main)
         patch.setattr(measure_wide_freeze.time, "perf_counter", lambda: next(clock))
-        patch.setattr(measure_wide_freeze, "_peak_rss_bytes", lambda: 8192)
         patch.setattr(measure_wide_freeze.pd, "read_parquet", fake_read_parquet)
 
+        # _peak_rss_bytes is deliberately NOT patched: patching it out is what
+        # let a Windows-only implementation ship green on every platform.
         exit_code = measure_wide_freeze.main(
             [
                 "--universe",
@@ -125,7 +126,19 @@ def test_wide_freeze_harness_is_deterministic_and_propagates_exit_code(
         run_name="second",
     )
 
-    assert first == second
+    # Everything except the measured peak RSS must be byte-identical between
+    # runs. Peak RSS is a real reading of a real process, so it legitimately
+    # differs run to run; the previous version of this test stubbed it to a
+    # constant, which made the harness look deterministic AND hid the fact that
+    # the implementation was Windows-only.
+    def _without_rss(run):
+        exit_code, encoded, _stdout, read_profiles = run
+        payload = json.loads(encoded)
+        rss = payload.pop("peak_rss_bytes")
+        assert isinstance(rss, int) and rss > 0
+        return exit_code, payload, read_profiles
+
+    assert _without_rss(first) == _without_rss(second)
     exit_code, encoded, stdout, read_profiles = first
     assert exit_code == 7
     assert read_profiles == ["a_profile", "z_profile"]
@@ -148,6 +161,11 @@ def test_wide_freeze_harness_is_deterministic_and_propagates_exit_code(
         "total_seconds",
         "unresolved_cik_count",
     }
+    # The real peak RSS is whatever this process happens to be using, so pin
+    # every deterministic field exactly and require the measured one to be a
+    # plausible positive byte count.
+    measured_rss = payload.pop("peak_rss_bytes")
+    assert isinstance(measured_rss, int) and measured_rss > 0
     assert payload == {
         "exit_code": 7,
         "graded_fraction": 0.6,
@@ -156,7 +174,6 @@ def test_wide_freeze_harness_is_deterministic_and_propagates_exit_code(
         "panel_bytes": 5,
         "panel_files": 2,
         "panel_rows": 5,
-        "peak_rss_bytes": 8192,
         "profile_residual_mean_seconds": 2.0,
         "profile_residual_seconds": [1.5, 2.5],
         "profile_residual_total_seconds": 4.0,
@@ -165,6 +182,7 @@ def test_wide_freeze_harness_is_deterministic_and_propagates_exit_code(
         "total_seconds": 50.0,
         "unresolved_cik_count": 1,
     }
+    payload["peak_rss_bytes"] = measured_rss  # restored for the byte comparison
     expected_file = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     expected_stdout = "M5_TIMING=" + json.dumps(payload, sort_keys=True) + "\n"
     assert encoded == expected_file.encode()
