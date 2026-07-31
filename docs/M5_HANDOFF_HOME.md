@@ -222,6 +222,25 @@ before that day stopped producing filings — so a faithful rebuild of that date
 requires an archive that no longer exists. Treat the committed files as immutable
 historical inputs whose provenance is now documented, not as reproducible ones.
 
+### Review corrections (commit `b10d7f7`)
+
+An adversarial multi-agent review of the fix commit found four real defects in
+the fix itself. All are corrected, and all were verified against the real
+archive before and after:
+
+- The recency bound keyed on the XBRL `end` tag rather than the filing date.
+  Real filers repeat a stale `end` — AMD's 10-K filed 2026-02-04 still carries
+  `end=2024-06-28` — so 22 actively-filing issuers were dropped and labelled
+  dormant. It now gates on `filed`. AMD returns at rank 49; genuinely dormant
+  tags still go.
+- `duplicate_cik` asserted retentions that never happened (429 false records).
+  A CIK is now claimed only when a candidate is actually ranked, so a security
+  that fails the float check no longer takes its issuer's seat down with it.
+- The drop manifest listed seated tickers. `notes` is now separate from `drops`,
+  so drops are exclusions and are disjoint from the universe.
+- The workflow regression test could be satisfied by its own comment quoting
+  `if: always()`. It now matches the step key on a non-comment line.
+
 ### Known residual (not fixed, and not silently ignored)
 
 A scalar plausibility ceiling cannot separate every scale-error filing from a
