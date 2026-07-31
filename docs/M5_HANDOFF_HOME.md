@@ -112,9 +112,11 @@ green; the waiver resolves the acceptance item without erasing the evidence.
   files, but are not cross-machine reproduction hashes. Corrected hashes
   require the off-git metadata export with SHA-256
   `b92ce934a22a9855ad73a77b3c637357a36e959af68efe893f989b90bb57cade`.
-- The workflow commit step no longer uses `if: always()`, so failed freezes
-  cannot publish partial panels. Its retry fetches/rebases/pushes only the
-  exact triggering branch.
+- ~~The workflow commit step no longer uses `if: always()`, so failed freezes
+  cannot publish partial panels.~~ **Reverted 2026-07-31 — this reasoning was
+  wrong and the change was a data-loss bug. See §0d.** Its retry
+  fetches/rebases/pushes only the exact triggering branch, which was correct and
+  is retained.
 - Old-code proofs were captured: the timing regression failed on Windows CRLF;
   the peer artifact regression failed on absolute-path/native-newline output;
   and the workflow regression failed while `if: always()` was restored.
@@ -177,6 +179,66 @@ and Ruff are green, and the two recorded workflow runs remain successful. Treat
 M5 as complete under the owner-approved amendment. Any future dense-price work is
 a separate milestone and must preserve the public/private licensing boundary.
 ```
+
+## 0d. Audit corrections (2026-07-31, branch `fix/m5-audit-defects`)
+
+An independent audit of `codex/m5-wide-universe` confirmed six high-severity
+defects. All six are fixed on `fix/m5-audit-defects`, each with a regression
+test proven to fail on the pre-fix code. **This section overrides anything
+earlier in this document that describes the pre-fix behaviour as intended.**
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | The universe rule was not point-in-time: candidates were screened through TODAY's exchange listing directory and misses were silently dropped, so anything delisted after the as-of date vanished. | `FoundryDataSource.symbol_directory` takes `asof` and replays the `nasdaqlisted`/`otherlisted` event stream backward, as `universe()` already did. A candidate with no directory row is still excluded — Stock-Data drops test issues at write time, so "missing" cannot be read as "eligible" — but it is now recorded, not silent. |
+| 2 | Nothing compared the SEC bulk archive's generation to the as-of date. | `assert_archive_covers_asof` refuses an archive generated before EDGAR stopped accepting filings dated `asof` (floor `asof+1` 03:00 UTC, conservative against the 22:00 ET close) or more than 7 days after it. |
+| 3 | The rank key accepted absurd and ancient values. | Spec-driven `max_public_float_usd` (default $10T) and `max_observation_age_days` (default 730), applied to the observation that would actually be selected, with every rejection logged and manifested. |
+| 4 | Primary listings vanished with no warning or drop manifest. | Builds emit `universe_drops_<asof>.json` accounting for every exclusion; a shell CIK with no `dei` taxonomy falls back to the issuer's real filing CIK; an additive `issuer_ticker_rule` seats common equity ahead of notes and preferred series. |
+| 5 | `monthly-freeze.yml` lost `if: always()` on Commit. | Restored on Commit and on the wide freeze. |
+| 6 | `SECBulkFacts` compared only byte length on cache reuse. | Every reuse path re-hashes and compares against the recorded sha256, memoised per process. |
+
+### Why the `if: always()` removal (§"Provenance and regression closure") was wrong
+
+The stated justification — "so failed freezes cannot publish partial panels" —
+does not hold against the code. `cmd_freeze` refuses a profile **before** writing
+its parquet and writes each panel atomically (`tmp` + `replace`), so a partial
+panel does not exist for the commit step to publish. What the removal did cause
+is real: both freeze steps write their valid panels to disk before the alarm
+policy runs, and all nine wide profiles now have a prior panel, so any refusal is
+a regression and exits 2 — discarding every good panel from that run. Frozen
+panels are point-in-time evidence that cannot be backfilled. The run still
+reports red; that is the alarm.
+
+### The committed 2026-07-30 artifacts are not rebuildable, and were not rewritten
+
+The four hash-locked artifacts still hash to their registered values and were not
+regenerated. But they cannot be reproduced, and this is now provable rather than
+suspected: their `source_sha256` `21eae853…` derives from bulk archive SHA
+`5d69b5a1…`, which is the **2026-07-28** generation, while the files declare
+`asof 2026-07-30`. Rebuilding from the 2026-07-30 archive yields a different
+N=1000 set (ACA out at rank 1001, APLD in at 792) and `source_sha256`
+`c078ac25…`. Under the new §2 guard the 2026-07-30 archive is itself inadmissible
+for `asof 2026-07-30` — it was generated 16:18 UTC, about noon Eastern, hours
+before that day stopped producing filings — so a faithful rebuild of that date
+requires an archive that no longer exists. Treat the committed files as immutable
+historical inputs whose provenance is now documented, not as reproducible ones.
+
+### Known residual (not fixed, and not silently ignored)
+
+A scalar plausibility ceiling cannot separate every scale-error filing from a
+real megacap. The ceiling removes Cabot Corp ($4.43 QUADRILLION, previously
+**rank 1**) and Fresenius ($16.5T on a 2016 observation), and the recency bound
+removes 13 stale rankings. Nine filings remain in the $1.9T–$6.8T band — OLED,
+ONTO, TTMI, SKY, NOVT, MGRC, ENVA, RENX, CLSK — each roughly 1000x its true
+float, and that band overlaps genuine megacaps (NVDA $4.00T, MSFT $3.60T, AAPL
+$3.25T). Separating them needs a second signal, such as an intra-issuer
+consistency check against the filer's own float history or a cross-check against
+`us-gaap` revenue. That is a deliberate follow-up, not an oversight.
+
+BRK-A still seats ahead of BRK-B: both are described as common stock by Nasdaq
+Trader, so no public-domain field distinguishes them. The displacement is now
+recorded in the drop manifest rather than silent. A share-count or price
+tiebreak would need the private vault archive, which cannot enter a public
+universe under the licensing split.
 
 ## 0b. Running any command in this document on macOS or Linux
 
