@@ -144,7 +144,16 @@ minimum/size-band grid. `Maximum` stayed 30 in every row. “Relaxed” counts
 targets that had to leave the requested size band; “outside” counts selected
 known-cap peers outside it.
 
-| Minimum | Size band | Peer count p25 / median / p75 | At maximum | Relaxed targets | Outside peers | Insufficient targets | JSON SHA-256 |
+The JSON hashes below identify historical raw outputs produced by `6bc96e3`.
+That version embedded an absolute snapshot-table path and used the host newline
+convention, so the hashes identify those archived files rather than a
+cross-machine reproduction. The current script emits canonical LF UTF-8,
+records only the stable input filename, and adds the input table SHA-256.
+Corrected artifact hashes require rerunning against the off-git metadata export
+whose SHA-256 is `b92ce934a22a9855ad73a77b3c637357a36e959af68efe893f989b90bb57cade`;
+the measured values below do not change.
+
+| Minimum | Size band | Peer count p25 / median / p75 | At maximum | Relaxed targets | Outside peers | Insufficient targets | Historical JSON SHA-256 (`6bc96e3`) |
 |---:|---:|---:|---:|---:|---:|---:|---|
 | 8 | 5x | 11 / 16 / 30 | 16/50 | 0/50 | 0/937 | 0/50 | `b4508904a1d133c96e0bc5a6ebb2417b4e3fdfe45557718fe28034dc98d3faf4` |
 | 12 | 5x | 15 / 27 / 30 | 24/50 | 3/50 | 45/1,137 | 0/50 | `6cc83618707d544c9a21c1a11efc6ec05abf175a3d5b44906c6cc391ece349e2` |

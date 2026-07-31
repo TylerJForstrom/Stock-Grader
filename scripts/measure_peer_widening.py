@@ -13,6 +13,7 @@ This is research infrastructure, not investment advice or a recommendation about
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from collections import Counter
@@ -421,18 +422,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", help="optional JSON output path; stdout is always emitted")
     args = parser.parse_args(argv)
 
+    snapshot_table = Path(args.snapshot_table)
     result = measure_peer_widening(
-        load_snapshots(args.snapshot_table),
+        load_snapshots(snapshot_table),
         sample_size=args.sample_size,
         seed=args.seed,
         minimum=args.minimum,
         maximum=args.maximum,
         size_band_multiple=args.size_band_multiple,
     )
-    result["snapshot_table"] = str(Path(args.snapshot_table).resolve())
+    result["snapshot_table"] = snapshot_table.name
+    result["snapshot_table_sha256"] = hashlib.sha256(
+        snapshot_table.read_bytes()
+    ).hexdigest()
     payload = json.dumps(result, indent=2, sort_keys=True, allow_nan=False)
     if args.output:
-        Path(args.output).write_text(payload + "\n", encoding="utf-8")
+        Path(args.output).write_bytes((payload + "\n").encode("utf-8"))
     print(payload)
     return 0
 

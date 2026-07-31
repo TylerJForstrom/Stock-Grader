@@ -151,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     measurements["exit_code"] = exit_code
 
     encoded = json.dumps(measurements, indent=2, sort_keys=True, allow_nan=False) + "\n"
-    Path(args.timing_output).write_text(encoded, encoding="utf-8")
+    Path(args.timing_output).write_bytes(encoded.encode("utf-8"))
     print("M5_TIMING=" + json.dumps(measurements, sort_keys=True, allow_nan=False))
     return exit_code
 

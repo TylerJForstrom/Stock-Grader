@@ -55,7 +55,6 @@ jobs:
             --price-provider sec
 
       - name: Commit
-        if: always()
         run: |
           if [ "$GITHUB_REF_TYPE" != "branch" ] || [ -z "$GITHUB_REF_NAME" ]; then
             echo "monthly-freeze can only commit to the branch that triggered the run" >&2

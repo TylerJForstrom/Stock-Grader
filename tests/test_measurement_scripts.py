@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import date
 
 import pandas as pd
@@ -8,6 +10,9 @@ from scripts.measure_peer_widening import (
     load_snapshots,
     measure_peer_widening,
     measure_sector_key_concentration,
+)
+from scripts.measure_peer_widening import (
+    main as peer_widening_main,
 )
 from scripts.measure_wide_coverage import compare_coverage_panels
 
@@ -139,6 +144,44 @@ def test_peer_snapshot_csv_preserves_leading_zero_sic(tmp_path) -> None:
     stats = measure_sector_key_concentration([snapshot])
     assert stats["keys"]["sic2"]["largest_group_label"] == "01"
     assert stats["keys"]["sic3"]["largest_group_label"] == "010"
+
+
+def test_peer_widening_cli_output_is_path_and_newline_stable(tmp_path) -> None:
+    frame = pd.DataFrame(
+        {
+            "ticker": ["ALPHA", "BETA", "GAMMA"],
+            "asof": ["2026-07-30"] * 3,
+            "sic": [3571] * 3,
+            "sector": ["general"] * 3,
+            "market_cap": [100.0, 200.0, 300.0],
+            "fundamentals_available": [True] * 3,
+        }
+    )
+    payloads: list[bytes] = []
+    source_bytes = b""
+    for directory in (tmp_path / "first", tmp_path / "second"):
+        directory.mkdir()
+        source = directory / "snapshots.csv"
+        output = directory / "measurement.json"
+        frame.to_csv(source, index=False)
+        source_bytes = source.read_bytes()
+        assert peer_widening_main(
+            [
+                str(source),
+                "--sample-size", "2",
+                "--minimum", "2",
+                "--maximum", "2",
+                "--output", str(output),
+            ]
+        ) == 0
+        payloads.append(output.read_bytes())
+
+    assert payloads[0] == payloads[1]
+    assert payloads[0].endswith(b"\n")
+    assert b"\r\n" not in payloads[0]
+    payload = json.loads(payloads[0])
+    assert payload["snapshot_table"] == "snapshots.csv"
+    assert payload["snapshot_table_sha256"] == hashlib.sha256(source_bytes).hexdigest()
 
 
 @pytest.mark.parametrize(

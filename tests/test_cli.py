@@ -966,4 +966,5 @@ def test_monthly_freeze_workflow_retries_the_triggering_branch() -> None:
         assert required in commit_step
     assert commit_step.index(fetch) < commit_step.index(rebase) < commit_step.index(push)
     assert "git pull --rebase origin main" not in commit_step
+    assert "if: always()" not in commit_step
     assert "if git push;" not in commit_step
