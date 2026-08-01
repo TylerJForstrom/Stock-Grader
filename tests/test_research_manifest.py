@@ -123,3 +123,68 @@ def test_unchained_line_after_the_chain_begins_is_a_splice(tmp_path) -> None:
 
     assert verify_line(spliced)
     assert not verify_chain([*records, spliced])
+
+
+def _synthetic(experiment, sharpe, **kw):
+    from stock_grader.research_manifest import ResearchRecord
+
+    return ResearchRecord(
+        experiment=experiment, market="us_equities", symbols=kw.get("symbols", []),
+        targets=[], horizons=[1], trials=1, metrics={"per_period_sharpe": sharpe},
+        costs={}, benchmark="none", leakage_controls="PASS", gate_passed=False,
+        verdict="NO EDGE",
+    )
+
+
+def test_retracted_records_are_excluded_from_trial_accounting(tmp_path):
+    """A retracted trial must stop deflating every future result.
+
+    Twelve synthetic CLI-test panels sit in the live ledger with an identical
+    Sharpe of 2.83. The ledger is append-only, so they cannot be deleted — a
+    later record names them and the collector skips them.
+    """
+    from stock_grader.research_manifest import (
+        RETRACTION_EXPERIMENT,
+        append_record,
+        load_manifest,
+        retracted_hashes,
+        trial_sharpes,
+        verify_chain,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, _synthetic("backtest:synthetic", 2.8284271247461894))
+    append_record(ledger, _synthetic("backtest:real", 0.31))
+    records = load_manifest(ledger)
+    assert sorted(trial_sharpes(records)) == [0.31, 2.8284271247461894]
+
+    junk = records[0]["integrity_sha256"]
+    append_record(
+        ledger,
+        _synthetic(RETRACTION_EXPERIMENT, None, symbols=[junk]),
+    )
+    records = load_manifest(ledger)
+
+    assert retracted_hashes(records) == {junk}
+    assert trial_sharpes(records) == [0.31], "the retracted trial must not deflate"
+    # The retraction is itself chained, so the exclusion stays auditable.
+    assert verify_chain(records)
+    assert len(records) == 3, "retraction appends; it never removes"
+
+
+def test_repeated_measurement_of_one_experiment_is_one_trial(tmp_path):
+    """Re-running one profile monthly is that trial measured again, not a new one.
+
+    Counting each month separately inflates the deflation benchmark until no
+    real edge could clear it.
+    """
+    from stock_grader.research_manifest import append_record, load_manifest, trial_sharpes
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, _synthetic("backtest:all_weather", 0.20))
+    append_record(ledger, _synthetic("backtest:all_weather", 0.28))
+    append_record(ledger, _synthetic("backtest:all_weather", 0.33))
+    append_record(ledger, _synthetic("backtest:value", 0.11))
+
+    sharpes = trial_sharpes(load_manifest(ledger))
+    assert sorted(sharpes) == [0.11, 0.33], "collapse to the latest look per experiment"

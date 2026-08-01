@@ -77,7 +77,7 @@ source = ["stock_grader"]
 [tool.coverage.report]
 # This is a blocking ratchet set below the measured 59% baseline. Raise it as the new research,
 # valuation, and CLI surfaces gain tests; never lower it to merge a change.
-fail_under = 55
+fail_under = 70
 show_missing = true
 skip_covered = true
 

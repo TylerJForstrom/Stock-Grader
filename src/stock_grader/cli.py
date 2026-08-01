@@ -913,6 +913,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         current_commit,
         load_manifest,
     )
+    from .research_manifest import trial_sharpes as trial_sharpes_from
     from .significance import assess_edge, per_period_sharpe
 
     net_spreads = [p.net_spread for p in report.periods]
@@ -921,13 +922,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     # Only finite trial Sharpes deflate: a null/NaN sharpe (a panel too short to
     # compute one) is a trial with no usable statistic, and letting it through
     # makes stdev(trial_sharpes) NaN and therefore DSR=NaN on every future run.
-    trial_sharpes = [
-        record["metrics"]["per_period_sharpe"]
-        for record in prior
-        if isinstance(record.get("metrics"), dict)
-        and isinstance(record["metrics"].get("per_period_sharpe"), (int, float))
-        and math.isfinite(record["metrics"]["per_period_sharpe"])
-    ]
+    trial_sharpes = trial_sharpes_from(prior)
     this_sharpe = per_period_sharpe(net_spreads) if len(net_spreads) >= 2 else float("nan")
     if math.isfinite(this_sharpe):
         trial_sharpes.append(this_sharpe)
@@ -1160,6 +1155,71 @@ def cmd_freeze(args: argparse.Namespace) -> int:
             "[yellow]those profiles have never frozen a panel on this universe "
             "(structural, not a regression); the run stays green[/yellow]"
         )
+    return 0
+
+
+def cmd_ledger_retract(args: argparse.Namespace) -> int:
+    """Append a record that excludes earlier lines from trial accounting.
+
+    The ledger is append-only and hash-chained, so a line that should never have
+    counted as a trial cannot be deleted — deleting it is exactly the fraud the
+    chain exists to expose. It is retracted by a later line that names it, and
+    that line is itself hashed and chained, so the exclusion is as auditable as
+    the thing it excludes.
+
+    This exists because twelve of the live ledger's records are synthetic
+    CLI-test panels (score=index, forward_return=index/1000) whose identical
+    Sharpe of 2.83 would otherwise set the dispersion that every future real
+    result is deflated against.
+    """
+    from .research_manifest import (
+        RETRACTION_EXPERIMENT,
+        ResearchRecord,
+        append_record,
+        current_commit,
+        load_manifest,
+        verify_chain,
+    )
+
+    ledger_path = Path(args.ledger)
+    if not ledger_path.exists():
+        console.print(f"[red]no ledger at {ledger_path}[/red]")
+        return 2
+    records = load_manifest(ledger_path)
+    if not verify_chain(records):
+        console.print(
+            f"[red]{ledger_path} does not verify; refusing to append to a broken chain[/red]"
+        )
+        return 2
+    known = {str(r.get("integrity_sha256", "")): r for r in records}
+    requested = list(dict.fromkeys(args.sha256))
+    missing = [h for h in requested if h not in known]
+    if missing:
+        console.print(f"[red]not in {ledger_path}: {', '.join(missing)}[/red]")
+        return 2
+    already = [h for h in requested if known[h].get("experiment") == RETRACTION_EXPERIMENT]
+    if already:
+        console.print(
+            f"[red]refusing to retract a retraction record: {', '.join(already)}[/red]"
+        )
+        return 2
+    record = ResearchRecord(
+        experiment=RETRACTION_EXPERIMENT,
+        market="us_equities",
+        symbols=requested,
+        targets=[],
+        horizons=[],
+        trials=0,
+        metrics={},
+        costs={},
+        benchmark="none",
+        leakage_controls="n/a",
+        gate_passed=False,
+        verdict=args.reason,
+        code_commit=current_commit(),
+    )
+    append_record(ledger_path, record)
+    console.print(f"retracted {len(requested)} record(s) in {ledger_path}: {args.reason}")
     return 0
 
 
@@ -1443,6 +1503,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_metrics = sub.add_parser("metrics", help="list registered metrics")
     p_metrics.add_argument("--pillar")
     p_metrics.set_defaults(func=cmd_metrics)
+
+    p_retract = sub.add_parser(
+        "ledger-retract",
+        help="append a record retracting earlier ledger lines from trial accounting",
+    )
+    p_retract.add_argument(
+        "sha256",
+        nargs="+",
+        help="integrity_sha256 of each record to retract",
+    )
+    p_retract.add_argument("--ledger", default="research_ledger.jsonl")
+    p_retract.add_argument(
+        "--reason",
+        required=True,
+        help="why these records are not hypotheses; recorded verbatim as the verdict",
+    )
+    p_retract.set_defaults(func=cmd_ledger_retract)
 
     return parser
 
