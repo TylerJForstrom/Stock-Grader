@@ -67,7 +67,10 @@ stock_grader = ["py.typed", "config/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." puts the repo root on sys.path so `from scripts import ...` resolves. CI runs
+# bare `pytest`, which unlike `python -m pytest` does NOT prepend the cwd, so the
+# measurement-script tests imported fine locally and had never once run in CI.
+pythonpath = ["src", "."]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.coverage.run]
