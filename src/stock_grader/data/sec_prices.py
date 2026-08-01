@@ -50,7 +50,7 @@ import time
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import numpy as np
 import pandas as pd
@@ -151,6 +151,18 @@ def _atomic_parquet_write(frame: pd.DataFrame, destination: Path) -> None:
                 log.debug("could not remove temporary insider cache %s", temporary)
 
 
+class _InsiderClient(Protocol):
+    """The one method this provider needs from an SEC client.
+
+    Typed as a Protocol rather than `object` so the hardened-surface type check
+    can actually see the call at :meth:`_fetch_quarter`; `object | None` made
+    `self._client.get_bytes(url)` unverifiable, which is the opposite of what a
+    blocking gate over this file is for.
+    """
+
+    def get_bytes(self, url: str) -> bytes | None: ...
+
+
 class SECInsiderPriceProvider:
     """Sparse share prices from SEC Form 345 insider-transaction data sets.
 
@@ -171,7 +183,7 @@ class SECInsiderPriceProvider:
         timeout: float = 180.0,
         failure_threshold: int = 2,
         cooldown_seconds: float = 60.0,
-        client: object | None = None,
+        client: _InsiderClient | None = None,
     ) -> None:
         self.cache_dir = Path(cache_dir or default_cache_dir("insider")).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)

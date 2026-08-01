@@ -478,7 +478,7 @@ def _quasi_diagonal(links: np.ndarray, n: int) -> list[int]:
     links = links.astype(int)
     order = pd.Series([links[-1, 0], links[-1, 1]])
     while order.max() >= n:
-        order.index = range(0, order.shape[0] * 2, 2)
+        order.index = pd.RangeIndex(0, order.shape[0] * 2, 2)
         clustered = order[order >= n]
         i: pd.Index = clustered.index
         j: np.ndarray = clustered.to_numpy() - n
