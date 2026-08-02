@@ -1011,3 +1011,87 @@ def test_monthly_freeze_commits_panels_even_when_a_profile_refuses() -> None:
     assert has_always_guard(step_block("Freeze wide")), (
         "the wide freeze must still run when the narrow freeze refused"
     )
+
+
+def test_build_panel_json_format_reports_readiness(tmp_path, capsys):
+    """The workflow reads `ready_for_backtest` from stdout; nothing matured -> 0."""
+    from tests.test_panel import SIGNALS, _build_market_vault, _healthy_rows, _write_frozen
+
+    vault_root = _build_market_vault(tmp_path / "vault")
+    frozen = tmp_path / "frozen"
+    # Signal on the archive's last day: entry never arrives, nothing matures.
+    _write_frozen(frozen, date(2026, 9, 10), _healthy_rows())
+    del SIGNALS  # imported for parity with test_panel fixtures; unused here
+
+    exit_code = cli.main(
+        [
+            "build-panel",
+            "--profile",
+            "all_weather",
+            "--frozen-root",
+            str(frozen),
+            "--vault",
+            str(vault_root),
+            "--out",
+            str(tmp_path / "out"),
+            "--horizon-days",
+            "5",
+            "--format",
+            "json",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready_for_backtest"] is False
+    assert payload["matured_signal_dates"] == []
+    assert not (tmp_path / "out" / "all_weather.parquet").exists()
+    assert (tmp_path / "out" / "all_weather.build.json").exists()
+
+
+def test_ledger_retract_appends_and_keeps_chain_valid(tmp_path):
+    from stock_grader.research_manifest import (
+        ResearchRecord,
+        append_record,
+        load_manifest,
+        verify_chain,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(
+        ledger,
+        ResearchRecord(
+            experiment="backtest:junk.csv",
+            market="us_equities",
+            symbols=[],
+            targets=[],
+            horizons=[1],
+            trials=1,
+            metrics={"per_period_sharpe": 2.83},
+            costs={},
+            benchmark="none",
+            leakage_controls="PASS",
+            gate_passed=False,
+            verdict="NO EDGE",
+        ),
+    )
+    junk_hash = load_manifest(ledger)[0]["integrity_sha256"]
+
+    assert (
+        cli.main(
+            ["ledger-retract", junk_hash, "--ledger", str(ledger), "--reason", "synthetic fixture"]
+        )
+        == 0
+    )
+    records = load_manifest(ledger)
+    assert len(records) == 2
+    assert records[-1]["experiment"] == "ledger:retraction"
+    assert records[-1]["symbols"] == [junk_hash]
+    assert verify_chain(records)
+
+    # Refusals: unknown hash, and retracting a retraction.
+    assert cli.main(["ledger-retract", "f" * 64, "--ledger", str(ledger), "--reason", "x"]) == 2
+    retraction_hash = records[-1]["integrity_sha256"]
+    assert (
+        cli.main(["ledger-retract", retraction_hash, "--ledger", str(ledger), "--reason", "x"])
+        == 2
+    )

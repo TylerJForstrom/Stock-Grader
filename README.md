@@ -17,6 +17,8 @@ substitute for reading the filings.
 | Compare all investment profiles | `stock-grader consensus` | CLI |
 | Build a peer/evidence/valuation dossier | `stock-grader research` | CLI + Python API |
 | Evaluate a frozen historical score panel | `stock-grader backtest` | CLI + Python API |
+| Join frozen panels to realized returns | `stock-grader build-panel` | CLI |
+| Retract ledger records from trial accounting | `stock-grader ledger-retract` | CLI |
 | Inspect registered methods and metrics | `stock-grader methods`, `metrics` | CLI |
 | Deterministic comparable-company selection | `stock_grader.peers` | Python API + `research --peer-mode auto` |
 | Scenario and reverse DCF primitives | `stock_grader.valuation` | Python API + research dossier |

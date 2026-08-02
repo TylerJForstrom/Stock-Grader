@@ -1158,6 +1158,103 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_build_panel(args: argparse.Namespace) -> int:
+    """Join frozen panels to realized returns and emit a backtest-ready panel.
+
+    Exit codes are the workflow contract — ``main()`` swallows exceptions into
+    exit 1, so gates RETURN rather than raise:
+
+    * 0 — built (or nothing matured yet, which is a structurally expected state
+      for months after a fresh freeze; a red job for it would train the owner to
+      ignore the failure email, the only alerting this ecosystem has).
+    * 2 — refused: stale vault, dead freeze clock, backfilled signal dates, or
+      too many unresolved rows.
+    """
+    from .data.vault import VaultDataSource
+    from .panel import (
+        PanelBuildConfig,
+        PanelBuildError,
+        archive_to_vault,
+        build_panel,
+        sidecar_payload,
+        write_panel,
+    )
+
+    config = PanelBuildConfig(
+        horizon_days=args.horizon_days,
+        min_cross_section=args.min_cross_section,
+        min_periods=args.min_periods,
+        max_eod_lag_days=args.max_eod_lag_days,
+        max_freeze_age_days=args.max_freeze_age_days,
+        include_ungraded=args.include_ungraded,
+        max_unresolved_fraction=args.max_unresolved_fraction,
+        allow_backfilled_panels=args.allow_backfilled_panels,
+    )
+    vault = VaultDataSource(args.vault, verify_hashes=not args.no_verify_hashes)
+    foundry = None
+    if args.foundry:
+        from .data.foundry import FoundryDataSource
+
+        if args.foundry.startswith(("http://", "https://")):
+            foundry = FoundryDataSource(url_base=args.foundry)
+        else:
+            foundry = FoundryDataSource(root=args.foundry)
+
+    try:
+        result = build_panel(Path(args.frozen_root), args.profile, vault, foundry, config)
+    except PanelBuildError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
+
+    if result.refusal is not None:
+        console.print(f"[red]refusing to build: {result.refusal}[/red]")
+        return 2
+
+    if not result.matured_signal_dates:
+        _, sidecar = write_panel(result, Path(args.out), args.profile, config)
+        if args.format == "json":
+            print(to_json(sidecar_payload(result, args.profile, config)))
+        else:
+            console.print(
+                "no frozen panel has matured yet (needs a signal date whose entry day "
+                f"+ {config.horizon_days} trading days are archived); wrote {sidecar}"
+            )
+        return 0
+
+    if result.unresolved_fraction > config.max_unresolved_fraction:
+        console.print(
+            f"[red]{result.unresolved_rows} unresolved row(s) "
+            f"({result.unresolved_fraction:.1%}) exceed the "
+            f"--max-unresolved-fraction budget of {config.max_unresolved_fraction:.1%}: "
+            f"{', '.join(result.unresolved_tickers)}[/red]"
+        )
+        return 2
+
+    panel_path, sidecar = write_panel(result, Path(args.out), args.profile, config)
+    if panel_path is not None and args.archive_dir:
+        archive_to_vault(
+            panel_path, sidecar, Path(args.archive_dir), args.profile, date.today()
+        )
+    if args.format == "json":
+        print(to_json(sidecar_payload(result, args.profile, config)))
+    else:
+        console.print(
+            f"built {args.profile}: {sum(p.kept for p in result.periods)} rows across "
+            f"{len(result.periods)} period(s), {result.qualifying_periods} qualifying, "
+            f"ready_for_backtest={result.ready_for_backtest}"
+        )
+        for p in result.periods:
+            console.print(
+                f"  {p.signal_date} [{p.return_start}..{p.return_end}] kept={p.kept} "
+                f"ungraded={p.ungraded_dropped} no_start={p.no_start_price_dropped} "
+                f"delisted={p.resolved_delisted_archive} terminal="
+                f"{p.resolved_last_listed_close} splits="
+                f"{p.split_adjusted_foundry + p.split_adjusted_reconstructed} "
+                f"unresolved={p.unresolved_dropped}"
+            )
+    return 0
+
+
 def cmd_ledger_retract(args: argparse.Namespace) -> int:
     """Append a record that excludes earlier lines from trial accounting.
 
@@ -1503,6 +1600,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_metrics = sub.add_parser("metrics", help="list registered metrics")
     p_metrics.add_argument("--pillar")
     p_metrics.set_defaults(func=cmd_metrics)
+
+    p_build = sub.add_parser(
+        "build-panel",
+        help="join frozen panels to realized returns for the backtest evaluator",
+    )
+    p_build.add_argument("--profile", required=True, choices=profile_names())
+    p_build.add_argument("--frozen-root", default="frozen_scores")
+    p_build.add_argument(
+        "--vault",
+        required=True,
+        help="local Stock-Vault clone (the source is local-clone-only by design)",
+    )
+    p_build.add_argument("--foundry", help="Stock-Data clone or raw URL, for split confirmation")
+    p_build.add_argument("--out", default="build/panels")
+    p_build.add_argument(
+        "--archive-dir", help="when set, copy the panel into this vault dataset root"
+    )
+    p_build.add_argument("--horizon-days", type=_positive_int, default=21)
+    p_build.add_argument("--min-cross-section", type=_positive_int, default=20)
+    p_build.add_argument("--min-periods", type=_positive_int, default=3)
+    p_build.add_argument("--max-eod-lag-days", type=_positive_int, default=5)
+    p_build.add_argument("--max-freeze-age-days", type=_positive_int, default=45)
+    p_build.add_argument("--max-unresolved-fraction", type=float, default=0.02)
+    p_build.add_argument("--include-ungraded", action="store_true")
+    p_build.add_argument("--allow-backfilled-panels", action="store_true")
+    p_build.add_argument("--no-verify-hashes", action="store_true")
+    p_build.add_argument("--format", choices=("text", "json"), default="text")
+    p_build.set_defaults(func=cmd_build_panel)
 
     p_retract = sub.add_parser(
         "ledger-retract",

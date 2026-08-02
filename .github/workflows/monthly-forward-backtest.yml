@@ -1,0 +1,114 @@
+name: monthly-forward-backtest
+
+# The evidence loop: join frozen panels to realized returns and evaluate them.
+# Runs on the 6th, after the 5th's vault collector commit (23:22 UTC weekdays),
+# so the freshest EOD day is at most one session old when maturity is checked.
+#
+# The built panels embed per-row returns derived from Massive free-tier closes
+# and stockanalysis.com delisted histories (both restricted), so panel files are
+# archived to the PRIVATE vault and only aggregate statistics — the backtest
+# markdown, the build accounting, the ledger line — are committed here.
+
+on:
+  schedule:
+    - cron: "41 2 6 * *"
+  workflow_dispatch:
+    inputs:
+      profiles:
+        description: "space-separated profiles (blank = every frozen profile)"
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: monthly-forward-backtest
+
+jobs:
+  forward:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the private vault (EOD archive + panel archive)
+        uses: actions/checkout@v4
+        with:
+          repository: TylerJForstrom/Stock-Vault
+          token: ${{ secrets.VAULT_REPO_TOKEN }}
+          path: vault
+      - name: Check out the public foundry (split confirmation)
+        uses: actions/checkout@v4
+        with:
+          repository: TylerJForstrom/Stock-Data
+          path: foundry
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+
+      - name: Refuse to append to a broken ledger chain
+        run: >-
+          python -c "import sys;
+          from stock_grader.research_manifest import load_manifest, summarize_manifest;
+          s = summarize_manifest(load_manifest('research_ledger.jsonl'));
+          print(s);
+          sys.exit(0 if s['all_integrity_ok'] and s['chain_ok'] else 1)"
+
+      - name: Build and evaluate every profile
+        # set -uo pipefail without -e: one refusing profile must not suppress
+        # the others, mirroring cmd_freeze's refused-list policy.
+        run: |
+          set -uo pipefail
+          MONTH=$(date -u +%Y-%m); OUT="docs/forward/$MONTH"; mkdir -p build/panels "$OUT"
+          PROFILES="${{ github.event.inputs.profiles }}"
+          [ -z "$PROFILES" ] && PROFILES=$(ls frozen_scores)
+          failed=0
+          for p in $PROFILES; do
+            stock-grader build-panel --profile "$p" --frozen-root frozen_scores \
+              --vault vault --foundry foundry --out build/panels \
+              --archive-dir vault/data/backtest_panels \
+              --horizon-days 21 --min-cross-section 20 --min-periods 3 \
+              || { echo "::error::build-panel failed for $p"; failed=1; continue; }
+            ready=$(python -c "import json;print(json.load(open('build/panels/$p.build.json'))['ready_for_backtest'])")
+            if [ "$ready" != "True" ]; then echo "::notice::$p not ready for backtest yet"; continue; fi
+            # --allow-unverified-panel is mandatory, not a shortcut: return_is_total
+            # is honestly False in v1, so the strict contract refuses every panel.
+            # The ledger line records "FAILED total_returns_attested" — which is
+            # the true state of the evidence.
+            stock-grader backtest "build/panels/$p.parquet" --ledger research_ledger.jsonl \
+              --periods-per-year 12 --min-cross-section 20 --quantiles 5 \
+              --allow-unverified-panel --format md > "$OUT/$p.md" \
+              || { echo "::error::backtest failed for $p"; failed=1; continue; }
+            cp "build/panels/$p.build.json" "$OUT/$p.build.json"
+          done
+          exit $failed
+
+      - name: Commit archived panels to the vault
+        if: always()
+        run: |
+          git -C vault config user.name "github-actions[bot]"
+          git -C vault config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C vault add -A data/backtest_panels
+          if git -C vault diff --cached --quiet; then echo "nothing to commit to the vault"; exit 0; fi
+          git -C vault commit -m "panels: $(date -u +%Y-%m)"
+          for attempt in 1 2 3; do
+            if git -C vault push; then exit 0; fi
+            git -C vault pull --rebase origin main || exit 1
+          done
+          exit 1
+
+      - name: Commit ledger and reports here
+        # NEVER git add build/ — it is gitignored, which is the structural
+        # guarantee that Massive-derived rows cannot reach this public repo.
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A research_ledger.jsonl docs/forward
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit -m "forward: $(date -u +%Y-%m)"
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --rebase origin main || exit 1
+          done
+          exit 1

@@ -149,6 +149,66 @@ Important: the helper operates only on ordered signal dates. It does not inspect
 overlap. The caller must choose an embargo that prevents training labels from overlapping the test
 information set and must account for the actual forecast horizon.
 
+## Building the forward panel
+
+`stock-grader build-panel` joins a profile's frozen panels to realized forward
+returns from the private vault's EOD archive, producing the evaluator's input.
+
+**Placement.** The builder lives in Stock-Grader: it consumes a grader output
+(frozen panels) and produces a backtest input, sitting strictly between grader
+and backtest in the one-direction DAG, and the attestations it decides must live
+beside the evaluator that reads them. Its OUTPUT is restricted (per-row returns
+derived from Massive free-tier closes and stockanalysis.com delisted histories),
+so panel files go to `build/` (gitignored) and are archived only into the
+private vault at `data/backtest_panels/<profile>/`; only aggregate statistics
+are committed publicly.
+
+**Emitted columns.** Required: `signal_date`, `return_start`, `return_end`,
+`ticker`, `score`, `forward_return`. Contract: `cik`, `filed_through`
+(= signal_date — the freeze fetched EDGAR on that day, so no later filing could
+have entered the feature set), `universe_is_pit`, `return_is_total`,
+`delisting_return_included`. Diagnostics (ignored by the evaluator): `profile`,
+`letter`, `percentile`, `coverage`, `config_fingerprint`,
+`universe_fingerprint`, `freeze_commit`, `start_close`, `end_close`,
+`price_symbol`, `return_source`, `split_factor`, `split_source`,
+`terminal_price_used`, `symbol_changed`, `panel_schema_version`,
+`builder_commit`.
+
+**Attestations are computed, never hard-coded.**
+
+- `universe_is_pit` — True only when zero rows were dropped for an
+  outcome-dependent reason AND every signal date is on or after the forward
+  epoch (2026-07-30, the first genuinely forward freeze). A backfilled panel
+  against the hand-picked survivor universe is refused outright unless
+  `--allow-backfilled-panels`, which forces this attestation False.
+- `delisting_return_included` — True only when every vanished name was priced:
+  by the exit-day close, else the delisted archive's raw close (column `c`,
+  never the site's undocumented adjusted close) inside the window, else the
+  last listed close inside the window (`terminal_price_used`, a disclosed
+  convention that slightly OVERSTATES returns for names that kept falling
+  off-exchange, since the archive excludes OTC). An unresolvable name is
+  excluded, counted, and fails this attestation for the whole panel.
+- `return_is_total` — **False, always, in v1.** The dividend dataset covers
+  three tickers at fiscal-period granularity with no ex-dates on a
+  fully-split-adjusted basis, against raw unadjusted closes. Flip only when a
+  per-ex-date cash-dividend dataset (ex_date, cash_amount, same unadjusted
+  basis) covers >= 99% of panel rows. There is deliberately no flag for it.
+
+**Splits.** The archive stores raw prices, so an uncorrected split fabricates a
+~-50% return. Three tiers: a matching foundry `splits.jsonl` row (`foundry`); a
+price signature corroborated by the volume signature — share volume scales by
+the ratio while trade count stays flat (`reconstructed`, honesty-flagged); and
+uncorroborated split-shaped moves, which are EXCLUDED and counted — never kept
+(fabricates a crash) and never silently dropped (digs a survivorship hole).
+
+**One hypothesis = one trial.** `trial_sharpes` collapses ledger records to the
+most recent per experiment and skips retracted records: re-running one profile
+monthly is that hypothesis measured again, not a new trial. Repeated looks are
+still optional-stopping; fewer than `--min-periods` (3) qualifying periods
+appends no trial at all, because `assess_edge` structurally cannot find
+significance below 11 periods and a permanent ledger line for an uninformative
+statistic only burns the trial budget.
+
 ## Minimum credible dataset construction
 
 ### Entity and universe history
