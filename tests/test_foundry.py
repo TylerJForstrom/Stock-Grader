@@ -25,24 +25,50 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
         {"cik": 999999, "ticker": "SCAMCO", "title": "Pink Sheet Co", "exchange": ""},
     ]
     symbols_file = symbols_dir / "sec_company_tickers_exchange.jsonl"
-    symbols_file.write_bytes(
-        "".join(json.dumps(r) + "\n" for r in exchange_rows).encode("utf-8")
-    )
+    symbols_file.write_bytes("".join(json.dumps(r) + "\n" for r in exchange_rows).encode("utf-8"))
 
     dividends = pd.DataFrame(
         [
-            {"ticker": "AAPL", "period_start": "2025-10-01", "period_end": "2025-12-27",
-             "span_type": "quarterly", "dps_current_basis": 0.25, "derived": False,
-             "approximate": False, "flags": ""},
-            {"ticker": "AAPL", "period_start": "2025-12-28", "period_end": "2026-03-28",
-             "span_type": "quarterly", "dps_current_basis": 0.25, "derived": False,
-             "approximate": False, "flags": ""},
-            {"ticker": "AAPL", "period_start": "2019-01-01", "period_end": "2019-03-30",
-             "span_type": "quarterly", "dps_current_basis": 0.19, "derived": False,
-             "approximate": False, "flags": ""},  # outside any trailing window
-            {"ticker": "AAPL", "period_start": "2025-01-01", "period_end": "2025-12-27",
-             "span_type": "annual", "dps_current_basis": 1.0, "derived": False,
-             "approximate": False, "flags": ""},  # annual rows must not double-count
+            {
+                "ticker": "AAPL",
+                "period_start": "2025-10-01",
+                "period_end": "2025-12-27",
+                "span_type": "quarterly",
+                "dps_current_basis": 0.25,
+                "derived": False,
+                "approximate": False,
+                "flags": "",
+            },
+            {
+                "ticker": "AAPL",
+                "period_start": "2025-12-28",
+                "period_end": "2026-03-28",
+                "span_type": "quarterly",
+                "dps_current_basis": 0.25,
+                "derived": False,
+                "approximate": False,
+                "flags": "",
+            },
+            {
+                "ticker": "AAPL",
+                "period_start": "2019-01-01",
+                "period_end": "2019-03-30",
+                "span_type": "quarterly",
+                "dps_current_basis": 0.19,
+                "derived": False,
+                "approximate": False,
+                "flags": "",
+            },  # outside any trailing window
+            {
+                "ticker": "AAPL",
+                "period_start": "2025-01-01",
+                "period_end": "2025-12-27",
+                "span_type": "annual",
+                "dps_current_basis": 1.0,
+                "derived": False,
+                "approximate": False,
+                "flags": "",
+            },  # annual rows must not double-count
         ]
     )
     dividends_file = actions_dir / "dividends.parquet"
@@ -50,18 +76,36 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
 
     splits_file = actions_dir / "splits.jsonl"
     splits_file.write_bytes(
-        (json.dumps({"ticker": "AAPL", "effective_date": "2020-08-28", "ratio": 4.0,
-                     "confidence": "high", "filed": "2020-10-30"}) + "\n").encode("utf-8")
+        (
+            json.dumps(
+                {
+                    "ticker": "AAPL",
+                    "effective_date": "2020-08-28",
+                    "ratio": 4.0,
+                    "confidence": "high",
+                    "filed": "2020-10-30",
+                }
+            )
+            + "\n"
+        ).encode("utf-8")
     )
 
     events_dir = root / "data" / "symbols" / "events"
     events_dir.mkdir(parents=True)
     events = [
         # DEADCO delisted on 07-20 (removal event); NEWCO listed on 07-25
-        {"date": "2026-07-20", "source": "sec_company_tickers_exchange", "event": "removed",
-         "record": {"cik": 555, "ticker": "DEADCO", "title": "Dead Co", "exchange": "NYSE"}},
-        {"date": "2026-07-25", "source": "sec_company_tickers_exchange", "event": "added",
-         "record": {"cik": 777, "ticker": "NEWCO", "title": "New Co", "exchange": "Nasdaq"}},
+        {
+            "date": "2026-07-20",
+            "source": "sec_company_tickers_exchange",
+            "event": "removed",
+            "record": {"cik": 555, "ticker": "DEADCO", "title": "Dead Co", "exchange": "NYSE"},
+        },
+        {
+            "date": "2026-07-25",
+            "source": "sec_company_tickers_exchange",
+            "event": "added",
+            "record": {"cik": 777, "ticker": "NEWCO", "title": "New Co", "exchange": "Nasdaq"},
+        },
     ]
     events_file = events_dir / "events.jsonl"
     events_file.write_bytes("".join(json.dumps(e) + "\n" for e in events).encode("utf-8"))
@@ -79,8 +123,14 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
                 digest = "0" * 64
             files.append({"name": name, "sha256": digest, "bytes": len(blob)})
         (directory / "manifest.json").write_text(
-            json.dumps({"schema_version": schema, "source_urls": [], "license_note": "test",
-                        "files": files})
+            json.dumps(
+                {
+                    "schema_version": schema,
+                    "source_urls": [],
+                    "license_note": "test",
+                    "files": files,
+                }
+            )
         )
     return root
 
@@ -116,6 +166,27 @@ def test_path_escape_refused(tmp_path):
     source = FoundryDataSource(root=build_foundry(tmp_path))
     with pytest.raises(FoundryError):
         source._read_bytes("../outside.txt")
+
+
+def test_symbol_directory_reader_is_manifest_verified(tmp_path):
+    root = build_foundry(tmp_path)
+    directory = root / "data" / "symbols" / "current"
+    path = directory / "nasdaqlisted.jsonl"
+    rows = [
+        {"ticker": "AAPL", "etf": "N", "test_issue": "N"},
+        {"ticker": "QQQ", "etf": "Y", "test_issue": "N"},
+    ]
+    blob = "".join(json.dumps(row) + "\n" for row in rows).encode("utf-8")
+    path.write_bytes(blob)
+    manifest_path = directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"].append(
+        {"name": path.name, "sha256": hashlib.sha256(blob).hexdigest(), "bytes": len(blob)}
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    source = FoundryDataSource(root=root)
+    assert source.symbol_directory("nasdaqlisted.jsonl") == rows
 
 
 def test_dividends_and_splits_roundtrip(tmp_path):

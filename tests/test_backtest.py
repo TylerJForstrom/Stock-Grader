@@ -6,6 +6,7 @@ import pytest
 
 from stock_grader.backtest import (
     BacktestConfig,
+    _validate_panel,
     backtest_to_markdown,
     evaluate_walk_forward,
     purged_walk_forward_splits,
@@ -83,6 +84,33 @@ def test_walk_forward_rejects_duplicate_security_date():
     panel = pd.concat([panel, panel.iloc[[0]]], ignore_index=True)
     with pytest.raises(ValueError, match="duplicate"):
         evaluate_walk_forward(panel, BacktestConfig(min_cross_section=20))
+
+
+def test_validate_panel_rejects_mixed_universe_ids_unless_explicitly_allowed():
+    panel = _panel(3, 20)
+    panel["universe_id"] = "liq1000_v1"
+    first_date = panel["signal_date"].min()
+    # Missing legacy IDs must count as a distinct value. pandas nunique() defaults to dropping
+    # nulls, which would otherwise let a narrow+wide concatenation pass this guard.
+    panel.loc[panel["signal_date"] == first_date, "universe_id"] = pd.NA
+
+    with pytest.raises(ValueError, match="mixes multiple universe_id"):
+        _validate_panel(panel)
+    allowed = _validate_panel(panel, allow_mixed_universes=True)
+    assert len(allowed) == len(panel)
+
+    with pytest.raises(ValueError, match="mixes multiple universe_id"):
+        evaluate_walk_forward(panel, BacktestConfig(min_cross_section=20))
+    report = evaluate_walk_forward(
+        panel,
+        BacktestConfig(min_cross_section=20, bootstrap_samples=0),
+        allow_mixed_universes=True,
+    )
+    assert report.input_contract["single_universe_id"] is False
+    assert any("mixes universe_id" in limitation for limitation in report.limitations)
+
+    panel["universe_id"] = "liq1000_v1"
+    assert len(_validate_panel(panel)) == len(panel)
 
 
 def test_turnover_tracks_permanent_ids_across_ticker_changes():

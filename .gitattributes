@@ -1,0 +1,4 @@
+# M5 universe inputs are immutable byte-addressed artifacts. Never translate
+# their line endings: the registered spec uses CRLF and memberships use LF.
+config/universe_spec.json -text whitespace=cr-at-eol
+config/universe_liq*.txt -text

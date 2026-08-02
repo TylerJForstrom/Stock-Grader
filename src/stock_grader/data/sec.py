@@ -23,7 +23,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
@@ -37,8 +37,13 @@ from .symbols import ticker_variants
 
 log = logging.getLogger(__name__)
 
-__all__ = ["SECClient", "SECProvider", "normalize_duration_facts", "normalize_instant_facts",
-           "restate_for_splits"]
+__all__ = [
+    "SECClient",
+    "SECProvider",
+    "normalize_duration_facts",
+    "normalize_instant_facts",
+    "restate_for_splits",
+]
 
 _DAYS_PER_QUARTER = 91.31
 _SEC_BASE = "https://data.sec.gov"
@@ -95,10 +100,12 @@ class SECClient:
         self._consecutive_failures = 0
         self._limiter = _RateLimiter(rate)
         self._session = requests.Session()
-        self._session.headers.update({
-            "User-Agent": f"Stock-Grader/0.1 ({self.contact})",
-            "Accept-Encoding": "gzip, deflate",
-        })
+        self._session.headers.update(
+            {
+                "User-Agent": f"Stock-Grader/0.1 ({self.contact})",
+                "Accept-Encoding": "gzip, deflate",
+            }
+        )
 
     def _cache_path(self, key: str) -> Path:
         return safe_cache_path(self.cache_dir, "", key, ".json")
@@ -131,8 +138,10 @@ class SECClient:
         # Circuit breaker. Without it, a network outage cost 30 seconds of retry-sleeping per
         # ticker — over 40 minutes for the default universe — and the command still exited 0.
         if self._consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
-            log.warning("SEC unreachable after %d consecutive failures; not retrying",
-                        self._consecutive_failures)
+            log.warning(
+                "SEC unreachable after %d consecutive failures; not retrying",
+                self._consecutive_failures,
+            )
             return self._read_stale(path, key)
 
         backoff = 1.0
@@ -171,7 +180,7 @@ class SECClient:
         log.warning("SEC request gave up after retries: %s", url)
         return self._read_stale(path, key)
 
-    def get_bytes(self, url: str) -> bytes | None:
+    def get_bytes_with_headers(self, url: str) -> tuple[bytes, dict[str, str]] | None:
         """Rate-limited, retrying binary GET for sec.gov bulk files (dataset zips).
 
         Shares the client's limiter, session (declared User-Agent), and circuit
@@ -181,14 +190,20 @@ class SECClient:
         if self.offline:
             return None
         if self._consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
-            log.warning("SEC unreachable after %d consecutive failures; not retrying",
-                        self._consecutive_failures)
+            log.warning(
+                "SEC unreachable after %d consecutive failures; not retrying",
+                self._consecutive_failures,
+            )
             return None
         backoff = 1.0
         for attempt in range(4):
             self._limiter.acquire()
             try:
-                resp = self._session.get(url, timeout=max(self.timeout, 180.0))
+                resp = self._session.get(
+                    url,
+                    timeout=max(self.timeout, 180.0),
+                    headers={"Accept-Encoding": "identity"},
+                )
             except requests.RequestException as exc:
                 log.warning("SEC request failed (%s): %s", url, exc)
                 time.sleep(backoff)
@@ -196,7 +211,8 @@ class SECClient:
                 continue
             if resp.status_code == 200:
                 self._consecutive_failures = 0
-                return resp.content
+                headers = {str(key): str(value) for key, value in resp.headers.items()}
+                return resp.content, headers
             if resp.status_code == 404:
                 log.info("SEC 404 for %s", url)
                 return None
@@ -211,9 +227,62 @@ class SECClient:
         log.warning("SEC request gave up after retries: %s", url)
         return None
 
+    def get_bytes(self, url: str) -> bytes | None:
+        """Fetch binary content while discarding representation headers."""
+        response = self.get_bytes_with_headers(url)
+        return None if response is None else response[0]
+
+    def head(self, url: str) -> dict[str, str] | None:
+        """Issue a rate-limited HEAD through the shared fair-access client."""
+        if self.offline:
+            return None
+        if self._consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            log.warning(
+                "SEC unreachable after %d consecutive failures; not retrying",
+                self._consecutive_failures,
+            )
+            return None
+        backoff = 1.0
+        for attempt in range(4):
+            self._limiter.acquire()
+            try:
+                response = self._session.head(
+                    url,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    headers={"Accept-Encoding": "identity"},
+                )
+            except requests.RequestException as exc:
+                log.warning("SEC HEAD failed (%s): %s", url, exc)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            if response.status_code == 200:
+                self._consecutive_failures = 0
+                return {str(key): str(value) for key, value in response.headers.items()}
+            if response.status_code == 404:
+                log.info("SEC HEAD 404 for %s", url)
+                return None
+            if response.status_code in (429, 503):
+                log.info(
+                    "SEC throttled HEAD (%s), backing off %.1fs",
+                    response.status_code,
+                    backoff,
+                )
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            log.warning("SEC returned HTTP %s for HEAD %s", response.status_code, url)
+            return None
+        self._consecutive_failures += 1
+        log.warning("SEC HEAD gave up after retries: %s", url)
+        return None
+
     def ticker_map(self, *, refresh: bool = False) -> dict[str, str]:
         """Ticker -> zero-padded 10-digit CIK."""
-        payload = self.get_json(f"{_SEC_WWW}/files/company_tickers.json", "company_tickers", refresh=refresh)
+        payload = self.get_json(
+            f"{_SEC_WWW}/files/company_tickers.json", "company_tickers", refresh=refresh
+        )
         if not payload:
             return {}
         out: dict[str, str] = {}
@@ -226,11 +295,15 @@ class SECClient:
 
     def company_facts(self, cik: str, *, refresh: bool = False) -> dict[str, Any] | None:
         cik = str(cik).zfill(10)
-        return self.get_json(f"{_SEC_BASE}/api/xbrl/companyfacts/CIK{cik}.json", f"facts_{cik}", refresh=refresh)
+        return self.get_json(
+            f"{_SEC_BASE}/api/xbrl/companyfacts/CIK{cik}.json", f"facts_{cik}", refresh=refresh
+        )
 
     def submissions(self, cik: str, *, refresh: bool = False) -> dict[str, Any] | None:
         cik = str(cik).zfill(10)
-        return self.get_json(f"{_SEC_BASE}/submissions/CIK{cik}.json", f"sub_{cik}", refresh=refresh)
+        return self.get_json(
+            f"{_SEC_BASE}/submissions/CIK{cik}.json", f"sub_{cik}", refresh=refresh
+        )
 
 
 # --------------------------------------------------------------------------------------------
@@ -390,7 +463,11 @@ def normalize_duration_facts(
         if end in quarters:
             continue
         prior = ytd.get((start, n_q - 1))
-        prior_value = prior[1] if prior else (quarters.get(_prev_quarter_end(start, quarters)) if n_q == 2 else None)
+        prior_value = (
+            prior[1]
+            if prior
+            else (quarters.get(_prev_quarter_end(start, quarters)) if n_q == 2 else None)
+        )
         if n_q == 2 and prior is None:
             # YTD2 minus the single Q1 that shares this fiscal start.
             q1 = next((v for e, v in sorted(quarters.items()) if start <= e <= end), None)
@@ -405,8 +482,10 @@ def normalize_duration_facts(
                 quarters[end] = differenced
             else:
                 log.info(
-                    "%s %s: rejecting year-to-date difference of %.4g", concept or "fact",
-                    end, differenced,
+                    "%s %s: rejecting year-to-date difference of %.4g",
+                    concept or "fact",
+                    end,
+                    differenced,
                 )
 
     # Pass 3: derive the missing Q4 from the fiscal-year total.
@@ -423,7 +502,10 @@ def normalize_duration_facts(
             else:
                 log.info(
                     "%s %s: rejecting derived Q4 of %.4g against sibling quarters %s",
-                    concept or "fact", fy_end, derived, [f"{v:.4g}" for v in siblings],
+                    concept or "fact",
+                    fy_end,
+                    derived,
+                    [f"{v:.4g}" for v in siblings],
                 )
 
     q_series = pd.Series(quarters, dtype="float64").sort_index()
@@ -439,7 +521,7 @@ def _prev_quarter_end(start: date, quarters: dict[date, float]) -> date | None:
 
 def _fiscal_start(fy_end: date, chosen: dict[tuple[date, date], dict]) -> date | None:
     """The start date of the fiscal-year record ending on ``fy_end``."""
-    for (start, end) in chosen:
+    for start, end in chosen:
         if end == fy_end and _quarters_spanned(start, end) == 4:
             return start
     return None
@@ -483,10 +565,18 @@ def normalize_instant_facts(
 # excludes operating_income, net_income and pretax_income, which are negative whenever a company
 # loses money. Constraining those would delete real losses — precisely the companies a solvency
 # pillar most needs to see.
-SIGN_CONSTRAINED = frozenset({
-    "revenue", "cogs", "capex", "depreciation_amortization",
-    "shares_basic", "shares_diluted", "buybacks", "dividends_paid",
-})
+SIGN_CONSTRAINED = frozenset(
+    {
+        "revenue",
+        "cogs",
+        "capex",
+        "depreciation_amortization",
+        "shares_basic",
+        "shares_diluted",
+        "buybacks",
+        "dividends_paid",
+    }
+)
 
 
 def _plausible_q4(concept: str | None, derived: float, siblings: list[float]) -> bool:
@@ -606,7 +696,9 @@ def restate_for_splits(shares: pd.Series, scale_reference: pd.Series | None = No
             cumulative *= split
             log.info(
                 "inferred a %.3gx split at %s (share ratio %.3g); earlier periods restated",
-                split, clean.index[i], ratio,
+                split,
+                clean.index[i],
+                ratio,
             )
         factors.iloc[i - 1] = cumulative
     return (clean * factors).reindex(shares.index)
@@ -678,10 +770,7 @@ def _select_tag(
     present = [t for t in chain if t in gaap]
     if not present:
         return None
-    ends = {
-        tag: _latest_end(gaap[tag], pit_mode=pit_mode, asof=asof)
-        for tag in present
-    }
+    ends = {tag: _latest_end(gaap[tag], pit_mode=pit_mode, asof=asof) for tag in present}
     if pit_mode is PitMode.PIT and asof is not None:
         # A tag with no record filed by the grading date did not exist in the investor's
         # information set.  It must not win merely because it leads the modern preference chain.
@@ -734,12 +823,8 @@ def build_fundamentals(
         concept_provenance[concept] = {
             "tag": tag,
             "unit": unit_key,
-            "latest_period_end": max(
-                (str(i.get("end", "")) for i in prov_items), default=None
-            ),
-            "latest_filed": max(
-                (str(i.get("filed", "")) for i in prov_items), default=None
-            ),
+            "latest_period_end": max((str(i.get("end", "")) for i in prov_items), default=None),
+            "latest_filed": max((str(i.get("filed", "")) for i in prov_items), default=None),
         }
         if PERIOD_TYPES[concept].value == "instant":
             series = normalize_instant_facts(fact, pit_mode=pit_mode, asof=asof)
@@ -752,8 +837,11 @@ def build_fundamentals(
                 annual[concept] = _annualise_instants(series)
         else:
             q, a, f = normalize_duration_facts(
-                fact, pit_mode=pit_mode, asof=asof,
-                averaged=concept in AVERAGED_CONCEPTS, concept=concept,
+                fact,
+                pit_mode=pit_mode,
+                asof=asof,
+                averaged=concept in AVERAGED_CONCEPTS,
+                concept=concept,
             )
             if not q.empty:
                 quarterly[concept] = q
@@ -842,8 +930,11 @@ def _derive(df: pd.DataFrame) -> None:
         # Only components the company actually reports somewhere. A filer that never tags
         # short-term borrowings at all would otherwise have every quarter refused for a missing
         # piece it does not have, which trades one wrong number for no number.
-        parts = [c for c in ("long_term_debt", "short_term_debt")
-                 if c in df.columns and df[c].notna().any()]
+        parts = [
+            c
+            for c in ("long_term_debt", "short_term_debt")
+            if c in df.columns and df[c].notna().any()
+        ]
         if parts:
             # min_count=len(parts), not 1. Filers tag different components in different quarters:
             # Lowe's most recent quarter carries only short-term borrowings of $380M, so summing
@@ -896,6 +987,10 @@ def _derive(df: pd.DataFrame) -> None:
         df["invested_capital"] = ic
 
 
+class _BulkFactsProvider(Protocol):
+    def company_facts(self, cik: str) -> dict[str, Any] | None: ...
+
+
 class SECProvider:
     """Fundamentals provider backed by SEC EDGAR. Prices, if any, come from elsewhere."""
 
@@ -903,8 +998,11 @@ class SECProvider:
     provides_prices = False
     provides_fundamentals = True
 
-    def __init__(self, client: SECClient | None = None) -> None:
+    def __init__(
+        self, client: SECClient | None = None, *, bulk: _BulkFactsProvider | None = None
+    ) -> None:
         self.client = client or SECClient()
+        self.bulk = bulk
         self._tickers: dict[str, str] | None = None
 
     def resolve_cik(self, ticker: str) -> str | None:
@@ -943,8 +1041,13 @@ class SECProvider:
         CIKs are permanent, so keying fixtures and historical universes on them is the only way to
         study companies that no longer exist.
         """
-        return self._fetch(str(cik).zfill(10), ticker or str(cik),
-                           asof=asof or date.today(), pit_mode=pit_mode, refresh=refresh)
+        return self._fetch(
+            str(cik).zfill(10),
+            ticker or str(cik),
+            asof=asof or date.today(),
+            pit_mode=pit_mode,
+            refresh=refresh,
+        )
 
     def fetch(
         self,
@@ -1012,7 +1115,9 @@ class SECProvider:
                     "applicability may reflect a later business classification"
                 )
 
-        facts = self.client.company_facts(cik, refresh=refresh)
+        facts = self.bulk.company_facts(cik) if self.bulk is not None else None
+        if facts is None:
+            facts = self.client.company_facts(cik, refresh=refresh)
         if not facts:
             snap.warnings.append(f"{ticker}: SEC companyfacts unavailable")
             return snap

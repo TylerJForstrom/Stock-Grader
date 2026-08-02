@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .pipeline import GradeConfig, grade_universe
+from .pipeline import GradeConfig, grade_universe_multi
 from .scoring import grade_from_percentile, to_letter
 from .types import GradeReport, SecuritySnapshot
 
@@ -252,13 +252,14 @@ def consensus_grade(
     :class:`ConsensusResult.clarity`.
     """
     names = profiles or profile_names()
-    by_profile: dict[str, dict[str, GradeReport]] = {}
+    configs: list[GradeConfig] = []
     for name in names:
         try:
             config = get_profile(name, **overrides)
         except KeyError:
             continue
-        by_profile[name] = grade_universe(snapshots, config)
+        configs.append(config)
+    by_profile = grade_universe_multi(snapshots, configs)
 
     results: dict[str, ConsensusResult] = {}
     for snapshot in snapshots:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -32,17 +33,30 @@ from pathlib import Path
 
 __all__ = [
     "GENESIS_SHA256",
+    "RETRACTION_EXPERIMENT",
     "ResearchRecord",
     "append_record",
     "current_commit",
     "load_manifest",
+    "retracted_hashes",
     "summarize_manifest",
+    "trial_sharpes",
     "verify_chain",
     "verify_line",
 ]
 
 # prev_sha256 of the very first chained record: there is no previous line to bind to.
 GENESIS_SHA256 = "0" * 64
+
+#: Experiment name marking a record that retracts earlier ones.
+#:
+#: The ledger is append-only and hash-chained, so a record that should never have
+#: counted as a trial cannot be removed — it is retracted by a LATER record that
+#: names it. The retracted hashes ride in ``symbols``, which is already a
+#: ``Sequence[str]`` serialized verbatim by ``payload()``, so this needs no schema
+#: change and the retraction is itself hashed and chained: what was excluded, when,
+#: and why stays permanently auditable.
+RETRACTION_EXPERIMENT = "ledger:retraction"
 
 
 def current_commit() -> str:
@@ -198,6 +212,49 @@ def verify_chain(records: Sequence[dict[str, object]]) -> bool:
                 return False
         prev_hash = str(record.get("integrity_sha256", ""))
     return True
+
+
+def retracted_hashes(records: Sequence[Mapping[str, object]]) -> set[str]:
+    """Integrity hashes named by every retraction record in the ledger."""
+    retracted: set[str] = set()
+    for record in records:
+        if record.get("experiment") != RETRACTION_EXPERIMENT:
+            continue
+        symbols = record.get("symbols")
+        if isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+            retracted.update(str(item) for item in symbols)
+    return retracted
+
+
+def trial_sharpes(records: Sequence[Mapping[str, object]]) -> list[float]:
+    """Per-period Sharpes of the DISTINCT configurations searched.
+
+    Retracted records are excluded, as are the retractions themselves. What
+    remains is collapsed to the most recent entry per ``experiment``: re-running
+    one profile every month on a longer sample is that trial measured again, not
+    a new trial, and counting it twelve times a year inflates the deflation
+    benchmark until no real edge could ever clear it.
+
+    Legacy records with distinct experiment names collapse to themselves, so this
+    is backward compatible.
+    """
+    excluded = retracted_hashes(records)
+    latest: dict[str, float] = {}
+    for record in records:
+        if record.get("experiment") == RETRACTION_EXPERIMENT:
+            continue
+        if str(record.get("integrity_sha256", "")) in excluded:
+            continue
+        metrics = record.get("metrics")
+        if not isinstance(metrics, Mapping):
+            continue
+        sharpe = metrics.get("per_period_sharpe")
+        if isinstance(sharpe, bool) or not isinstance(sharpe, (int, float)):
+            continue
+        if not math.isfinite(float(sharpe)):
+            continue
+        latest[str(record.get("experiment", ""))] = float(sharpe)
+    return list(latest.values())
 
 
 def summarize_manifest(records: Sequence[dict[str, object]]) -> dict[str, object]:
