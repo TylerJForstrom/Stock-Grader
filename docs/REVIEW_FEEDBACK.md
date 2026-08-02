@@ -164,6 +164,16 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 
 ## Agent log
 
+2026-08-02 -- M1 forward panel builder + scheduled backtest: `panel.py`
+(windows, bulk bar loader, three-tier split correction, delisting resolution
+chain, computed attestations), `build-panel` CLI, and
+`monthly-forward-backtest.yml`. Ledger retraction + one-trial-per-hypothesis
+landed earlier (5253a2f, 7183752). Real-data smoke: zero matured periods today
+(correct — first forward signal 2026-07-30, horizon 21 trading days), and a
+3-period backfilled fixture run against the real vault builds, evaluates, and
+honestly reports `point_in_time_universe_attested: NO`. Blocker for the
+scheduled run: the `VAULT_REPO_TOKEN` secret does not exist yet.
+
 2026-07-31 -- (Owner-approved Codex completion) M5 COMPLETE under the amended
 acceptance contract: Stock-Grader implementation `a136252`, public panel
 commit `e9b4e92`, and handoff `3bb5a6c`; Stock-Vault `4a607e1`/`09e8b32`;

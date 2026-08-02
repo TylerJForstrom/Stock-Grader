@@ -169,3 +169,17 @@ Use Stock-Grader to:
 
 Do not use a grade, sensitivity interval, scenario value, or diagnostic AUC alone to make or market
 an investment decision.
+
+## Forward panel construction
+
+- `forward_return` is price-only (`return_is_total = False`): dividends are not
+  included, which understates returns for high-yield names relative to
+  low-yield ones over the window.
+- Names that leave listed venues are held at the last listed close (the archive
+  excludes OTC), which slightly overstates the return of names that continued
+  falling off-exchange. The convention is disclosed per row via
+  `terminal_price_used`.
+- Splits without a foundry record are reconstructed from the price+volume
+  signature; the correction is flagged per row (`split_source =
+  "reconstructed"`) and an uncorroborated split-shaped move excludes the row
+  rather than guessing.

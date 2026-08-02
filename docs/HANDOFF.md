@@ -99,9 +99,9 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
   renderers.
 
 ### 10. Deferred (needs data volume or a decision)
-- §6 panel builder: freeze panels accrue monthly (frozen_scores/); combine
-  with VaultDataSource EOD for forward returns once ≥3 frozen months exist.
-  Backtest calibration harness (planted-IC power table) belongs with it.
+- ~~§6 panel builder~~ DONE (M1, 2026-08-02): `stock-grader build-panel` +
+  `monthly-forward-backtest.yml`. Backtest calibration harness (planted-IC
+  power table) is still open and belongs with it.
 - Li-Mohanram mechanical forecasts (Stock-Data derived artifact; spec in
   docs/DATA-FOUNDRY.md).
 - Paper-trade bridge: sim's AlpacaPaperAdapter consuming frozen_scores
