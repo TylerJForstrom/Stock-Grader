@@ -69,17 +69,17 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
 - SSGA collector: build it (pattern = borrow.py, ~1h) or delete its README row.
 
 ### 8. Methodology remainder  (~1 day)
-- `research.py` `_fmt`/unit vocabulary: dimensionless metrics (Sharpe etc.)
-  render as percentages. Introduce a `dimensionless` unit rendered `{:.2f}x`
-  or plain; audit `unit="ratio"` registrations and reclassify genuine
-  fractions vs multiples. Golden-file test on the markdown table.
-- Defining-pillar gate must consult `PillarScore.coverage`
-  (`pipeline.py::_profile_gate_state`): add `min_defining_pillar_coverage`
-  (default 0.4) so a 1-of-12-metric pillar cannot satisfy the gate.
-- `_metric_evidence` (research.py) re-runs build_metric_matrix and mixes exact
-  + fallback contributions: consume `report.explain["metrics"]` (already
-  built in pipeline.py) instead; delete the fallback path; add a
-  reconciliation test.
+- ~~`research.py` `_fmt`/unit vocabulary~~ DONE (2026-08-02): `dimensionless`
+  unit renders `{:,.2f}x`; all 69 `unit="ratio"` registrations audited, ten
+  reclassified (Sharpe/Sortino/Calmar/tail/variance ratios, ulcer index,
+  risk-adjusted momentum, Amihud, price/SMA200, Graham number).
+- ~~Defining-pillar gate~~ DONE (2026-08-02): `min_defining_pillar_coverage`
+  (default 0.4) consults `PillarScore.coverage`. NOTE: this retired the legacy
+  default config fingerprint `751441e6…` — panels frozen from 2026-09 carry
+  `1790775d…` and are not comparable with earlier ones.
+- ~~`_metric_evidence` fallback mixing~~ DONE (2026-08-02): target-side
+  numbers come exclusively from `report.explain["metrics"]`; the matrix is
+  rebuilt only for peer quartiles; reconciliation test added.
 - Supervised guard: raise only when a supervised method is selected AND
   forward_returns is not None (currently blocks even the harmless case).
 - `winsorized_z` (normalize.py): clamp at median±k·MAD when n<100 (the

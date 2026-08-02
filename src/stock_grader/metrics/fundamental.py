@@ -342,7 +342,7 @@ def peg_ratio(s: SecuritySnapshot) -> float | None:
     return safe_div(pe, growth * 100.0, positive_denominator=True, cap=20.0)
 
 
-@metric("graham_number", pillar="valuation", direction=1, unit="ratio")
+@metric("graham_number", pillar="valuation", direction=1, unit="dimensionless")
 def graham_number_ratio(s: SecuritySnapshot) -> float | None:
     """Graham number / price — above 1 means the stock trades below Graham's fair value.
 

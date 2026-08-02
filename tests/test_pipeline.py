@@ -291,7 +291,12 @@ def test_sector_neutral_key_validates_and_default_preserves_business_model() -> 
 
 
 def test_default_sector_key_preserves_frozen_panel_config_fingerprint() -> None:
-    expected = "751441e6b469c806e7df459d3be71c0219e98364921160608243f791498540c7"
+    # DELIBERATE retirement of 751441e6…: the defining-pillar coverage floor
+    # (min_defining_pillar_coverage, default 0.4) changes which names the gate
+    # refuses, so panels frozen before and after it are not comparable — and the
+    # fingerprint is the contract that records exactly that. Panels through
+    # 2026-08 carry the old hash; do NOT "fix" this value to make them match.
+    expected = "1790775dfae6ddeb8feaf9649142d8b8c1eb20d8a3a26832b08695d0b4403846"
 
     implicit_manifest, implicit_fingerprint = pipeline_module._config_manifest(
         get_profile("all_weather")
@@ -848,3 +853,36 @@ class TestBeneishPlausibility:
         assert _index(11.63, 1.0) is None                 # the Lowe's artifact
         assert _index(1.0, 100.0) is None
         assert low < 1.0 < high
+
+
+def test_defining_pillar_must_clear_a_coverage_floor():
+    """Regression: a 1-of-12-metric pillar must not satisfy the defining gate.
+
+    Pre-fix, the gate only asked whether the required pillar was LIVE — one
+    computed metric out of twelve kept a "value" profile gradeable on a single
+    number wearing the pillar's name.
+    """
+    config = GradeConfig(name="value_like", pillar_weights={"valuation": 0.7, "quality": 0.3})
+    weights = pd.Series({"valuation": 0.7, "quality": 0.3})
+
+    # One metric of twelve computed: live, but not the stated style.
+    _, _, thin = pipeline_module._profile_gate_state(
+        {"valuation", "quality"}, weights, config, {"valuation": 1 / 12, "quality": 0.9}
+    )
+    assert any(reason.startswith("defining_pillar_coverage:valuation") for reason in thin)
+
+    # Ample coverage: no coverage reason.
+    _, _, healthy = pipeline_module._profile_gate_state(
+        {"valuation", "quality"}, weights, config, {"valuation": 0.75, "quality": 0.9}
+    )
+    assert not any(r.startswith("defining_pillar_coverage") for r in healthy)
+
+    # A MISSING required pillar still reports the missing reason, not coverage.
+    _, _, missing = pipeline_module._profile_gate_state(
+        {"quality"}, weights, config, {"quality": 0.9}
+    )
+    assert any(r.startswith("defining_pillar_missing:valuation") for r in missing)
+
+    # The floor is part of the comparability contract.
+    manifest, _ = pipeline_module._config_manifest(config)
+    assert manifest["min_defining_pillar_coverage"] == pytest.approx(0.4)

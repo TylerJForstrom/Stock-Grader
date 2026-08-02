@@ -243,7 +243,7 @@ def downside_deviation(s: SecuritySnapshot) -> float | None:
     return float(np.sqrt((negative**2).sum() / len(returns)) * np.sqrt(TRADING_DAYS))
 
 
-@metric("sharpe_ratio", pillar="risk_adjusted_return", direction=1, unit="ratio",
+@metric("sharpe_ratio", pillar="risk_adjusted_return", direction=1, unit="dimensionless",
         needs_prices=True, needs_risk_free=True, min_history=253, winsor=(-5.0, 5.0))
 def sharpe_ratio(s: SecuritySnapshot) -> float | None:
     """Excess return per unit of total volatility, against the real risk-free rate."""
@@ -259,7 +259,7 @@ def sharpe_ratio(s: SecuritySnapshot) -> float | None:
     return float(excess.mean() / sigma * np.sqrt(TRADING_DAYS))
 
 
-@metric("sortino_ratio", pillar="risk_adjusted_return", direction=1, unit="ratio",
+@metric("sortino_ratio", pillar="risk_adjusted_return", direction=1, unit="dimensionless",
         needs_prices=True, needs_risk_free=True, min_history=253, winsor=(-5.0, 10.0))
 def sortino_ratio(s: SecuritySnapshot) -> float | None:
     """Excess return per unit of downside deviation."""
@@ -297,7 +297,7 @@ def max_drawdown(s: SecuritySnapshot) -> float | None:
     return float(-drawdown.min())
 
 
-@metric("calmar_ratio", pillar="risk_adjusted_return", direction=1, unit="ratio",
+@metric("calmar_ratio", pillar="risk_adjusted_return", direction=1, unit="dimensionless",
         needs_prices=True, min_history=757, winsor=(-10.0, 10.0))
 def calmar_ratio(s: SecuritySnapshot) -> float | None:
     """Three-year annualised return divided by max drawdown."""
@@ -308,7 +308,7 @@ def calmar_ratio(s: SecuritySnapshot) -> float | None:
     return safe_div(float(returns.mean() * TRADING_DAYS), drawdown, positive_denominator=True, cap=10.0)
 
 
-@metric("ulcer_index", pillar="risk", direction=-1, unit="ratio",
+@metric("ulcer_index", pillar="risk", direction=-1, unit="dimensionless",
         needs_prices=True, min_history=757)
 def ulcer_index(s: SecuritySnapshot) -> float | None:
     """Root-mean-square drawdown — penalises deep *and* long declines, unlike max drawdown."""
@@ -404,7 +404,7 @@ def excess_kurtosis(s: SecuritySnapshot) -> float | None:
     return float(stats.kurtosis(returns)) if returns is not None and len(returns) >= 100 else None
 
 
-@metric("tail_ratio", pillar="risk", direction=1, unit="ratio",
+@metric("tail_ratio", pillar="risk", direction=1, unit="dimensionless",
         needs_prices=True, min_history=252, winsor=(0.0, 5.0))
 def tail_ratio(s: SecuritySnapshot) -> float | None:
     """95th percentile gain divided by the magnitude of the 5th percentile loss."""
@@ -590,7 +590,7 @@ def hurst_exponent(s: SecuritySnapshot) -> float | None:
     return slope if 0.0 <= slope <= 1.5 else None
 
 
-@metric("variance_ratio", pillar="stability", direction=0, unit="ratio", ideal_band=(0.9, 1.1),
+@metric("variance_ratio", pillar="stability", direction=0, unit="dimensionless", ideal_band=(0.9, 1.1),
         needs_prices=True, min_history=504)
 def variance_ratio(s: SecuritySnapshot) -> float | None:
     """Lo-MacKinlay variance ratio at lag 5 — **non-monotonic**, 1.0 means a random walk.
@@ -731,7 +731,7 @@ def momentum_12_1(s: SecuritySnapshot) -> float | None:
     return _total_return(s, 231, skip=21)
 
 
-@metric("risk_adjusted_momentum", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
+@metric("risk_adjusted_momentum", group="trailing_momentum", pillar="momentum", direction=1, unit="dimensionless",
         needs_prices=True, min_history=273, winsor=(-10.0, 10.0))
 def risk_adjusted_momentum(s: SecuritySnapshot) -> float | None:
     """12-1 momentum divided by annualised volatility."""
@@ -840,7 +840,7 @@ def dollar_volume(s: SecuritySnapshot) -> float | None:
     return float(product.median()) if len(product) >= 20 else None
 
 
-@metric("amihud_illiquidity", pillar="liquidity", direction=-1, unit="ratio",
+@metric("amihud_illiquidity", pillar="liquidity", direction=-1, unit="dimensionless",
         needs_prices=True, min_history=126)
 def amihud_illiquidity(s: SecuritySnapshot) -> float | None:
     """Amihud measure: mean of ``|return| / dollar volume`` — price impact per dollar traded."""
@@ -867,7 +867,7 @@ def zero_return_days(s: SecuritySnapshot) -> float | None:
 # ---------------------------------------------------------------------------------------------
 
 
-@metric("price_to_sma200", group="trailing_momentum", pillar="momentum", direction=1, unit="ratio",
+@metric("price_to_sma200", group="trailing_momentum", pillar="momentum", direction=1, unit="dimensionless",
         needs_prices=True, min_history=252, winsor=(0.0, 3.0))
 def price_to_sma200(s: SecuritySnapshot) -> float | None:
     """Price relative to its 200-day simple moving average."""

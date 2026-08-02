@@ -470,3 +470,41 @@ def test_ohlson_is_not_applicable_to_financial_business_models():
         snapshot = _snapshot(_ohlson_frame(), sector=sector)
         result = evaluate_one(METRICS.get("ohlson_o_score"), snapshot)
         assert result.coverage is Coverage.NOT_APPLICABLE
+
+
+# -- growth-consistency helpers: registered in every panel, previously untested
+
+
+def test_r_squared_loglinear_rewards_steady_compounding():
+    """Two series with one CAGR: perfect compounding scores 1, a rollercoaster less.
+
+    Both feed `revenue_growth_consistency` / `earnings_growth_consistency` in the
+    growth pillar of every frozen panel; panels store only the aggregate score,
+    so a sign error here would ship invisibly.
+    """
+    from stock_grader.metrics.util import r_squared_loglinear
+
+    steady = [100.0 * (1.15**i) for i in range(6)]
+    assert r_squared_loglinear(steady) == pytest.approx(1.0)
+
+    rollercoaster = [100.0, 40.0, 180.0, 60.0, 190.0, 201.14]
+    bumpy = r_squared_loglinear(rollercoaster)
+    assert bumpy is not None and bumpy < 0.7
+
+    # Guard rails: logs need positives, a fit needs three points, a flat series
+    # has no variance to explain.
+    assert r_squared_loglinear([100.0, -5.0, 120.0]) is None
+    assert r_squared_loglinear([100.0, 110.0]) is None
+    assert r_squared_loglinear([100.0, 100.0, 100.0]) is None
+
+
+def test_consistency_is_the_fraction_of_positive_changes():
+    from stock_grader.metrics.util import consistency
+
+    assert consistency([1.0, 2.0, 3.0, 4.0]) == pytest.approx(1.0)
+    assert consistency([4.0, 3.0, 2.0, 1.0]) == pytest.approx(0.0)
+    assert consistency([1.0, 2.0, 1.0, 2.0, 1.0]) == pytest.approx(0.5)
+    # Non-finite entries are excluded, not treated as zero change.
+    assert consistency([1.0, float("nan"), 2.0, 3.0]) == pytest.approx(1.0)
+    assert consistency([1.0]) is None
+    assert consistency([]) is None

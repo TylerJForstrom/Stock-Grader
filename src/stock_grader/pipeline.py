@@ -25,7 +25,7 @@ import hashlib
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -100,6 +100,10 @@ class GradeConfig:
         # its binomial sampling range are still reported): at n=8 a Hazen
         # percentile moves in 12.5-point steps and one peer decides the letter.
         min_letter_peers: int = 15,
+        # A defining pillar satisfied by one metric out of twelve is not that
+        # investment style — it is one number wearing the pillar's name. The
+        # gate consults PillarScore.coverage for every required pillar.
+        min_defining_pillar_coverage: float = 0.4,
         required_pillars: set[str] | list[str] | tuple[str, ...] | None = None,
         require_defining_pillar: bool = True,
         allow_in_sample_supervised_weighting: bool = False,
@@ -278,6 +282,10 @@ class GradeConfig:
         if min_letter_peers < 2:
             raise ValueError("min_letter_peers must be at least 2")
         self.min_letter_peers = min_letter_peers
+        coverage_floor = float(min_defining_pillar_coverage)
+        if not np.isfinite(coverage_floor) or not (0.0 <= coverage_floor <= 1.0):
+            raise ValueError("min_defining_pillar_coverage must be within [0, 1]")
+        self.min_defining_pillar_coverage = coverage_floor
         valid_sector_neutral_keys = {"business_model", "sic2", "sic3"}
         if not isinstance(sector_neutral_key, str) or sector_neutral_key not in valid_sector_neutral_keys:
             raise ValueError(
@@ -347,6 +355,11 @@ def _config_manifest(config: GradeConfig) -> tuple[dict[str, object], str]:
         "min_profile_weight_coverage": config.min_profile_weight_coverage,
         "required_pillars": sorted(config.required_pillars),
         "require_defining_pillar": config.require_defining_pillar,
+        # Deliberately unconditional: the coverage floor changes which names the
+        # gate refuses, so panels frozen before and after it are not comparable
+        # and their fingerprints must differ (this retired the legacy default
+        # fingerprint 751441e6…).
+        "min_defining_pillar_coverage": config.min_defining_pillar_coverage,
     }
     # Keep the legacy default manifest byte-for-byte stable: frozen panels use this hash as a
     # comparability contract. Non-default grouping is a methodology change and must fingerprint.
@@ -420,6 +433,7 @@ def _profile_gate_state(
     live_pillars: set[str],
     pillar_weights: pd.Series,
     config: GradeConfig,
+    pillar_coverage: Mapping[str, float] | None = None,
 ) -> tuple[float, set[str], list[str]]:
     """Nominal profile-weight coverage, required pillars, and hard-gate reasons."""
     # Fixed profiles must be measured against the profile as authored.  ``compute_weights`` first
@@ -442,6 +456,17 @@ def _profile_gate_state(
         )
     if config.gates and missing_required:
         reasons.append("defining_pillar_missing:" + ",".join(sorted(missing_required)))
+    if config.gates and pillar_coverage is not None:
+        # A pillar can be "live" on one computed metric out of twelve. That is
+        # not the investment style the profile names, so a required pillar must
+        # also clear a coverage floor to satisfy the gate.
+        for pillar in sorted(required & live_pillars):
+            coverage = float(pillar_coverage.get(pillar, 1.0))
+            if coverage + 1e-12 < config.min_defining_pillar_coverage:
+                reasons.append(
+                    f"defining_pillar_coverage:{pillar}:"
+                    f"{coverage:.3f}<{config.min_defining_pillar_coverage:.3f}"
+                )
     return weight_coverage, required, reasons
 
 
@@ -888,7 +913,15 @@ def _grade_from_matrix(
             for pillar, obj in pillar_objects.get(snapshot.ticker, {}).items()
             if np.isfinite(obj.score)
         }
-        gate_state = _profile_gate_state(live_pillars, pillar_weights, config)
+        gate_state = _profile_gate_state(
+            live_pillars,
+            pillar_weights,
+            config,
+            {
+                pillar: float(obj.coverage)
+                for pillar, obj in pillar_objects.get(snapshot.ticker, {}).items()
+            },
+        )
         profile_gate_state[snapshot.ticker] = gate_state
         _, _, gate_reasons = gate_state
         gradeable[snapshot.ticker] = (
