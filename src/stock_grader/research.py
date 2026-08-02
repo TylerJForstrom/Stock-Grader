@@ -162,37 +162,26 @@ def _metric_evidence(
     peers: list[SecuritySnapshot],
     report: GradeReport,
 ) -> list[MetricEvidence]:
+    # The peer matrix is rebuilt ONLY for raw peer values (quartiles and the
+    # desirability percentile). Everything about the TARGET — weights, normalized
+    # scores, contributions — comes from report.explain["metrics"], the exact
+    # payload the grade was computed from. The old fallback reconstructed
+    # contributions from pillar internals and mixed them with exact ones, so two
+    # rows in one dossier could disagree about what a point of contribution meant.
     universe = [target, *peers]
     matrix, results = build_metric_matrix(universe)
     target_results = results.get(target.ticker, {})
     evidence: list[MetricEvidence] = []
-    exact_contributions = dict(report.explain.get("metric_contributions", {}))
-
-    pillar_by_metric: dict[str, tuple[float, float, float | None]] = {}
-    for pillar_name, pillar in report.pillars.items():
-        effective_pillar = report.effective_pillar_weights.get(
-            pillar_name, report.pillar_weights.get(pillar_name, 0.0)
-        )
-        for metric_name in target_results:
-            if metric_name not in pillar.weights and metric_name not in pillar.metric_scores:
-                continue
-            fallback_contribution = (
-                pillar.contributions.get(metric_name, 0.0) * effective_pillar
-            )
-            pillar_by_metric[metric_name] = (
-                pillar.weights.get(metric_name, 0.0),
-                effective_pillar,
-                pillar.metric_scores.get(metric_name),
-            )
-            if metric_name not in exact_contributions:
-                exact_contributions[metric_name] = fallback_contribution
+    explained: dict[str, dict] = dict(report.explain.get("metrics", {}))
 
     peer_tickers = [peer.ticker for peer in peers if peer.ticker in matrix.index]
     for name, result in target_results.items():
         spec = METRICS.maybe(name)
-        metric_weight, pillar_weight, normalized = pillar_by_metric.get(
-            name, (0.0, 0.0, None)
-        )
+        detail = explained.get(name, {})
+        metric_weight = float(detail.get("effective_metric_weight", 0.0) or 0.0)
+        pillar_weight = float(detail.get("effective_pillar_weight", 0.0) or 0.0)
+        normalized = detail.get("normalized_score")
+        contribution = float(detail.get("contribution", 0.0) or 0.0)
         peer_values = (
             pd.to_numeric(matrix.loc[peer_tickers, name], errors="coerce").dropna()
             if name in matrix.columns and peer_tickers
@@ -218,7 +207,7 @@ def _metric_evidence(
                 normalized_score=float(normalized) if normalized is not None else None,
                 metric_weight=float(metric_weight),
                 effective_pillar_weight=float(pillar_weight),
-                contribution=float(exact_contributions.get(name, 0.0)),
+                contribution=contribution,
                 peer_median=median,
                 peer_q25=q25,
                 peer_q75=q75,
@@ -434,6 +423,9 @@ def _fmt(value: float | None, unit: str = "") -> str:
         return "—"
     if unit in ("ratio", "%"):
         return f"{value:.1%}"
+    if unit == "dimensionless":
+        # Multiples and Sharpe-like values: 1.42 is 1.42x, not 142%.
+        return f"{value:,.2f}x"
     if unit == "shares":
         return f"{value:,.0f}"
     if unit and unit not in ("x", "days"):

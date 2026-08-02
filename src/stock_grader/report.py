@@ -320,6 +320,22 @@ def to_json(reports: Any, *, indent: int = 2) -> str:
     return json.dumps(_encode(reports), indent=indent, allow_nan=False, sort_keys=True)
 
 
+def _provenance_line(report: GradeReport) -> str:
+    """One line that makes a pasted report self-identifying.
+
+    A markdown grade circulates detached from the run that produced it, and two
+    scores are comparable only when their config and universe fingerprints match
+    (ECOSYSTEM rule 3). Without this header a stale pasted report is
+    indistinguishable from a current one.
+    """
+    config_fp = str(report.meta.get("config_fingerprint", ""))[:12] or "unknown"
+    universe_fp = str(report.meta.get("universe_fingerprint", ""))[:12] or "unknown"
+    return (
+        f"- **As of**: {report.asof or 'unknown'}   "
+        f"**Config**: `{config_fp}`   **Universe**: `{universe_fp}`"
+    )
+
+
 def to_markdown(report: GradeReport) -> str:
     """Markdown report for pasting into notes or a PR."""
     lines = [
@@ -328,6 +344,7 @@ def to_markdown(report: GradeReport) -> str:
         f"> {DISCLAIMER}",
         "",
         f"- **Profile**: {report.profile}",
+        _provenance_line(report),
         (f"- **Weighting**: {report.weighting_method}   **Normalizer**: {report.normalizer}   "
          + f"**Aggregator**: {report.aggregator}"),
         (f"- **Coverage**: {report.coverage:.0%} "
@@ -373,13 +390,16 @@ def to_ranking_markdown(
     top: int | None = None,
 ) -> str:
     """Compact ranked-universe table, using the same ordering as terminal and JSON."""
-    lines = [
-        "# Ranked universe",
-        "",
+    lines = ["# Ranked universe", "", f"> {DISCLAIMER}", ""]
+    ordered_reports = rank_reports(reports, top=top)
+    if ordered_reports:
+        # One run, one config/universe pair: any report's provenance is the table's.
+        lines += [_provenance_line(ordered_reports[0]), ""]
+    lines += [
         "| # | ticker | grade | score | 90% model sensitivity | coverage | sector |",
         "|---:|---|:---:|---:|:---:|---:|---|",
     ]
-    for position, report in enumerate(rank_reports(reports, top=top), 1):
+    for position, report in enumerate(ordered_reports, 1):
         interval = report.sensitivity_interval
         sensitivity = (
             f"{interval[0]:.0f}–{interval[1]:.0f}"
