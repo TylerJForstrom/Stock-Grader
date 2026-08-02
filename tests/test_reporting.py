@@ -12,6 +12,7 @@ from rich.console import Console
 
 from stock_grader.profiles import ConsensusResult
 from stock_grader.report import (
+    DISCLAIMER,
     rank_reports,
     render_report,
     to_consensus_markdown,
@@ -203,3 +204,23 @@ def test_consensus_markdown_names_excluded_profiles() -> None:
 
     assert "| XYZ | B | 72.0 |" in markdown
     assert "| value | N/A | 90.0 | excluded (not graded) |" in markdown
+
+
+def test_markdown_renderers_carry_disclaimer_and_provenance():
+    """A pasted report must be self-identifying (ECOSYSTEM rule 3) and framed.
+
+    Two scores are comparable only when their fingerprints match, and a
+    markdown grade circulates detached from the run that produced it. The
+    ranking table was also the one renderer of the set missing the
+    not-investment-advice line (REVISED_PLAN item; AGENTS.md makes it binding).
+    """
+    report = _report("XYZ", 70.0, "B")
+    report.meta["config_fingerprint"] = "a" * 64
+    report.meta["universe_fingerprint"] = "b" * 64
+    single = to_markdown(report)
+    ranking = to_ranking_markdown({"XYZ": report})
+
+    for rendered in (single, ranking):
+        assert DISCLAIMER in rendered
+        assert "**As of**" in rendered
+        assert "**Config**" in rendered and "**Universe**" in rendered
