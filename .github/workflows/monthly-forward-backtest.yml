@@ -86,6 +86,10 @@ jobs:
       - name: Commit archived panels to the vault
         if: always()
         run: |
+          if [ ! -d vault ]; then
+            echo "vault checkout absent (missing VAULT_REPO_TOKEN?); nothing to commit"
+            exit 0
+          fi
           git -C vault config user.name "github-actions[bot]"
           git -C vault config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C vault add -A data/backtest_panels
@@ -104,6 +108,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p docs/forward
           git add -A research_ledger.jsonl docs/forward
           if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
           git commit -m "forward: $(date -u +%Y-%m)"
