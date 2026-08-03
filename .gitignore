@@ -11,3 +11,8 @@ htmlcov/
 .cache/
 .DS_Store
 *.parquet.tmp
+
+# Derived from the PRIVATE Stock-Vault archive (Massive/ex-Polygon, personal-use
+# licence). Stock-Grader is a PUBLIC repo; forward returns must never be pushed.
+signal_decay/
+retro_scores/
