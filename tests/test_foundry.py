@@ -241,3 +241,38 @@ def test_universe_asof_before_archive_refuses(tmp_path):
     source = FoundryDataSource(root=build_foundry(tmp_path))
     with pytest.raises(FoundryError, match="predates the event archive"):
         source.universe_tickers(asof="2026-01-01")
+
+
+def test_explicitly_requested_foundry_fails_closed_on_contract_violation(tmp_path, monkeypatch):
+    """--foundry is a request, not a hint: a hash mismatch must stop the run.
+
+    Pre-fix, a FoundryError degraded to `foundry = None` with a console line,
+    so a tampered foundry produced a panel indistinguishable from one graded
+    with no foundry at all.
+    """
+    import json
+
+    import pytest
+
+    from stock_grader import cli
+
+    dataset = tmp_path / "data" / "corporate_actions"
+    dataset.mkdir(parents=True)
+    (dataset / "dividends.parquet").write_bytes(b"not really parquet")
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "files": [
+                    {"name": "dividends.parquet", "sha256": "0" * 64, "bytes": 18}
+                ],
+            }
+        )
+    )
+
+    args = cli.build_parser().parse_args(
+        ["grade", "AAPL", "--foundry", str(tmp_path), "--no-network", "--no-sec-prices"]
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        cli._build_snapshots(["AAPL"], args, provider=None)
+    assert excinfo.value.code == 2

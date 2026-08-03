@@ -534,8 +534,14 @@ def _build_snapshots(
                 foundry = FoundryDataSource(root=target)
             foundry.dividends()  # fail fast on contract violations
         except FoundryError as exc:
-            status_console.print(f"[yellow]foundry unavailable: {exc}[/yellow]")
-            foundry = None
+            # FAIL CLOSED: --foundry was explicitly requested, so a broken or
+            # tampered foundry must stop the run, not quietly grade without it.
+            # The old console-line-and-continue path meant a hash mismatch — the
+            # exact thing the manifest contract exists to catch — produced a
+            # panel identical to one graded with no foundry at all, and nothing
+            # recorded the difference.
+            console.print(f"[red]foundry contract violation: {exc}[/red]")
+            raise SystemExit(2) from exc
 
     snapshots: list[SecuritySnapshot] = []
     status = status_console.status("[dim]loading securities…[/dim]") if len(tickers) > 1 else None
@@ -648,10 +654,12 @@ def _build_snapshots(
             # beta x the index dividend yield.
             snapshot.meta["benchmark_is_price_only"] = True
         if foundry is not None:
-            try:
-                dps = foundry.trailing_dps(ticker)
-            except Exception:
-                dps = None
+            # trailing_dps returns None for a ticker the foundry has no usable
+            # rows for — absence is unknown, never zero. A FoundryError here is
+            # a contract violation mid-run and propagates; the old blanket
+            # except swallowed hash mismatches into silent absence.
+            dps = foundry.trailing_dps(ticker)
+            snapshot.meta["foundry_status"] = "verified"
             if dps is not None:
                 snapshot.meta["foundry_dps_ttm"] = dps
                 snapshot.meta["foundry_dps_source"] = "stock-data corporate_actions"
