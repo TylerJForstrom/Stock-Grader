@@ -43,7 +43,28 @@ jobs:
             echo "STOCK_GRADER_CONTACT is empty: set SEC_CONTACT_EMAIL before regenerating." >&2
             exit 1
           fi
-          ASOF=$(date -u -d '2 days ago' +%F)
+          # Derive asof from the archive's OWN generation instant, not the
+          # calendar: the guard requires generation >= asof+1 03:00 UTC, and SEC
+          # generates at varying times (measured 16:18 UTC weekdays, 04:38 UTC
+          # on a weekend) — a fixed calendar offset raced it and lost.
+          ASOF=$(python - <<'EOF'
+          import datetime as dt
+          from email.utils import parsedate_to_datetime
+
+          from stock_grader.data.sec import SECClient
+          from stock_grader.data.sec_bulk import SECBulkFacts
+
+          bulk = SECBulkFacts(SECClient())
+          if bulk.ensure() is None:
+              raise SystemExit("SEC bulk archive unavailable")
+          generated = parsedate_to_datetime(bulk.provenance()["last_modified"])
+          if generated.tzinfo is None:
+              generated = generated.replace(tzinfo=dt.UTC)
+          admissible = (generated - dt.timedelta(hours=3)).date() - dt.timedelta(days=1)
+          print(admissible.isoformat())
+          EOF
+          )
+          echo "asof=$ASOF (max admissible for this archive generation)"
           python scripts/generate_sec_float_universe.py \
             --stock-data foundry \
             --spec config/universe_spec_v2.json \
