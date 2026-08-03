@@ -717,6 +717,65 @@ def test_freeze_writes_immutable_dated_panel(tmp_path, monkeypatch):
     assert out.read_bytes() == before
 
 
+def test_freeze_with_foundry_attaches_dps_fallback_to_snapshots(tmp_path, monkeypatch):
+    """The scheduled freeze is the only run that produces forward evidence, so
+    it must actually exercise the foundry dividend fallback: a freeze given
+    --foundry attaches foundry_dps_ttm to the snapshots it grades."""
+    from tests.test_foundry import build_foundry
+
+    foundry_root = build_foundry(tmp_path / "foundry")
+    tickers = ["AAPL"] + [f"T{index:02d}" for index in range(15)]
+    _patch_freeze_universe(
+        monkeypatch,
+        [SecuritySnapshot(ticker=ticker, asof=date(2026, 7, 29)) for ticker in tickers],
+    )
+
+    class _Provider:
+        def fetch(self, ticker, *, asof, pit_mode, refresh):
+            return SecuritySnapshot(ticker=ticker, asof=asof)
+
+    monkeypatch.setattr(cli, "_sec_provider_from_args", lambda _args, _count: _Provider())
+
+    captured: dict[str, list[SecuritySnapshot]] = {}
+
+    def fake_grade(snapshots, _config):
+        captured["snapshots"] = snapshots
+        return {
+            snapshot.ticker: _report(snapshot.ticker, 50.0, "B", profile="all_weather")
+            for snapshot in snapshots
+        }
+
+    monkeypatch.setattr(cli, "grade_universe", fake_grade)
+
+    args = cli.build_parser().parse_args(
+        [
+            "freeze",
+            "--universe",
+            "ignored.txt",
+            "--out",
+            str(tmp_path / "frozen"),
+            "--asof",
+            "2026-07-29",
+            "--no-network",
+            "--no-sec-prices",
+            "--foundry",
+            str(foundry_root),
+        ]
+    )
+    assert cli.cmd_freeze(args) == 0
+    assert (tmp_path / "frozen" / "all_weather" / "2026-07-29.parquet").exists()
+
+    by_ticker = {snapshot.ticker: snapshot for snapshot in captured["snapshots"]}
+    assert len(by_ticker) == 16
+    # Every graded snapshot records that a verified foundry was consulted…
+    assert all(s.meta.get("foundry_status") == "verified" for s in by_ticker.values())
+    # …the fixture's dividend payer carries the trailing sum the fallback needs…
+    assert by_ticker["AAPL"].meta["foundry_dps_ttm"] == pytest.approx(0.50)
+    assert by_ticker["AAPL"].meta["foundry_dps_source"] == "stock-data corporate_actions"
+    # …and a ticker the foundry has no rows for stays unknown, never zero.
+    assert "foundry_dps_ttm" not in by_ticker["T00"].meta
+
+
 def test_freeze_refuses_a_nearly_ungraded_panel(
     tmp_path,
     monkeypatch,
@@ -939,7 +998,7 @@ def test_monthly_freeze_workflow_keeps_deep_clock_and_adds_wide_bulk_clock() -> 
     invocations = [line.strip() for line in workflow.splitlines() if "stock-grader freeze" in line]
     assert invocations[0] == (
         "stock-grader freeze --all-profiles --universe config/universe_default.txt "
-        "--out frozen_scores"
+        '--out frozen_scores "${FOUNDRY_ARGS[@]}"'
     )
     assert len(invocations) == 2
     # The wide universe is resolved through a pointer so the quarterly
@@ -957,6 +1016,47 @@ def test_monthly_freeze_workflow_keeps_deep_clock_and_adds_wide_bulk_clock() -> 
     assert "--bulk-facts auto" in workflow
     assert "--price-provider sec" in workflow
     assert "git add -A frozen_scores frozen_scores_wide" in workflow
+
+
+def test_monthly_freeze_workflow_wires_the_foundry_dividend_fallback() -> None:
+    """The scheduled freeze produces all forward evidence, so it must hand the
+    foundry to BOTH freeze invocations — and only when its checkout succeeded,
+    because --foundry fails closed and a checkout flake must cost the fallback,
+    never the month's panels."""
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
+    ).read_text(encoding="utf-8")
+
+    # A local checkout, not url_base mode: reads are hash-verified files that
+    # cannot flake mid-run, and the directory stays out of the committed paths.
+    assert "repository: TylerJForstrom/Stock-Data" in workflow
+    assert "path: stock-data" in workflow
+    assert "id: stock_data" in workflow
+    checkout = workflow.split("- name: Check out Stock-Data foundry", 1)[1]
+    checkout = checkout.split("      - ", 1)[0]
+    assert any(
+        line.strip() == "continue-on-error: true"
+        for line in checkout.splitlines()
+        if not line.lstrip().startswith("#")
+    ), "a Stock-Data checkout flake must not abort the job before any panel freezes"
+
+    # Both freeze invocations receive the guarded foundry argument.
+    freeze_lines = [line for line in workflow.splitlines() if "stock-grader freeze" in line]
+    assert len(freeze_lines) == 2
+    assert '"${FOUNDRY_ARGS[@]}"' in freeze_lines[0]
+    wide_step = workflow.split("- name: Freeze wide", 1)[1].split("- name: Commit", 1)[0]
+    assert '"${FOUNDRY_ARGS[@]}"' in wide_step
+    assert workflow.count("FOUNDRY_ARGS=(--foundry stock-data)") == 2
+    assert workflow.count("steps.stock_data.outcome == 'success'") == 2
+
+    # The missing-fallback alarm fires AFTER the commit: panels frozen without
+    # the fallback are still point-in-time evidence and must reach the branch.
+    alarm = workflow.find("- name: Alarm if the foundry fallback was unavailable")
+    commit = workflow.find("- name: Commit")
+    assert alarm != -1 and commit != -1 and commit < alarm
+    alarm_step = workflow[alarm:]
+    assert "if: always() && steps.stock_data.outcome != 'success'" in alarm_step
+    assert "exit 1" in alarm_step
 
 
 def test_monthly_freeze_workflow_retries_the_triggering_branch() -> None:

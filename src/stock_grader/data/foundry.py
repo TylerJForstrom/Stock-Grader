@@ -68,6 +68,7 @@ class FoundryDataSource:
         self.url_base = url_base.rstrip("/") if url_base is not None else None
         self.verify_hashes = verify_hashes
         self.timeout = timeout
+        self._dividends_frame: pd.DataFrame | None = None
 
     # -- transport ---------------------------------------------------------
 
@@ -254,9 +255,17 @@ class FoundryDataSource:
         Columns include ticker, period_start, period_end, span_type,
         dps_current_basis, derived, approximate, flags. Fiscal-period
         granularity — no ex-dates (the foundry manifests state this limit).
+
+        Read, hash-verified, and parsed once per instance; every call returns
+        the same cached frame. :meth:`trailing_dps` runs once per ticker across
+        a whole universe, so re-verifying the parquet on each call would turn
+        one dataset read into thousands. Callers must treat the frame as
+        read-only.
         """
-        blob = self._read_dataset_file("data/corporate_actions", "dividends.parquet")
-        return pd.read_parquet(io.BytesIO(blob))
+        if self._dividends_frame is None:
+            blob = self._read_dataset_file("data/corporate_actions", "dividends.parquet")
+            self._dividends_frame = pd.read_parquet(io.BytesIO(blob))
+        return self._dividends_frame
 
     def splits(self) -> pd.DataFrame:
         """Split events: ticker, effective_date, ratio (post/pre), confidence."""

@@ -16,6 +16,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Check out Stock-Data foundry (dividend fallback)
+        # The dividend-yield fallback (foundry_dps_ttm) only fires when freeze
+        # is handed a foundry, and this scheduled run is the one that produces
+        # all forward evidence — without this step the fallback never runs on
+        # the clock that matters. A local checkout beats url_base mode: every
+        # read is sha256-verified against files that cannot flake mid-run,
+        # while raw-URL fetches can fail per file. --foundry now fails closed
+        # in the CLI (a broken or tampered foundry stops the run before any
+        # panel is written), so a checkout flake must not be allowed to look
+        # like tampering: continue-on-error here, and the freeze steps pass
+        # --foundry only when this checkout succeeded. A dataset that checked
+        # out fine but violates its own manifest contract still refuses the
+        # freeze — that alarm is the CLI's, and it is intentional.
+        id: stock_data
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: TylerJForstrom/Stock-Data
+          path: stock-data
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -26,6 +45,7 @@ jobs:
       - name: Freeze scores (bundled universe, every profile)
         env:
           STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
+          FOUNDRY_AVAILABLE: ${{ steps.stock_data.outcome == 'success' }}
         run: |
           # Fail fast rather than degrade to a placeholder SEC User-Agent: an
           # empty contact is impolite to SEC and violates this repo's own
@@ -34,15 +54,25 @@ jobs:
             echo "STOCK_GRADER_CONTACT is empty: set the SEC_CONTACT_EMAIL repository secret to a real contact address before running the freeze." >&2
             exit 1
           fi
+          # --foundry fails closed, so hand it over only when the checkout
+          # actually succeeded; a flake costs the fallback (alarmed at the end
+          # of the job), never the month's panels.
+          FOUNDRY_ARGS=()
+          if [ "$FOUNDRY_AVAILABLE" = "true" ]; then
+            FOUNDRY_ARGS=(--foundry stock-data)
+          else
+            echo "::warning::Stock-Data checkout failed; freezing without the foundry dividend fallback"
+          fi
           # One SEC fetch, one snapshot build, a panel per profile: the extra
           # profiles are free in network terms and multiply the forward evidence.
-          stock-grader freeze --all-profiles --universe config/universe_default.txt --out frozen_scores
+          stock-grader freeze --all-profiles --universe config/universe_default.txt --out frozen_scores "${FOUNDRY_ARGS[@]}"
       - name: Freeze wide SEC-float universe (fundamentals-first)
         # Runs even if the narrow freeze refused, so one profile's refusal on one
         # universe cannot cost the other universe a whole month of forward evidence.
         if: always()
         env:
           STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
+          FOUNDRY_AVAILABLE: ${{ steps.stock_data.outcome == 'success' }}
         run: |
           # The public workflow cannot read the private vault. SEC insider prices
           # remain sparse, so price-defined profiles may refuse under the existing
@@ -55,12 +85,17 @@ jobs:
           # rather than freezing against nothing.
           WIDE="config/$(cat config/universe_wide_current)"
           [ -f "$WIDE" ] || { echo "::error::universe pointer names missing file $WIDE"; exit 1; }
+          FOUNDRY_ARGS=()
+          if [ "$FOUNDRY_AVAILABLE" = "true" ]; then
+            FOUNDRY_ARGS=(--foundry stock-data)
+          fi
           stock-grader freeze \
             --all-profiles \
             --universe "$WIDE" \
             --out frozen_scores_wide \
             --bulk-facts auto \
-            --price-provider sec
+            --price-provider sec \
+            "${FOUNDRY_ARGS[@]}"
 
       - name: Commit
         # Every scheduled workflow in this ecosystem commits under `if: always()`,
@@ -91,4 +126,14 @@ jobs:
             git rebase "$remote_ref" || exit 1
             if git push origin "HEAD:refs/heads/$target_branch"; then exit 0; fi
           done
+          exit 1
+
+      - name: Alarm if the foundry fallback was unavailable
+        # Placed AFTER the commit on purpose: the panels frozen without the
+        # dividend fallback are still point-in-time evidence and are already
+        # pushed; this step only turns the run red so the missing fallback is
+        # a paged alarm, not a silent degradation.
+        if: always() && steps.stock_data.outcome != 'success'
+        run: |
+          echo "::error::Stock-Data foundry checkout failed; this month's panels froze without the dividend fallback (foundry_dps_ttm)" >&2
           exit 1
