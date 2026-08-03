@@ -942,7 +942,17 @@ def test_monthly_freeze_workflow_keeps_deep_clock_and_adds_wide_bulk_clock() -> 
         "--out frozen_scores"
     )
     assert len(invocations) == 2
-    assert "--universe config/universe_liq1000_2026-07-30.txt" in workflow
+    # The wide universe is resolved through a pointer so the quarterly
+    # regeneration can advance it without editing the workflow; the pointer must
+    # name a dated artifact that actually exists.
+    assert 'WIDE="config/$(cat config/universe_wide_current)"' in workflow
+    assert '--universe "$WIDE"' in workflow
+    pointer = (
+        Path(__file__).resolve().parent.parent / "config" / "universe_wide_current"
+    ).read_text(encoding="utf-8").strip()
+    assert (Path(__file__).resolve().parent.parent / "config" / pointer).is_file(), (
+        f"universe pointer names a missing file: {pointer}"
+    )
     assert "--out frozen_scores_wide" in workflow
     assert "--bulk-facts auto" in workflow
     assert "--price-provider sec" in workflow

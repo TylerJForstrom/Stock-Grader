@@ -730,3 +730,73 @@ def test_cached_archive_is_rejected_when_its_bytes_do_not_match_the_recorded_sha
     bulk = SECBulkFacts(StubClient(None, offline=True), cache_dir=tmp_path)
     with pytest.raises(SECBulkFactsError, match="does not match its recorded sha256"):
         bulk.ensure()
+
+
+def test_second_signal_rejections_are_opt_in_and_catch_scale_errors() -> None:
+    """A scalar ceiling cannot separate a $4T scale error from a real $4T megacap.
+
+    Measured on the live archive: every corrupt cover-page float is >=1,260x the
+    issuer's annual revenue (real issuers peak ~135x), and the low-revenue
+    stragglers jump >2,000x their own recent median (genuine growth peaks ~11x).
+    Cabot Corp's $4.43 quadrillion tag ranked FIRST under v1.
+    """
+    facts = FixtureFacts()
+    # AAA: corrupt newest observation (1000x its own history, 100000x revenue),
+    # sane older ones — must seat on the older value.
+    history = [
+        {"end": f"202{i}-06-30", "filed": f"202{i}-07-15", "val": 4.0e9 + i * 1e8}
+        for i in range(3, 6)
+    ]
+    corrupt = {"end": "2026-06-30", "filed": "2026-07-15", "val": 4.4e12}  # UNDER the ceiling: only a second signal can catch it
+    facts.rows["0000000001"] = {
+        "facts": {
+            "dei": {"EntityPublicFloat": {"units": {"USD": [*history, corrupt]}}},
+            "us-gaap": {
+                "Revenues": {
+                    "units": {
+                        "USD": [
+                            {
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2026-02-01",
+                                "val": 4.0e9,
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+    }
+
+    spec = {
+        **_spec(),
+        "max_float_to_revenue": 500,
+        "max_float_jump_vs_recent": 1000,
+    }
+    build = build_sec_float_universe_with_drops(
+        FixtureSymbols(), facts, spec, date(2026, 7, 31)
+    )
+    seated = {c.ticker: c for c in build.candidates}
+    assert seated["AAA"].public_float == pytest.approx(4.5e9), (
+        "the corrupt observation must be rejected and the sane older one seated"
+    )
+    reasons = {n.reason for n in build.notes if n.ticker == "AAA"}
+    assert reasons & {"float_implausible_vs_revenue", "float_jump_vs_history"}
+
+    # Without the opt-in keys (the immutable v1 spec), behavior is unchanged:
+    # the corrupt value wins because it passes the bare ceiling. That is the
+    # documented v1 defect, preserved so v1 rebuilds stay reproducible.
+    v1 = build_sec_float_universe_with_drops(
+        FixtureSymbols(), facts, _spec(), date(2026, 7, 31)
+    )
+    assert {c.ticker: c.public_float for c in v1.candidates}["AAA"] == pytest.approx(4.4e12)
+
+
+def test_missing_revenue_skips_the_cross_check_rather_than_failing() -> None:
+    """Absence of the cross-check datum is not evidence of corruption."""
+    facts = FixtureFacts()  # fixture issuers file no revenue at all
+    spec = {**_spec(), "max_float_to_revenue": 500}
+    build = build_sec_float_universe_with_drops(
+        FixtureSymbols(), facts, spec, date(2026, 7, 31)
+    )
+    assert build.candidates, "no-revenue issuers must still seat on the ceiling alone"

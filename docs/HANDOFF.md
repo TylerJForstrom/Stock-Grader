@@ -104,8 +104,10 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
   power table) is still open and belongs with it.
 - Li-Mohanram mechanical forecasts (Stock-Data derived artifact; spec in
   docs/DATA-FOUNDRY.md).
-- Paper-trade bridge: sim's AlpacaPaperAdapter consuming frozen_scores
-  (artifacts-not-imports).
+- ~~Paper-trade bridge~~ DONE (M3, 2026-08-03): shadow arms in Stock-Vault
+  replay `paper.target_portfolio` over every profile's frozen panels against
+  the EOD archive; one journal per arm, byte-deterministic, calibrated against
+  the real account's fills.
 - §4 dossier additions (per-peer comp table, SBC, insider activity, red-flag
   display from the events dataset).
 - Pre-registration record kind in research_manifest (declare grid before

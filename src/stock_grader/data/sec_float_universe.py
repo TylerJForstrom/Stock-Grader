@@ -184,6 +184,13 @@ def _cik_text(value: object) -> str | None:
     return text.zfill(10) if text.isdecimal() else text
 
 
+def _spec_optional_positive(spec: dict[str, Any], key: str) -> float | None:
+    """An opt-in positive bound: absent means the check is OFF, junk raises."""
+    if key not in spec:
+        return None
+    return _spec_positive_number(spec, key, 0.0)
+
+
 def _spec_positive_number(spec: dict[str, Any], key: str, default: float) -> float:
     """Read an optional positive numeric bound from the spec, refusing junk.
 
@@ -232,6 +239,44 @@ def _required_float(record: dict[str, Any]) -> float:
     return value
 
 
+_REVENUE_TAGS = (
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "Revenues",
+    "SalesRevenueNet",
+)
+
+
+def _latest_annual_revenue(facts: dict[str, Any], asof: date) -> float | None:
+    """Newest fiscal-year revenue filed on or before asof, or None.
+
+    Used only as a plausibility cross-check for the float; a missing revenue
+    skips the check rather than failing the candidate, because absence of the
+    cross-check datum is not evidence the float is corrupt (the hard ceiling
+    still binds).
+    """
+    gaap = facts.get("facts", {}).get("us-gaap", {})
+    best: tuple[str, float] | None = None
+    for tag in _REVENUE_TAGS:
+        for record in gaap.get(tag, {}).get("units", {}).get("USD", []):
+            if not isinstance(record, dict):
+                continue
+            filed = record.get("filed")
+            value = record.get("val")
+            if (
+                record.get("fp") == "FY"
+                and str(record.get("form", "")).startswith("10-K")
+                and isinstance(filed, str)
+                and filed <= asof.isoformat()
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+                and float(value) > 0
+            ):
+                if best is None or filed > best[0]:
+                    best = (filed, float(value))
+    return best[1] if best else None
+
+
 def _has_dei_taxonomy(facts: dict[str, Any]) -> bool:
     """True when the member reports under the ``dei`` taxonomy at all.
 
@@ -252,6 +297,9 @@ def _latest_float(
     *,
     max_value: float,
     max_age_days: float,
+    max_to_revenue: float | None = None,
+    revenue_floor: float = 1e7,
+    max_jump_vs_recent: float | None = None,
     rejections: list[tuple[str, str]] | None = None,
 ) -> tuple[float, date, date] | None:
     """Latest point-in-time public float, subject to plausibility and recency bounds.
@@ -289,7 +337,11 @@ def _latest_float(
     # selected. A superseded historical value is ordinary filing history, not a
     # defect, so it must not be reported; the value that WOULD have set this
     # issuer's rank is the one worth objecting to.
-    for end, filed, value in sorted(eligible, key=lambda item: (item[1], item[0]), reverse=True):
+    revenue = (
+        _latest_annual_revenue(facts, asof) if max_to_revenue is not None else None
+    )
+    ordered = sorted(eligible, key=lambda item: (item[1], item[0]), reverse=True)
+    for index, (end, filed, value) in enumerate(ordered):
         if filed < oldest_filed:
             # Sorted by filed descending, so everything after this is staler too.
             if rejections is not None:
@@ -315,6 +367,49 @@ def _latest_float(
                     )
                 )
             continue
+        # SECOND SIGNALS (opt-in via the spec). A scalar ceiling cannot separate
+        # a $4T scale error from a real $4T megacap, but the issuer's own books
+        # can: measured on the live archive, every corrupt cover-page float is
+        # >= 1,260x the issuer's annual revenue while no real company exceeds
+        # ~135x, and the low-revenue stragglers jump >2,000x their own recent
+        # filing history while genuine growth peaks below ~11x.
+        if max_to_revenue is not None and revenue is not None and revenue >= revenue_floor:
+            if value > max_to_revenue * revenue:
+                if rejections is not None:
+                    rejections.append(
+                        (
+                            "float_implausible_vs_revenue",
+                            (
+                                f"end={end.isoformat()} filed={filed.isoformat()} "
+                                f"val={value:.6g} revenue={revenue:.6g} "
+                                f"ratio={value / revenue:.1f} max={max_to_revenue:g}"
+                            ),
+                        )
+                    )
+                continue
+        if max_jump_vs_recent is not None:
+            history = [v for _, _, v in ordered[index + 1 :][:5]]
+            if len(history) >= 2:
+                history.sort()
+                mid = len(history) // 2
+                median = (
+                    history[mid]
+                    if len(history) % 2
+                    else (history[mid - 1] + history[mid]) / 2
+                )
+                if median > 0 and value > max_jump_vs_recent * median:
+                    if rejections is not None:
+                        rejections.append(
+                            (
+                                "float_jump_vs_history",
+                                (
+                                    f"end={end.isoformat()} filed={filed.isoformat()} "
+                                    f"val={value:.6g} recent_median={median:.6g} "
+                                    f"ratio={value / median:.1f} max={max_jump_vs_recent:g}"
+                                ),
+                            )
+                        )
+                    continue
         return value, end, filed
     return None
 
@@ -452,6 +547,9 @@ def build_sec_float_universe_with_drops(
     max_age = _spec_positive_number(
         spec, "max_observation_age_days", _DEFAULT_MAX_OBSERVATION_AGE_DAYS
     )
+    max_to_revenue = _spec_optional_positive(spec, "max_float_to_revenue")
+    revenue_floor = _spec_positive_number(spec, "float_revenue_floor", 1e7)
+    max_jump = _spec_optional_positive(spec, "max_float_jump_vs_recent")
     exclude_etf = spec["exclude_etf"]
     exclude_test_issue = spec["exclude_test_issue"]
     require_sec_cik = spec["require_sec_cik"]
@@ -565,7 +663,14 @@ def build_sec_float_universe_with_drops(
             )
         rejections: list[tuple[str, str]] = []
         observation = _latest_float(
-            facts, asof, max_value=max_float, max_age_days=max_age, rejections=rejections
+            facts,
+            asof,
+            max_value=max_float,
+            max_age_days=max_age,
+            max_to_revenue=max_to_revenue,
+            revenue_floor=revenue_floor,
+            max_jump_vs_recent=max_jump,
+            rejections=rejections,
         )
         for reason, detail in rejections:
             log.warning(
