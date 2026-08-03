@@ -1330,7 +1330,9 @@ def cmd_build_panel(args: argparse.Namespace) -> int:
         console.print(
             f"built {args.profile}: {sum(p.kept for p in result.periods)} rows across "
             f"{len(result.periods)} period(s), {result.qualifying_periods} qualifying, "
-            f"ready_for_backtest={result.ready_for_backtest}"
+            f"ready_for_backtest={result.ready_for_backtest}, "
+            f"dividend_coverage={result.dividend_coverage:.1%} "
+            f"(return_is_total={result.attestations.get('return_is_total', False)})"
         )
         for p in result.periods:
             console.print(

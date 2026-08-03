@@ -247,3 +247,38 @@ def test_market_eod_panel_refuses_unparseable_numeric_feed_values(tmp_path, bad_
     provider = VaultPriceProvider(VaultDataSource(root), cache_dir=tmp_path / "provider-cache")
     with pytest.raises(VaultError, match="unparseable numeric"):
         provider.get("AAPL", end=dt.date(2026, 7, 28))
+
+
+def test_dividend_archive_reads_verified_and_range_filtered(tmp_path):
+    root = tmp_path / "vault"
+    (root / "data").mkdir(parents=True)
+    month = root / "data" / "dividends" / "2026-08"
+    month.mkdir(parents=True)
+    records = [
+        {
+            "ticker": "AAPL",
+            "ex_dividend_date": "2026-08-08",
+            "cash_amount": 0.26,
+            "currency": "USD",
+            "dividend_type": "CD",
+        }
+    ]
+    (month / "2026-08.jsonl.gz").write_bytes(_gz_jsonl(records))
+    _manifest(month, ["2026-08.jsonl.gz"])
+
+    vault = VaultDataSource(root)
+    assert vault.dividend_months() == ["2026-08"]
+    frame = vault.dividends(dt.date(2026, 8, 1), dt.date(2026, 8, 31))
+    assert frame.iloc[0]["cash_amount"] == pytest.approx(0.26)
+    assert frame.iloc[0]["ex_dividend_date"] == dt.date(2026, 8, 8)
+    assert vault.dividends(dt.date(2026, 9, 1), dt.date(2026, 9, 30)).empty
+
+    # Same manifest discipline as every other vault dataset: tamper -> refuse.
+    _manifest(month, ["2026-08.jsonl.gz"], corrupt="2026-08.jsonl.gz")
+    with pytest.raises(VaultError, match="sha256"):
+        VaultDataSource(root).dividends()
+
+    # A clone that predates the collector has no months and no opinions.
+    bare = tmp_path / "bare"
+    (bare / "data").mkdir(parents=True)
+    assert VaultDataSource(bare).dividend_months() == []

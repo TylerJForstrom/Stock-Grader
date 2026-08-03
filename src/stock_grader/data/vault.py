@@ -235,6 +235,75 @@ class VaultDataSource:
         panel = self.market_eod_panel(start=start, end=end)
         return self._series_from_panel(panel, ticker)
 
+    # -- per-ex-date cash dividends ----------------------------------------
+
+    def dividend_months(self) -> list[str]:
+        """Ex-date months with an archived dividend artifact, ascending.
+
+        The vault stores one ``YYYY-MM/YYYY-MM.jsonl.gz`` per calendar month of
+        ex-dates. An empty list means the clone predates the dividend
+        collector — callers must degrade to price-only behavior, never guess.
+        """
+        root = self.root / "data" / "dividends"
+        if not root.is_dir():
+            return []
+        months: list[str] = []
+        for month_dir in sorted(root.iterdir()):
+            if not month_dir.is_dir():
+                continue
+            try:
+                dt.datetime.strptime(month_dir.name, "%Y-%m")
+            except ValueError:
+                continue
+            if (month_dir / f"{month_dir.name}.jsonl.gz").is_file():
+                months.append(month_dir.name)
+        return months
+
+    def dividends(
+        self, start: dt.date | None = None, end: dt.date | None = None
+    ) -> pd.DataFrame:
+        """Cash dividend records for ex-date months overlapping ``[start, end]``.
+
+        Hash-verified via each month's manifest, like every vault dataset.
+        Columns: ``ticker`` (upper), ``ex_dividend_date`` (:class:`datetime.date`),
+        ``cash_amount`` (float, as-declared per share — the same unadjusted
+        basis as market_eod's raw closes), ``currency`` (upper, ``""`` when the
+        provider omitted it), ``dividend_type``. A malformed record raises:
+        this archive is written by our own collector, so damage means the
+        artifact cannot be trusted, not that a row should be skipped.
+        """
+        first = start.strftime("%Y-%m") if start else None
+        last = end.strftime("%Y-%m") if end else None
+        records: list[dict] = []
+        for month in self.dividend_months():
+            if (first is not None and month < first) or (last is not None and month > last):
+                continue
+            dataset = f"data/dividends/{month}"
+            for row in self._jsonl_gz(self._read_verified(dataset, f"{month}.jsonl.gz")):
+                try:
+                    ex_date = dt.date.fromisoformat(str(row["ex_dividend_date"]))
+                    cash = float(row["cash_amount"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise VaultError(
+                        f"malformed dividend record in {dataset}: {row!r}"
+                    ) from exc
+                ticker = str(row.get("ticker", "")).upper().strip()
+                if not ticker or not (cash >= 0.0):
+                    raise VaultError(f"malformed dividend record in {dataset}: {row!r}")
+                records.append(
+                    {
+                        "ticker": ticker,
+                        "ex_dividend_date": ex_date,
+                        "cash_amount": cash,
+                        "currency": str(row.get("currency") or "").upper().strip(),
+                        "dividend_type": str(row.get("dividend_type") or ""),
+                    }
+                )
+        columns = ["ticker", "ex_dividend_date", "cash_amount", "currency", "dividend_type"]
+        if not records:
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame(records, columns=columns)
+
     # -- borrow ------------------------------------------------------------
 
     def borrow_latest(self) -> pd.DataFrame:
