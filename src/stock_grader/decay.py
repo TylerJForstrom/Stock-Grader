@@ -71,6 +71,14 @@ class DecayConfig:
     delisting_return: float | None = None  # None = drop and count
     split_screen: bool = True
     non_overlapping_only: bool = False
+    # Empirically supported as NECESSARY floors — not sufficiency — by the
+    # planted-IC calibration (docs/calibration/power_table_2026-08-03.md,
+    # synthetic grid, production gate): below 11 periods the gate is
+    # structurally closed; at 12 periods only planted rank IC >= 0.03 (1000
+    # names) / 0.05 (250 names) is detected with >= 50% probability; and even
+    # AT 36 periods x 250 names power is ~0.15 at IC 0.02 and ~0.95 only at
+    # IC 0.05. Meeting these floors therefore must never be read as "powered
+    # for realistic IC" — they only mark where the gate stops being hopeless.
     min_periods_for_power: int = 36
     min_cross_section_for_power: int = 100
 
