@@ -100,8 +100,10 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
 
 ### 10. Deferred (needs data volume or a decision)
 - ~~§6 panel builder~~ DONE (M1, 2026-08-02): `stock-grader build-panel` +
-  `monthly-forward-backtest.yml`. Backtest calibration harness (planted-IC
-  power table) is still open and belongs with it.
+  `monthly-forward-backtest.yml`. ~~Backtest calibration harness (planted-IC
+  power table)~~ DONE (2026-08-03): `scripts/power_table.py` +
+  `docs/calibration/power_table_2026-08-03.{md,json}` — read it before the
+  first real forward verdict.
 - Li-Mohanram mechanical forecasts (Stock-Data derived artifact; spec in
   docs/DATA-FOUNDRY.md).
 - ~~Paper-trade bridge~~ DONE (M3, 2026-08-03): shadow arms in Stock-Vault
