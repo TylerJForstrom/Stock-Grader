@@ -1112,6 +1112,13 @@ def cmd_freeze(args: argparse.Namespace) -> int:
                 "profile": report.profile,
                 "config_fingerprint": report.meta.get("config_fingerprint"),
                 "universe_fingerprint": report.meta.get("universe_fingerprint"),
+                # Additive (schema stays 1.0): only a --pit freeze can honestly
+                # claim its feature set closed at the signal date; without --pit
+                # the SEC cache's contents at freeze time are the true bound and
+                # writing signal_date would be an unearned attestation.
+                "filed_through": (
+                    signal_date.isoformat() if getattr(args, "pit", False) else None
+                ),
                 "universe_id": selection.universe_id,
                 "universe_spec_sha256": selection.spec_sha256,
                 "code_commit": commit,
@@ -1156,6 +1163,80 @@ def cmd_freeze(args: argparse.Namespace) -> int:
             "(structural, not a regression); the run stays green[/yellow]"
         )
     return 0
+
+
+def cmd_decay(args: argparse.Namespace) -> int:
+    """Measure the score's rank-IC decay across holding horizons.
+
+    A sweep is N extra looks at the same data: every horizon is charged as its
+    own ledger trial on one shared denominator, and only the pre-declared
+    primary horizon may pass the gate.
+    """
+    from .decay import (
+        DecayConfig,
+        decay_to_markdown,
+        evaluate_decay,
+        record_sweep_trials,
+        write_decay_artifacts,
+    )
+
+    config = DecayConfig(
+        horizons=tuple(args.horizons),
+        primary_horizon=args.primary_horizon,
+        quantiles=args.quantiles,
+        min_cross_section=args.min_cross_section,
+        transaction_cost_bps=args.transaction_cost_bps,
+        bootstrap_samples=args.bootstrap_samples,
+        seed=args.seed,
+        delisting_return=args.delisting_return,
+        split_screen=args.split_screen,
+        non_overlapping_only=args.non_overlapping,
+    )
+    if not args.allow_unverified_panel:
+        console.print(
+            "[red]decay panels fail 4 of 5 contract items by construction (surviving "
+            "universe, price-only returns, no delisting proceeds, no filing cutoff); "
+            "rerun with --allow-unverified-panel to acknowledge that[/red]"
+        )
+        return 2
+    profiles = profile_names() if args.all_profiles else [args.profile]
+    if args.all_profiles:
+        status_console.print(
+            f"[yellow]--all-profiles charges {len(config.horizons)} x {len(profiles)} "
+            f"= {len(config.horizons) * len(profiles)} trials to the ledger[/yellow]"
+        )
+    exit_code = 0
+    for profile in profiles:
+        frozen_dir = Path(args.frozen_dir) / profile
+        try:
+            curve, panels = evaluate_decay(
+                frozen_dir,
+                args.vault,
+                profile=profile,
+                config=config,
+                allow_fingerprint_drift=args.allow_fingerprint_drift,
+                archive_through=args.archive_through,
+            )
+        except ValueError as exc:
+            console.print(f"[red]{profile}: {exc}[/red]")
+            exit_code = 2
+            continue
+        curve.ledger = record_sweep_trials(curve, ledger_path=Path(args.ledger))
+        out_dir = write_decay_artifacts(curve, panels, args.out)
+        status_console.print(
+            f"[dim]{profile}: {curve.ledger['trials_added']} trial(s) recorded in "
+            f"{args.ledger} (lifetime: {curve.ledger['lifetime_trials']}); artifacts "
+            f"in {out_dir}[/dim]"
+        )
+        if args.format == "json":
+            print(to_json(curve.to_dict()))
+        elif args.format == "md":
+            print(decay_to_markdown(curve))
+        else:
+            from rich.markdown import Markdown
+
+            console.print(Markdown(decay_to_markdown(curve)))
+    return exit_code
 
 
 def cmd_build_panel(args: argparse.Namespace) -> int:
@@ -1629,6 +1710,59 @@ def build_parser() -> argparse.ArgumentParser:
     p_build.add_argument("--format", choices=("text", "json"), default="text")
     p_build.set_defaults(func=cmd_build_panel)
 
+    p_decay = sub.add_parser(
+        "decay",
+        help="measure the score's rank-IC decay across holding horizons (5/21/63/126d)",
+    )
+    p_decay.add_argument(
+        "--frozen-dir",
+        default="frozen_scores",
+        help="root of the frozen panels; the profile subdirectory is appended",
+    )
+    p_decay.add_argument(
+        "--vault", required=True, help="local Stock-Vault clone (private, local-only)"
+    )
+    p_decay.add_argument("--profile", default="all_weather", choices=profile_names())
+    p_decay.add_argument(
+        "--all-profiles",
+        action="store_true",
+        help="sweep every profile; charges len(horizons) x 11 trials to the ledger",
+    )
+    p_decay.add_argument("--horizons", nargs="+", type=_positive_int, default=[5, 21, 63, 126])
+    p_decay.add_argument(
+        "--primary-horizon",
+        type=_positive_int,
+        default=21,
+        help="the ONE pre-declared horizon allowed to pass the gate",
+    )
+    p_decay.add_argument("--out", default="signal_decay")
+    p_decay.add_argument("--quantiles", type=_positive_int, default=5)
+    p_decay.add_argument("--min-cross-section", type=_positive_int, default=20)
+    p_decay.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    p_decay.add_argument("--bootstrap-samples", type=int, default=1_000)
+    p_decay.add_argument("--seed", type=int, default=0)
+    p_decay.add_argument(
+        "--delisting-return",
+        type=float,
+        default=None,
+        help="Shumway-style imputation for names that stop trading mid-window; "
+        "default drops and counts them",
+    )
+    p_decay.add_argument(
+        "--no-split-screen", dest="split_screen", action="store_false", default=True
+    )
+    p_decay.add_argument("--non-overlapping", action="store_true")
+    p_decay.add_argument(
+        "--archive-through",
+        default=None,
+        help="ignore vault sessions after this ISO date (NOT --asof: main() reserves it)",
+    )
+    p_decay.add_argument("--allow-fingerprint-drift", action="store_true")
+    p_decay.add_argument("--allow-unverified-panel", action="store_true")
+    p_decay.add_argument("--ledger", default="research_ledger.jsonl")
+    p_decay.add_argument("--format", default="text", choices=["text", "json", "md"])
+    p_decay.set_defaults(func=cmd_decay)
+
     p_retract = sub.add_parser(
         "ledger-retract",
         help="append a record retracting earlier ledger lines from trial accounting",
@@ -1697,6 +1831,27 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--transaction-cost-bps must be finite and non-negative")
         if args.bootstrap_samples < 0:
             parser.error("--bootstrap-samples must be non-negative")
+    if getattr(args, "command", None) == "decay":
+        if args.quantiles < 2:
+            parser.error("--quantiles must be at least 2")
+        if args.min_cross_section < args.quantiles * 2:
+            parser.error("--min-cross-section must be at least twice --quantiles")
+        if not math.isfinite(args.transaction_cost_bps) or args.transaction_cost_bps < 0:
+            parser.error("--transaction-cost-bps must be finite and non-negative")
+        if args.bootstrap_samples < 0:
+            parser.error("--bootstrap-samples must be non-negative")
+        horizons = list(args.horizons)
+        if horizons != sorted(set(horizons)) or any(h > 504 for h in horizons):
+            parser.error("--horizons must be strictly increasing, unique, and <= 504")
+        if args.primary_horizon not in horizons:
+            parser.error(
+                "--primary-horizon must be one of --horizons: declare which horizon "
+                "you are testing BEFORE you look at the others"
+            )
+        if args.delisting_return is not None and not (
+            math.isfinite(args.delisting_return) and -1.0 <= args.delisting_return <= 0.0
+        ):
+            parser.error("--delisting-return must be finite and in [-1, 0]")
     logging.basicConfig(
         level=logging.INFO if getattr(args, "verbose", False) else logging.ERROR,
         format="[%(levelname)s] %(message)s",

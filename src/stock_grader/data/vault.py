@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -261,6 +262,68 @@ class VaultDataSource:
         return hit.iloc[0].to_dict() if not hit.empty else None
 
     # -- delisted prices ---------------------------------------------------
+
+    def market_eod_close_matrix(
+        self,
+        symbols: Iterable[str],
+        *,
+        start: dt.date | None = None,
+        end: dt.date | None = None,
+    ) -> pd.DataFrame:
+        """Unadjusted closes for many tickers across many sessions.
+
+        Index: archived session dates, ascending. Columns: the caller's symbols
+        verbatim (canonical SEC dash form upstream). Values: float close, NaN
+        when the ticker did not trade that session.
+
+        One pass per day file. ``market_eod_series`` re-reads every day file per
+        ticker; at 501 sessions x 82 names that is hours of gzip. Panel work
+        must use this.
+        """
+        requested = list(symbols)
+        alias: dict[str, str] = {}
+        for symbol in requested:
+            spellings = set(ticker_variants(symbol))
+            spellings |= {v.replace("-", " ").replace(".", " ") for v in spellings}
+            for spelling in spellings:
+                claimed = alias.get(spelling.upper())
+                if claimed is not None and claimed != symbol:
+                    raise VaultError(
+                        f"symbol alias collision: {symbol!r} and {claimed!r} both map to "
+                        f"{spelling.upper()!r}"
+                    )
+                alias[spelling.upper()] = symbol
+        days = [
+            d
+            for d in self.market_eod_available_days()
+            if (start is None or d >= start) and (end is None or d <= end)
+        ]
+        self.last_skipped_days: list[dt.date] = []
+        rows: dict[dt.date, dict[str, float]] = {}
+        for day in days:
+            try:
+                blob = self._read_verified(
+                    f"data/market_eod/{day:%Y-%m}", f"{day.isoformat()}.jsonl.gz"
+                )
+            except VaultError as exc:
+                # One missing archive day must not kill a 24-month sweep — but
+                # it must not vanish either.
+                log.warning("skipping market_eod day %s: %s", day, exc)
+                self.last_skipped_days.append(day)
+                continue
+            closes: dict[str, float] = {}
+            for line in gzip.decompress(blob).decode("utf-8").splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                target = alias.get(str(row["symbol"]).upper())
+                if target is not None and row.get("close") is not None:
+                    closes[target] = float(row["close"])
+            rows[day] = closes
+        frame = pd.DataFrame.from_dict(rows, orient="index", dtype="float64")
+        frame = frame.reindex(columns=requested)
+        frame.index = pd.DatetimeIndex(frame.index)
+        return frame.sort_index()
 
     def delisted_history(self, symbol: str) -> pd.DataFrame | None:
         """Price history of a dead company from the cohort archives."""
