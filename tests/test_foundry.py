@@ -198,6 +198,30 @@ def test_dividends_and_splits_roundtrip(tmp_path):
     assert splits.iloc[0]["effective_date"] == pd.Timestamp("2020-08-28")
 
 
+def test_dividends_parquet_is_loaded_once_per_instance(tmp_path, monkeypatch):
+    """trailing_dps runs once per ticker across a universe; each call must not
+    re-read, re-hash, and re-parse the parquet."""
+    build_foundry(tmp_path)
+    reads = 0
+    original = FoundryDataSource._read_dataset_file
+
+    def counting_read(self, dataset_dir, name):
+        nonlocal reads
+        if name == "dividends.parquet":
+            reads += 1
+        return original(self, dataset_dir, name)
+
+    monkeypatch.setattr(FoundryDataSource, "_read_dataset_file", counting_read)
+    source = FoundryDataSource(root=tmp_path)
+    assert source.trailing_dps("AAPL") == pytest.approx(0.50)
+    assert source.trailing_dps("MSFT") is None
+    assert source.dividends() is source.dividends()
+    assert reads == 1
+    # Per instance, not global: a fresh source must verify its own files.
+    assert FoundryDataSource(root=tmp_path).trailing_dps("AAPL") == pytest.approx(0.50)
+    assert reads == 2
+
+
 def test_trailing_dps_sums_recent_quarters_only(tmp_path):
     source = FoundryDataSource(root=build_foundry(tmp_path))
     # Two 0.25 quarters inside the window; the 2019 quarter and the annual
