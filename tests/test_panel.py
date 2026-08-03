@@ -15,11 +15,13 @@ from stock_grader.backtest import BacktestConfig, evaluate_walk_forward
 from stock_grader.data.vault import VaultDataSource
 from stock_grader.panel import (
     FORWARD_EPOCH,
+    TOTAL_RETURN_COVERAGE_BAR,
     PanelBuildConfig,
     PanelBuildError,
     build_panel,
     detect_split,
     select_non_overlapping,
+    sidecar_payload,
     window_for,
     write_panel,
 )
@@ -465,3 +467,142 @@ def test_fewer_than_min_periods_writes_panel_but_is_not_ready(market_vault, tmp_
     panel_path, sidecar = write_panel(result, tmp_path / "out", "all_weather", config)
     assert panel_path is not None and panel_path.exists()
     assert json.loads(sidecar.read_text())["ready_for_backtest"] is False
+
+
+# -- dividends (total returns) -------------------------------------------------
+
+
+def _div_record(ticker: str, ex_date: str, cash: float, currency: str = "USD") -> dict:
+    return {
+        "id": f"{ticker}-{ex_date}",
+        "ticker": ticker,
+        "ex_dividend_date": ex_date,
+        "cash_amount": cash,
+        "currency": currency,
+        "dividend_type": "CD",
+    }
+
+
+def _vault_with_dividends(base: Path, months: dict[str, list[dict]]) -> VaultDataSource:
+    root = _build_market_vault(base)
+    for month, records in months.items():
+        directory = root / "data" / "dividends" / month
+        directory.mkdir(parents=True, exist_ok=True)
+        name = f"{month}.jsonl.gz"
+        (directory / name).write_bytes(_gz_jsonl(records))
+        _manifest(directory, [name])
+    return VaultDataSource(root)
+
+
+def test_in_window_dividends_enter_forward_return_and_attest_total(tmp_path, frozen_root):
+    vault = _vault_with_dividends(
+        tmp_path / "v",
+        {
+            "2026-08": [
+                _div_record("ALPHA", "2026-08-06", 1.0),
+                # Dot-form archive spelling must land on the dash-form panel ticker.
+                _div_record("BRK.B", "2026-08-05", 2.0),
+            ]
+        },
+    )
+    result = build_panel(frozen_root, "all_weather", vault, _Foundry(), _config(), today=TODAY)
+    first = result.panel[result.panel["signal_date"] == SIGNALS[0].isoformat()]
+
+    alpha = first[first["ticker"] == "ALPHA"].iloc[0]
+    assert bool(alpha["dividend_covered"]) is True
+    assert alpha["dividend_cash"] == pytest.approx(1.0)
+    assert alpha["forward_return"] == pytest.approx((101.8 + 1.0) / 100.3 - 1.0, abs=1e-9)
+
+    brk = first[first["ticker"] == "BRK-B"].iloc[0]
+    assert brk["dividend_cash"] == pytest.approx(2.0)
+    assert brk["forward_return"] == pytest.approx((471.2 + 2.0) / 470.2 - 1.0, abs=1e-9)
+
+    # Full archive coverage of every window month: the attestation flips.
+    assert result.dividend_coverage == pytest.approx(1.0)
+    assert result.attestations["return_is_total"] is True
+    report = evaluate_walk_forward(result.panel, BacktestConfig(min_cross_section=4, quantiles=2))
+    assert report.input_contract["total_returns_attested"] is True
+
+    # Accounting invariant: covered + uncovered == kept, every period.
+    for period in result.periods:
+        assert period.dividend_covered + period.dividend_uncovered == period.kept
+
+
+def test_ex_date_boundaries_entry_day_excluded_exit_day_included(tmp_path, frozen_root):
+    # Window 1 is (2026-08-04, 2026-08-11]: buy at entry close, sell at exit close.
+    vault = _vault_with_dividends(
+        tmp_path / "v",
+        {
+            "2026-08": [
+                _div_record("BETA", "2026-08-04", 9.99),  # ex ON entry day: seller's cash
+                _div_record("GAMMA", "2026-08-11", 0.5),  # ex ON exit day: holder's cash
+            ]
+        },
+    )
+    result = build_panel(frozen_root, "all_weather", vault, _Foundry(), _config(), today=TODAY)
+    first = result.panel[result.panel["signal_date"] == SIGNALS[0].isoformat()]
+
+    beta = first[first["ticker"] == "BETA"].iloc[0]
+    assert bool(beta["dividend_covered"]) is True  # zero cash is knowledge, not a gap
+    assert beta["dividend_count"] == 0
+    assert beta["dividend_cash"] == pytest.approx(0.0)
+
+    gamma = first[first["ticker"] == "GAMMA"].iloc[0]
+    assert gamma["dividend_count"] == 1
+    assert gamma["dividend_cash"] == pytest.approx(0.5)
+    assert gamma["forward_return"] == pytest.approx((76.2 + 0.5) / 75.2 - 1.0, abs=1e-9)
+
+
+def test_mid_window_split_with_dividend_stays_price_only_and_fails_the_bar(
+    tmp_path, frozen_root
+):
+    # SPLITF halves on 08-06 inside window 1; a same-window ex-date cannot be
+    # placed on the entry share basis from a cumulative window factor.
+    vault = _vault_with_dividends(
+        tmp_path / "v", {"2026-08": [_div_record("SPLITF", "2026-08-10", 0.25)]}
+    )
+    result = build_panel(frozen_root, "all_weather", vault, _Foundry(), _config(), today=TODAY)
+    first = result.panel[result.panel["signal_date"] == SIGNALS[0].isoformat()]
+    splitf = first[first["ticker"] == "SPLITF"].iloc[0]
+    assert bool(splitf["dividend_covered"]) is False
+    assert splitf["dividend_cash"] == pytest.approx(0.0)
+    assert splitf["split_factor"] == pytest.approx(2.0)
+    assert abs(splitf["forward_return"]) < 0.05  # still the split-adjusted price return
+
+    # Later windows carry no SPLITF ex-dates, so exactly one row is uncovered:
+    # measured coverage sits just below the 99% bar and the attestation holds False.
+    kept_total = sum(p.kept for p in result.periods)
+    assert result.dividend_coverage == pytest.approx((kept_total - 1) / kept_total)
+    assert 0.0 < result.dividend_coverage < TOTAL_RETURN_COVERAGE_BAR
+    assert result.attestations["return_is_total"] is False
+
+
+def test_archive_missing_the_window_months_keeps_rows_price_only(tmp_path, frozen_root):
+    # An archive exists but holds no month any window touches: zero coverage.
+    vault = _vault_with_dividends(
+        tmp_path / "v", {"2026-07": [_div_record("ALPHA", "2026-07-10", 1.0)]}
+    )
+    result = build_panel(frozen_root, "all_weather", vault, _Foundry(), _config(), today=TODAY)
+    alpha = result.panel[
+        (result.panel["ticker"] == "ALPHA")
+        & (result.panel["signal_date"] == SIGNALS[0].isoformat())
+    ].iloc[0]
+    assert bool(alpha["dividend_covered"]) is False
+    assert alpha["forward_return"] == pytest.approx(101.8 / 100.3 - 1.0, abs=1e-9)
+    assert result.dividend_coverage == 0.0
+    assert result.attestations["return_is_total"] is False
+
+
+def test_no_dividend_archive_means_v1_behavior_and_false_attestation(
+    market_vault, frozen_root
+):
+    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    assert result.dividend_archive_months == 0
+    assert result.dividend_coverage == 0.0
+    assert result.attestations["return_is_total"] is False
+    assert (result.panel["dividend_cash"] == 0.0).all()
+    assert not result.panel["dividend_covered"].any()
+    # The sidecar records the measured coverage whichever way the attestation lands.
+    payload = sidecar_payload(result, "all_weather", _config())
+    assert payload["dividend_coverage"] == 0.0
+    assert payload["attestations"]["return_is_total"] is False

@@ -171,6 +171,7 @@ have entered the feature set), `universe_is_pit`, `return_is_total`,
 `letter`, `percentile`, `coverage`, `config_fingerprint`,
 `universe_fingerprint`, `freeze_commit`, `start_close`, `end_close`,
 `price_symbol`, `return_source`, `split_factor`, `split_source`,
+`dividend_cash`, `dividend_count`, `dividend_covered`,
 `terminal_price_used`, `symbol_changed`, `panel_schema_version`,
 `builder_commit`.
 
@@ -188,11 +189,26 @@ have entered the feature set), `universe_is_pit`, `return_is_total`,
   convention that slightly OVERSTATES returns for names that kept falling
   off-exchange, since the archive excludes OTC). An unresolvable name is
   excluded, counted, and fails this attestation for the whole panel.
-- `return_is_total` — **False, always, in v1.** The dividend dataset covers
-  three tickers at fiscal-period granularity with no ex-dates on a
-  fully-split-adjusted basis, against raw unadjusted closes. Flip only when a
-  per-ex-date cash-dividend dataset (ex_date, cash_amount, same unadjusted
-  basis) covers >= 99% of panel rows. There is deliberately no flag for it.
+- `return_is_total` — **computed against the module's own 99% bar.** v1 held
+  this False unconditionally because the only dividend data available (three
+  tickers, fiscal-period XBRL, no ex-dates, split-adjusted against raw closes)
+  could not honestly enter a 21-day window. The vault's `data/dividends/`
+  archive (Massive reference dividends: per-ex-date, as-declared cash per
+  share — the same unadjusted basis as its raw closes) satisfies the promised
+  data shape, so `forward_return` now adds cash dividends whose ex-date falls
+  in `(return_start, return_end]` — entry-exclusive because buying at the
+  entry close buys ex-dividend, exit-inclusive because the holder carried the
+  share through the ex-date open. A row is *covered* when every calendar month
+  its window touches is archived and its cash sits on the entry share basis
+  (a mid-window split with in-window ex-dates, or non-USD cash, leaves the row
+  price-only and uncovered). The attestation goes True only when measured
+  coverage is >= 0.99 (`TOTAL_RETURN_COVERAGE_BAR`); the measured coverage is
+  recorded in the sidecar (`dividend_coverage`) either way, and rows carry
+  `dividend_cash` / `dividend_count` / `dividend_covered` for audit. There is
+  still deliberately no flag for it: a vault without the archive builds the
+  v1 price-only panel with the attestation False. Dividends are never
+  delisting proceeds — `delisting_return_included` is computed exactly as
+  before.
 
 **Splits.** The archive stores raw prices, so an uncorrected split fabricates a
 ~-50% return. Three tiers: a matching foundry `splits.jsonl` row (`foundry`); a

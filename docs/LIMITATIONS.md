@@ -172,9 +172,14 @@ an investment decision.
 
 ## Forward panel construction
 
-- `forward_return` is price-only (`return_is_total = False`): dividends are not
-  included, which understates returns for high-yield names relative to
-  low-yield ones over the window.
+- `forward_return` includes per-ex-date cash dividends from the private
+  vault's dividend archive when it is present and covers the window months;
+  `return_is_total` attests True only when the measured row coverage is
+  >= 99%. Without the archive the return stays price-only with the
+  attestation honestly False (understating returns for high-yield names).
+  Rows whose cash cannot sit on the entry share basis (a mid-window split
+  with in-window ex-dates, non-USD cash) stay price-only and are counted
+  uncovered per row (`dividend_covered`).
 - Names that leave listed venues are held at the last listed close (the archive
   excludes OTC), which slightly overstates the return of names that continued
   falling off-exchange. The convention is disclosed per row via

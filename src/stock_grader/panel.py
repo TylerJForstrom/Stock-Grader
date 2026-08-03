@@ -16,13 +16,34 @@ structural guarantee), the durable archive goes into the private vault via
 :func:`archive_to_vault`, and only aggregate statistics (the backtest markdown,
 the accounting counts, the ledger line) are committed publicly.
 
-**Total returns.** ``return_is_total`` is ``False``, always, in v1. The foundry's
-dividend dataset covers three tickers at fiscal-period granularity with no
-ex-dates, on a current-fully-split-adjusted basis — against raw unadjusted
-closes. Prorating that into a 21-day window and calling it a total return would
-be a lie the attestation column exists to prevent. Flip it to True only when a
-per-ex-date cash-dividend dataset (ex_date, cash_amount, same unadjusted basis)
-covers >= 99% of panel rows. There is deliberately no flag that flips it.
+**Total returns.** v1 hard-coded ``return_is_total=False``: the only dividend
+data then available was the foundry's XBRL dataset — three tickers,
+fiscal-period granularity, no ex-dates, fully-split-adjusted against raw
+closes — and this docstring promised to flip only when a per-ex-date
+cash-dividend dataset (ex_date, cash_amount, same unadjusted basis) covers
+>= 99% of panel rows. The vault's ``data/dividends/`` archive (Massive
+reference dividends: as-declared cash per share, the same unadjusted basis as
+its ``adjusted=false`` closes) satisfies that data shape, so the attestation is
+now COMPUTED per build: ``forward_return`` becomes ``(P_end * split_factor +
+sum(in-window cash)) / P_start - 1`` and ``return_is_total`` goes True only
+when the measured per-row dividend coverage is >=
+:data:`TOTAL_RETURN_COVERAGE_BAR`. There is still deliberately no flag that
+flips it — a vault without the archive, or thin coverage, keeps it False, and
+the measured coverage is recorded in the sidecar either way.
+
+**Dividend window convention.** A row's cash window is ``(entry, exit_]`` —
+entry-exclusive, exit-inclusive — matching both ``window_for``'s return
+semantics (buy at entry close, sell at exit close) and ``split_factor``'s
+window exactly. A dividend going ex ON the entry day belongs to the seller:
+buying at that day's close buys ex-dividend. A dividend going ex ON the exit
+day is received: the exit close is already ex, but the share was held through
+the ex-date open. A row is dividend-covered only when every calendar month its
+window touches is archived AND the cash can be placed on the entry share
+basis; a row with a mid-window split and in-window dividends stays price-only
+and counts uncovered (the cumulative window factor cannot say whether each
+ex-date fell before or after the split day), as does non-USD cash against USD
+closes. Dividends are never delisting proceeds:
+``delisting_return_included`` is computed exactly as before, unchanged.
 """
 
 from __future__ import annotations
@@ -45,6 +66,7 @@ __all__ = [
     "FORWARD_EPOCH",
     "PLAUSIBLE_SPLIT_RATIOS",
     "SCHEMA_VERSION",
+    "TOTAL_RETURN_COVERAGE_BAR",
     "PanelBuildConfig",
     "PanelBuildError",
     "PanelBuildResult",
@@ -54,6 +76,7 @@ __all__ = [
     "detect_split",
     "discover_frozen_panels",
     "load_bars",
+    "load_dividend_events",
     "select_non_overlapping",
     "trading_days",
     "window_for",
@@ -74,6 +97,12 @@ FORWARD_EPOCH = dt.date(2026, 7, 30)
 #: only fire on a one-day move beyond roughly -33% or +50% — ordinary volatility
 #: cannot trip it.
 PLAUSIBLE_SPLIT_RATIOS = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0)
+
+#: The module docstring's own historical bar for attesting total returns: the
+#: per-ex-date dividend archive must honestly cover at least this fraction of
+#: kept panel rows. A constant, not a config knob — there must be no switch
+#: that makes the panel claim something untrue.
+TOTAL_RETURN_COVERAGE_BAR = 0.99
 
 
 class PanelBuildError(RuntimeError):
@@ -112,6 +141,10 @@ class PeriodAccounting:
     unresolved_dropped: int = 0
     kept: int = 0
     meets_min_cross_section: bool = False
+    # Dividend accounting: covered + uncovered == kept, always.
+    dividend_covered: int = 0
+    dividend_uncovered: int = 0
+    dividend_cash_rows: int = 0
 
 
 @dataclass(slots=True)
@@ -125,6 +158,8 @@ class PanelBuildResult:
     unresolved_rows: int = 0
     unresolved_fraction: float = 0.0
     unresolved_tickers: list[str] = field(default_factory=list)
+    dividend_coverage: float = 0.0
+    dividend_archive_months: int = 0
     refusal: str | None = None
     ready_for_backtest: bool = False
 
@@ -266,6 +301,52 @@ def variant_map(tickers: Iterable[str]) -> dict[str, str]:
                 )
             wanted[variant] = ticker
     return wanted
+
+
+# -- per-ex-date cash dividends ------------------------------------------------
+
+
+def load_dividend_events(
+    vault: Any, start: dt.date, end: dt.date, wanted: Mapping[str, str]
+) -> tuple[dict[str, list[tuple[dt.date, float, str]]], frozenset[str]]:
+    """Vault dividend archive as per-canonical-ticker events, plus archived months.
+
+    Returns ``(events, months)`` where ``events[ticker]`` is a list of
+    ``(ex_date, cash_amount, currency)`` and ``months`` is the set of archived
+    ``YYYY-MM`` ex-date months. Both are empty when the vault clone predates
+    the dividend collector — the no-archive path must behave exactly like the
+    price-only v1 build, never guess. Provider tickers join through the same
+    ``wanted`` spelling-variant map the bars use, so a dot-form archive
+    spelling lands on its dash-form panel ticker and never on a stranger.
+    """
+    months_of = getattr(vault, "dividend_months", None)
+    fetch = getattr(vault, "dividends", None)
+    if months_of is None or fetch is None:
+        return {}, frozenset()
+    months = frozenset(months_of())
+    if not months:
+        return {}, frozenset()
+    events: dict[str, list[tuple[dt.date, float, str]]] = {}
+    frame = fetch(start, end)
+    if frame is not None and len(frame):
+        for row in frame.itertuples(index=False):
+            ticker = wanted.get(str(row.ticker).upper())
+            if ticker is None:
+                continue
+            events.setdefault(ticker, []).append(
+                (row.ex_dividend_date, float(row.cash_amount), str(row.currency or "").upper())
+            )
+    return events, months
+
+
+def _window_months(entry: dt.date, exit_: dt.date) -> set[str]:
+    """Calendar months the dividend window ``(entry, exit_]`` touches."""
+    cursor = (entry + dt.timedelta(days=1)).replace(day=1)
+    months: set[str] = set()
+    while cursor <= exit_:
+        months.add(cursor.strftime("%Y-%m"))
+        cursor = (cursor + dt.timedelta(days=32)).replace(day=1)
+    return months
 
 
 # -- split detection (three tiers, never a silent guess) -----------------------
@@ -477,8 +558,13 @@ def build_panel(
       outcome-dependent reason AND every signal date is on or after
       :data:`FORWARD_EPOCH`.
     - ``delisting_return_included`` — True only when zero rows were unresolved.
-    - ``return_is_total`` — False, always, in v1 (module docstring has the exact
-      upgrade condition).
+      Dividends are cash to a holder, never delisting proceeds; this
+      attestation is computed exactly as it was before total returns existed.
+    - ``return_is_total`` — True only when the vault carries the per-ex-date
+      dividend archive AND the measured per-row coverage is >=
+      :data:`TOTAL_RETURN_COVERAGE_BAR` (module docstring has the window and
+      coverage semantics). The measured coverage is recorded in the sidecar
+      whichever way the attestation lands.
     """
     config = config or PanelBuildConfig()
     today = today or dt.date.today()
@@ -571,6 +657,11 @@ def build_panel(
     bars = load_bars(vault, needed_days, wanted)
     bars_by_ticker = dict(tuple(bars.groupby("ticker"))) if len(bars) else {}
 
+    dividend_events, dividend_months = load_dividend_events(
+        vault, min(needed_days), max(needed_days), wanted
+    )
+    result.dividend_archive_months = len(dividend_months)
+
     rows: list[dict[str, Any]] = []
     unresolved_tickers: list[str] = []
     outcome_dependent_drops = 0
@@ -648,7 +739,34 @@ def build_panel(
             if split_source in ("reconstructed", "mixed"):
                 accounting.split_adjusted_reconstructed += 1
 
-            forward_return = (end_close * factor) / start_close - 1.0
+            # Dividend cash for the window (entry, exit_] — see the module
+            # docstring for the boundary convention and the coverage rules.
+            dividend_cash = 0.0
+            dividend_count = 0
+            dividend_covered = False
+            if dividend_months and _window_months(entry, exit_) <= dividend_months:
+                in_window = [
+                    (ex_date, cash, currency)
+                    for ex_date, cash, currency in dividend_events.get(ticker, ())
+                    if entry < ex_date <= exit_
+                ]
+                foreign_cash = any(currency not in ("", "USD") for _, _, currency in in_window)
+                if foreign_cash:
+                    pass  # non-USD cash against USD closes: basis unresolvable
+                elif in_window and factor != 1.0:
+                    pass  # mid-window split: per-ex-date share basis unknowable
+                else:
+                    dividend_covered = True
+                    dividend_cash = sum(cash for _, cash, _ in in_window)
+                    dividend_count = len(in_window)
+            if dividend_covered:
+                accounting.dividend_covered += 1
+                if dividend_count:
+                    accounting.dividend_cash_rows += 1
+            else:
+                accounting.dividend_uncovered += 1
+
+            forward_return = (end_close * factor + dividend_cash) / start_close - 1.0
             rows.append(
                 {
                     "signal_date": signal.isoformat(),
@@ -675,6 +793,9 @@ def build_panel(
                     "return_source": return_source,
                     "split_factor": factor,
                     "split_source": split_source,
+                    "dividend_cash": dividend_cash,
+                    "dividend_count": dividend_count,
+                    "dividend_covered": dividend_covered,
                     "terminal_price_used": terminal,
                     "symbol_changed": price_symbol.upper() != entry_symbol.upper(),
                     "panel_schema_version": SCHEMA_VERSION,
@@ -693,10 +814,18 @@ def build_panel(
     )
     result.unresolved_tickers = sorted(set(unresolved_tickers))
 
+    kept_total = sum(p.kept for p in result.periods)
+    covered_total = sum(p.dividend_covered for p in result.periods)
+    result.dividend_coverage = covered_total / kept_total if kept_total else 0.0
+
     universe_is_pit = (outcome_dependent_drops == 0) and (min(panels) >= FORWARD_EPOCH)
     result.attestations = {
         "universe_is_pit": universe_is_pit,
-        "return_is_total": False,
+        "return_is_total": bool(
+            dividend_months
+            and kept_total > 0
+            and result.dividend_coverage >= TOTAL_RETURN_COVERAGE_BAR
+        ),
         "delisting_return_included": result.unresolved_rows == 0,
     }
 
@@ -744,6 +873,8 @@ def sidecar_payload(result: PanelBuildResult, profile: str, config: PanelBuildCo
         "attestations": result.attestations,
         "unresolved_rows": result.unresolved_rows,
         "unresolved_fraction": result.unresolved_fraction,
+        "dividend_coverage": result.dividend_coverage,
+        "dividend_archive_months": result.dividend_archive_months,
         "ready_for_backtest": result.ready_for_backtest,
     }
 
