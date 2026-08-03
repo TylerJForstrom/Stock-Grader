@@ -50,9 +50,14 @@ jobs:
           # If this ever exceeds budget, shard by profile while retaining the
           # full cross-section in every job. Never shard by ticker: each shard
           # would normalize against a different peer set.
+          # The pointer names the newest quarterly regeneration; the dated
+          # files themselves are immutable. Refuse a pointer at a missing file
+          # rather than freezing against nothing.
+          WIDE="config/$(cat config/universe_wide_current)"
+          [ -f "$WIDE" ] || { echo "::error::universe pointer names missing file $WIDE"; exit 1; }
           stock-grader freeze \
             --all-profiles \
-            --universe config/universe_liq1000_2026-07-30.txt \
+            --universe "$WIDE" \
             --out frozen_scores_wide \
             --bulk-facts auto \
             --price-provider sec

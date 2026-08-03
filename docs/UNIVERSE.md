@@ -226,3 +226,26 @@ repository's null simulation estimates the expected maximum spurious IC over
 This infrastructure is a research screen, not investment advice. A frozen
 grade or later backtest verdict is evidence about a pre-registered method, not
 a prediction or recommendation.
+
+## Spec v2 (liq1000_v2, 2026-08-03)
+
+`config/universe_spec_v2.json` supersedes v1 for future quarterly regenerations
+(`quarterly-universe.yml`, 5th of Feb/May/Aug/Nov; the monthly freeze resolves
+the newest regeneration through `config/universe_wide_current`). The v1 spec and
+its dated 2026-07-30 artifacts remain immutable history.
+
+Changes, each fixing a measured defect in the v1 selection:
+
+- **Common-equity-first seating** — under alphabetical seating, Comcast was
+  represented by its ZONES structured note (CCZ) instead of CMCSA.
+- **Plausibility ceiling + filed-date recency** — Cabot Corp's $4.43
+  quadrillion cover-page tag ranked FIRST; 2009 floats still ranked live
+  issuers.
+- **Two second signals** for the corrupt band a scalar ceiling cannot reach
+  ($1.9–6.8T scale errors overlapping real megacaps): float-to-revenue (every
+  corrupt filing measured >=1,260x annual revenue, no real issuer above ~135x;
+  threshold 500x, skipped when revenue is unfiled or below $10M) and
+  jump-vs-own-history (corrupt filings >2,000x the issuer's recent median,
+  genuine growth below ~11x; threshold 1000x, skipped below two priors). A
+  rejected observation falls back to the issuer's newest sane one, so Cabot
+  reseats at its real ~$5B float instead of vanishing.

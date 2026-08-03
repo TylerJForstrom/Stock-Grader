@@ -164,6 +164,15 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 
 ## Agent log
 
+2026-08-03 -- M3 shadow arms (Stock-Vault): journal.py (byte-stable gzip — the
+old writer embedded the temp filename in the FNAME header), eod.py
+(manifest-gated stdlib reader), shadow.py (session-major simulator calling the
+pre-registered target_portfolio, split guard, stale-mark write-down, arm
+version-stamping with fail-closed identity check), arms.py (one reader, real +
+simulated), shadow-run/arms/shadow-calibrate CLI, shadow staleness clock,
+shadow-arms.yml. Nine arms live from the 2026-07-30/31 panels; calibrate pairs
+all five real fills. Vault suite 99 passed.
+
 2026-08-02 -- M1 forward panel builder + scheduled backtest: `panel.py`
 (windows, bulk bar loader, three-tier split correction, delisting resolution
 chain, computed attestations), `build-panel` CLI, and

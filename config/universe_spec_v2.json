@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "universe_id": "liq1000_v2",
+  "target_size": 1000,
+  "rank_key": "dei:EntityPublicFloat",
+  "window_trading_days": 63,
+  "min_observations": 40,
+  "min_median_close_usd": 5.0,
+  "exclude_etf": true,
+  "exclude_test_issue": true,
+  "require_sec_cik": true,
+  "listed_exchanges": [
+    "NYSE",
+    "Nasdaq",
+    "CBOE",
+    "NYSE American",
+    "NYSE Arca",
+    "BATS"
+  ],
+  "tie_break": "ticker_ascending",
+  "issuer_ticker_rule": "one_per_cik_common_equity_then_sec_dash_ticker_ascending",
+  "rebuild_cadence": "quarterly",
+  "asof_rule": "Use only facts whose measurement end and SEC filed date are on or before the selection as-of date; a frozen panel may use the selection only on or after that date.",
+  "survivorship_note": "The public SEC-float membership rule is forward-only from the first archived symbol snapshot. The separate private liquidity diagnostic can look back no earlier than the Massive market_eod archive, which begins in 2024-07. Neither rule may be represented as a historical universe before its source archive begins.",
+  "license_note": "US-government public-domain source data (17 USC 105); derived work, freely redistributable.",
+  "rank_observation_rule": "For each listed, non-ETF, non-test-issue SEC CIK, select the newest-filed positive finite dei:EntityPublicFloat observation whose measurement end and filed date are both on or before asof, whose filed date is within max_observation_age_days of asof, whose value is at most max_public_float_usd, at most max_float_to_revenue times the issuer's newest fiscal-year revenue (skipped below float_revenue_floor or when revenue is unfiled), and at most max_float_jump_vs_recent times the median of the issuer's up-to-five prior observations (skipped below two priors); rank descending and break equal values by seating order.",
+  "comment": "v2 (2026-08-03). Changes from liq1000_v1, each fixing a measured defect in the committed 2026-07-30 selection: common-equity-first seating (Comcast was represented by its ZONES note CCZ instead of CMCSA on alphabetical order); an explicit plausibility ceiling and filed-date recency bound; and two second signals \u2014 float-to-revenue (every corrupt cover-page float measured >=1,260x annual revenue while no real issuer exceeds ~135x) and jump-vs-own-history (corrupt filings jump >2,000x the issuer's recent median; genuine growth peaks below ~11x). Cabot Corp's $4.43 quadrillion cover-page tag ranked FIRST under v1. The v1 spec and its dated artifacts remain immutable history.",
+  "max_public_float_usd": 10000000000000.0,
+  "max_observation_age_days": 730,
+  "max_float_to_revenue": 500,
+  "float_revenue_floor": 10000000.0,
+  "max_float_jump_vs_recent": 1000
+}
