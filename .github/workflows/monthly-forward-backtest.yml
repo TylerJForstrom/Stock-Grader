@@ -29,19 +29,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check out the private vault (EOD archive + panel archive)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: TylerJForstrom/Stock-Vault
           token: ${{ secrets.VAULT_REPO_TOKEN }}
           path: vault
+          # Never write the vault token into vault/.git/config, where every
+          # later step (and anything those steps execute) could read it. The
+          # commit step is the only consumer and supplies it per-command.
+          persist-credentials: false
       - name: Check out the public foundry (split confirmation)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: TylerJForstrom/Stock-Data
           path: foundry
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - run: pip install -e .
@@ -85,11 +89,24 @@ jobs:
 
       - name: Commit archived panels to the vault
         if: always()
+        env:
+          VAULT_REPO_TOKEN: ${{ secrets.VAULT_REPO_TOKEN }}
         run: |
           if [ ! -d vault ]; then
             echo "vault checkout absent (missing VAULT_REPO_TOKEN?); nothing to commit"
             exit 0
           fi
+          # The vault checkout does not persist its token, so this step is the
+          # only place the credential lives; every remote operation supplies it
+          # as the same basic-auth header actions/checkout would have stored.
+          # base64 -w0: the header must stay on one line.
+          vault_git() {
+            git -C vault -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$VAULT_REPO_TOKEN" | base64 -w0)" "$@"
+          }
+          # Probe push auth on every run — months where nothing matured included —
+          # so an expired or revoked token turns THIS run red instead of failing
+          # at archive time months later.
+          vault_git push --dry-run origin HEAD:main
           if [ ! -d vault/data/backtest_panels ]; then
             echo "no panels archived this run (nothing matured); nothing to commit"
             exit 0
@@ -100,8 +117,8 @@ jobs:
           if git -C vault diff --cached --quiet; then echo "nothing to commit to the vault"; exit 0; fi
           git -C vault commit -m "panels: $(date -u +%Y-%m)"
           for attempt in 1 2 3; do
-            if git -C vault push; then exit 0; fi
-            git -C vault pull --rebase origin main || exit 1
+            if vault_git push origin HEAD:main; then exit 0; fi
+            vault_git pull --rebase origin main || exit 1
           done
           exit 1
 
