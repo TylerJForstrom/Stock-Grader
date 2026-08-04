@@ -1,0 +1,14 @@
+# Weekly Dependabot updates, added 2026-08-03 (cross-repo security pass):
+# scheduled workflows resolve latest transitive pip versions at run time,
+# so unwatched releases need alerting + update PRs. The github-actions
+# ecosystem also keeps commit-SHA action pins current.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
