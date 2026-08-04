@@ -133,6 +133,9 @@ class PeriodAccounting:
     frozen_rows: int = 0
     ungraded_dropped: int = 0
     missing_cik_dropped: int = 0
+    # Rows whose CIK came from the foundry fallback map rather than the
+    # frozen panel itself — the rows the per-date PIT resolution protects.
+    cik_from_foundry: int = 0
     no_start_price_dropped: int = 0
     resolved_market_eod: int = 0
     resolved_delisted_archive: int = 0
@@ -156,6 +159,12 @@ class PanelBuildResult:
     pending_signal_dates: list[str] = field(default_factory=list)
     skipped_overlapping_signal_dates: list[str] = field(default_factory=list)
     attestations: dict[str, bool] = field(default_factory=dict)
+    # Which foundry CIK map served each kept signal date: "pit_replay"
+    # (symbol events replayed to the date), "current_snapshot" (replay
+    # unavailable — the honest best available), or "unavailable" (no foundry
+    # map at all). Recorded in the sidecar; deliberately NOT an attestation —
+    # ``universe_is_pit`` keeps its documented, computed meaning.
+    cik_map_modes: dict[str, str] = field(default_factory=dict)
     unresolved_rows: int = 0
     unresolved_fraction: float = 0.0
     unresolved_tickers: list[str] = field(default_factory=list)
@@ -566,6 +575,12 @@ def build_panel(
       :data:`TOTAL_RETURN_COVERAGE_BAR` (module docstring has the window and
       coverage semantics). The measured coverage is recorded in the sidecar
       whichever way the attestation lands.
+
+    A frozen row missing its CIK is resolved through the foundry map AS OF
+    its signal date (``universe(asof=...)`` event replay) so a reused ticker
+    never inherits its symbol's new owner; the sidecar's ``cik_map_modes``
+    records the map that served each date, and falling back to the current
+    snapshot changes no attestation — it is recorded, not overclaimed.
     """
     config = config or PanelBuildConfig()
     today = today or dt.date.today()
@@ -622,18 +637,45 @@ def build_panel(
     if not kept:
         return result
 
-    # One pass over the frozen panels to learn tickers and resolve CIKs.
+    # One pass over the frozen panels to learn tickers and resolve CIKs. The
+    # foundry CIK fallback is resolved PER SIGNAL DATE: tickers get reused
+    # after delistings, so a missing CIK resolved through today's snapshot
+    # could silently attach a dead issuer's row to its symbol's new owner.
+    # ``universe(asof=signal_date)`` replays the foundry's symbol events back
+    # to the signal date; when the archive cannot reach it (or the provider
+    # predates ``asof``) the current snapshot is the honest best available,
+    # and the sidecar's ``cik_map_modes`` records which map served each date.
     frozen_frames = {signal: pd.read_parquet(panels[signal]) for signal in kept}
-    foundry_universe: dict[str, str] = {}
-    if foundry is not None:
+
+    def _universe_cik_map(asof: str | None) -> dict[str, str] | None:
+        if foundry is None:
+            return None
         try:
-            for record in foundry.universe(listed_only=False):
-                ticker = str(record.get("ticker", "")).upper()
-                cik = record.get("cik")
-                if ticker and cik is not None and str(cik).strip().isdecimal():
-                    foundry_universe.setdefault(ticker, str(cik).strip().zfill(10))
+            records = foundry.universe(listed_only=False, asof=asof)
         except Exception:
-            foundry_universe = {}
+            return None
+        mapping: dict[str, str] = {}
+        for record in records:
+            ticker = str(record.get("ticker", "")).upper()
+            cik = record.get("cik")
+            if ticker and cik is not None and str(cik).strip().isdecimal():
+                mapping.setdefault(ticker, str(cik).strip().zfill(10))
+        return mapping
+
+    snapshot_universe: dict[str, str] | None = None
+    foundry_universe_by_date: dict[dt.date, dict[str, str]] = {}
+    for signal in kept:
+        replayed = _universe_cik_map(signal.isoformat())
+        if replayed is not None:
+            foundry_universe_by_date[signal] = replayed
+            result.cik_map_modes[signal.isoformat()] = "pit_replay"
+        else:
+            if snapshot_universe is None:
+                snapshot_universe = _universe_cik_map(None) or {}
+            foundry_universe_by_date[signal] = snapshot_universe
+            result.cik_map_modes[signal.isoformat()] = (
+                "current_snapshot" if snapshot_universe else "unavailable"
+            )
     foundry_splits = None
     if foundry is not None:
         try:
@@ -688,7 +730,9 @@ def build_panel(
             cik_raw = frozen.get("cik")
             cik = str(cik_raw).strip() if cik_raw is not None else ""
             if not cik or cik.lower() == "nan":
-                cik = foundry_universe.get(ticker, "")
+                cik = foundry_universe_by_date.get(signal, {}).get(ticker, "")
+                if cik:
+                    accounting.cik_from_foundry += 1
             if not cik:
                 accounting.missing_cik_dropped += 1
                 continue
@@ -872,6 +916,7 @@ def sidecar_payload(result: PanelBuildResult, profile: str, config: PanelBuildCo
         "periods": [asdict(p) for p in result.periods],
         "qualifying_periods": result.qualifying_periods,
         "attestations": result.attestations,
+        "cik_map_modes": result.cik_map_modes,
         "unresolved_rows": result.unresolved_rows,
         "unresolved_fraction": result.unresolved_fraction,
         "dividend_coverage": result.dividend_coverage,

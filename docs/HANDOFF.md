@@ -35,12 +35,15 @@ dash/dot; VaultDataSource.borrow_fee adds the space form ad hoc.
   imports` rule) and apply at their write paths for NEW data only.
 
 ### 5. events.jsonl into the manifest contract + universe(asof)  (~half day)
-`Stock-Data/src/stock_data/symbols.py:216` writes events.jsonl OUTSIDE any
-manifest; FoundryDataSource can never read it (foundry.py requires manifest
-listing). Fix: give it its own dataset dir `data/symbols/events/` with
-manifest.json (bump nothing — additive), then add
-`FoundryDataSource.universe(asof=...)` that replays added/removed events
-backward from current. Enables PIT ticker→CIK mapping for the panel builder.
+DONE end-to-end (2026-08-04). The events dataset has its own manifested dir
+(`data/symbols/events/`), `FoundryDataSource.universe(asof=...)` replays
+added/removed/changed events backward from current, and — the final leg —
+`build_panel` now resolves its missing-CIK fallback through
+`universe(asof=signal_date)` PER signal date, falling back to the current
+snapshot only when the archive cannot reach the date (recorded per date in
+the sidecar's `cik_map_modes`, never attested). Stock-Vault's signal-panel
+builder gained the same per-date replay in its `v5` layout
+(`stock_vault/panels.py _CikMaps`, docs/SIGNAL-PANELS.md "Panel v5").
 
 ### 6. Delisted-archive CIK linkage  (~1 day, AFTER the events sweep has data)
 `Stock-Vault/src/stock_vault/delisted.py:74-82` cohort_index rows lack CIK.
