@@ -249,3 +249,12 @@ renderers.
 2026-07-29 — completed queue item 5 (Stock-Data half): symbol events now publish as their own manifest dataset in Stock-Data commit `041a185`; committed-blob hash verified; full suite 30 passed and Ruff clean.
 
 2026-07-29 — completed the requested queue item 7 ops subset: Stock-Data staleness gates and FINRA removal in `41931ee`; Stock-Vault staleness/recs/EOD/FINRA hardening in `76c9de0` plus Windows manifest-byte guard `526cad9`; suites 30/22 passed, Ruff clean, and Actions runs `30467259875`, `30467277635`, `30466449490`, and `30466469142` completed successfully.
+
+2026-08-03 — (Claude) finding 21 sentiment consumption path: FoundryDataSource gains
+manifest-verified TickerPulse accessors (`sentiment_days`, `sentiment_trends`,
+`sentiment_buckets`) so TickerPulse metrics enter the grader through the foundry per
+ECOSYSTEM/ORIENTATION; the vault half (Stock-Vault PR #18) adds two pre-registered weekly
+social signal panels (attention spike −1, sentiment balance −1) joined to Massive EOD
+behind the vault path guard — price-joined panels stay private, directions recorded in
+Stock-Vault docs/SIGNAL-PANELS.md before any evaluation. Grader suite 743 passed + 6 new
+foundry tests, Ruff clean.

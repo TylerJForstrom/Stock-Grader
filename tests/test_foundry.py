@@ -300,3 +300,122 @@ def test_explicitly_requested_foundry_fails_closed_on_contract_violation(tmp_pat
     with pytest.raises(SystemExit) as excinfo:
         cli._build_snapshots(["AAPL"], args, provider=None)
     assert excinfo.value.code == 2
+
+
+# -- TickerPulse sentiment mirror ----------------------------------------------
+
+
+def add_sentiment(
+    root: Path,
+    days: dict[str, list[dict]],
+    *,
+    dataset: str = "ticker_trends",
+    corrupt: str | None = None,
+    unmanifested: str | None = None,
+) -> Path:
+    """Write a data/sentiment/<dataset>/ mirror with a hashed manifest."""
+    directory = root / "data" / "sentiment" / dataset
+    directory.mkdir(parents=True, exist_ok=True)
+    files = []
+    for day, rows in sorted(days.items()):
+        blob = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows).encode("utf-8")
+        (directory / f"{day}.jsonl").write_bytes(blob)
+        if day == unmanifested:
+            continue
+        digest = hashlib.sha256(blob).hexdigest()
+        if day == corrupt:
+            digest = "0" * 64
+        files.append({"name": f"{day}.jsonl", "sha256": digest, "bytes": len(blob)})
+    (directory / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "producer": "TickerPulse",
+                "source_urls": [],
+                "license_note": "public aggregate counts and scores; no post text",
+                "files": files,
+            }
+        )
+    )
+    return root
+
+
+def test_sentiment_days_come_from_the_manifest_only(tmp_path):
+    root = build_foundry(tmp_path)
+    add_sentiment(
+        root,
+        {
+            "2026-07-29": [{"ticker": "AAPL", "mentions": 10}],
+            "2026-07-28": [{"ticker": "AAPL", "mentions": 8}],
+            "2026-07-30": [{"ticker": "AAPL", "mentions": 9}],
+        },
+        unmanifested="2026-07-30",
+    )
+    source = FoundryDataSource(root=root)
+    # Sorted; the unmanifested day is invisible by contract, not advertised.
+    assert source.sentiment_days() == ["2026-07-28", "2026-07-29"]
+    with pytest.raises(FoundryError, match="not listed"):
+        source.sentiment_trends("2026-07-30")
+
+
+def test_sentiment_trends_rows_are_hash_verified(tmp_path):
+    rows = [
+        {
+            "ticker": "AAPL",
+            "mentions": 428,
+            "mentions_prev": 580,
+            "bull": 35,
+            "bear": 101,
+            "neutral": 292,
+            "sentiment_avg": -0.1193,
+            "share_of_voice": 0.03502,
+        },
+        {"ticker": "AAOI", "mentions": 3, "mentions_prev": 69, "bull": 0, "bear": 1},
+    ]
+    root = add_sentiment(build_foundry(tmp_path), {"2026-08-01": rows})
+    assert FoundryDataSource(root=root).sentiment_trends("2026-08-01") == rows
+
+
+def test_sentiment_hash_mismatch_refused(tmp_path):
+    root = add_sentiment(
+        build_foundry(tmp_path),
+        {"2026-08-01": [{"ticker": "AAPL", "mentions": 1}]},
+        corrupt="2026-08-01",
+    )
+    with pytest.raises(FoundryError, match="sha256 mismatch"):
+        FoundryDataSource(root=root).sentiment_trends("2026-08-01")
+
+
+def test_sentiment_buckets_roundtrip(tmp_path):
+    rows = [
+        {
+            "ticker": "AAPL",
+            "bucket_start": "2026-08-01 00:00:00+00:00",
+            "bucket_minutes": 60,
+            "mentions": 30,
+            "bull": 0,
+            "bear": 15,
+            "neutral": 15,
+        }
+    ]
+    root = add_sentiment(build_foundry(tmp_path), {"2026-08-01": rows}, dataset="ticker_buckets")
+    source = FoundryDataSource(root=root)
+    assert source.sentiment_buckets("2026-08-01") == rows
+    assert source.sentiment_days("ticker_buckets") == ["2026-08-01"]
+
+
+def test_sentiment_unknown_dataset_refused(tmp_path):
+    source = FoundryDataSource(root=build_foundry(tmp_path))
+    with pytest.raises(ValueError, match="unsupported sentiment dataset"):
+        source.sentiment_days("raw_posts")
+
+
+def test_sentiment_unknown_schema_version_refused(tmp_path):
+    root = build_foundry(tmp_path)
+    add_sentiment(root, {"2026-08-01": [{"ticker": "AAPL", "mentions": 1}]})
+    directory = root / "data" / "sentiment" / "ticker_trends"
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["schema_version"] = "9.9"
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(FoundryError, match="schema_version"):
+        FoundryDataSource(root=root).sentiment_trends("2026-08-01")
