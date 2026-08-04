@@ -102,7 +102,7 @@ report rather than bending the code to match the doc.
   *(`C:/Users/tforstrom/Desktop/Stock-Vault/src/stock_vault/market_eod.py:38-41`)*
 - market_eod row keys are exactly: symbol, open, high, low, close, volume, vwap, transactions. There is NO date field in the row — the date is only in the filename.  
   *(`C:/Users/tforstrom/Desktop/Stock-Vault/src/stock_vault/market_eod.py:47-59 and data/market_eod/2026-07/2026-07-28.jsonl.gz`)*
-- Verified on disk: 501 archived market days, 2024-07-29 through 2026-07-28. The 2026-07-28 file has 12,482 rows, 0 null closes, 0 zero closes, 3 null `transactions`, 0 duplicate symbols.  
+- Verified on disk: roughly two years of archived market days, one whole-market file per session. A spot-checked day file had no null or zero closes and no duplicate symbols; a handful of rows carry a null `transactions`, which is why volume corroboration returns False without it. (Row counts and date spans are vault-derived and stay in Stock-Vault.)  
   *(`C:/Users/tforstrom/Desktop/Stock-Vault/data/market_eod/`)*
 - Verified split hazard is REAL in the raw archive: on 2026-07-28 there are 18 one-day moves beyond +/-45%, including AMKL at exactly -50.0% (11.75 -> 5.88) and AMKX at -47.8% — a textbook forward-split signature.  
   *(`C:/Users/tforstrom/Desktop/Stock-Vault/data/market_eod/2026-07/2026-07-27.jsonl.gz vs 2026-07-28.jsonl.gz`)*

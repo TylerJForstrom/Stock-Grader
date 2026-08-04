@@ -25,6 +25,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import re
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -32,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 __all__ = [
+    "EVIDENCE_SHA256_RE",
     "GENESIS_SHA256",
     "PREREGISTRATION_EXPERIMENT",
     "PROMOTION_EXPERIMENT",
@@ -41,9 +44,11 @@ __all__ = [
     "ResearchRecord",
     "append_record",
     "current_commit",
+    "declared_policies",
     "find_preregistration",
     "find_promotion_policy",
     "load_manifest",
+    "package_commit",
     "preregistered_experiment",
     "preregistration_record",
     "promotion_policy_declaration",
@@ -129,18 +134,66 @@ PROMOTION_STAGES = (
 
 RETIRED_STAGE = "retired"
 
+#: An evidence pointer is a ledger line's ``integrity_sha256`` — 64 lowercase
+#: hex characters, nothing else. A length-only check let ``[""]`` satisfy "every
+#: upward transition must name the records it rests on".
+EVIDENCE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
-def current_commit() -> str:
-    """Best-effort short git commit hash for provenance; 'unknown' if unavailable."""
+
+def current_commit(repo_dir: str | Path | None = None) -> str:
+    """Best-effort short git commit hash for provenance; 'unknown' if unavailable.
+
+    With no ``repo_dir`` this reads the PROCESS working directory, which is the
+    right answer for every in-repo caller (ledger records, built panels). A
+    cross-repo caller — the signal-panel join runs with a Stock-Vault checkout
+    as CWD — must pass the tree it means, or use :func:`package_commit`.
+    """
+    command = ["git", "rev-parse", "--short", "HEAD"]
+    if repo_dir is not None:
+        command = ["git", "-C", str(repo_dir), *command[1:]]
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            command,
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
         return out.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def package_commit() -> str:
+    """Revision of THIS package's source tree, independent of the CWD.
+
+    ``builder_commit`` on an artifact must identify the code that produced it.
+    When the grader runs from a sibling repo's checkout (the v6 signal-panel
+    join runs with the vault as CWD) a bare ``git rev-parse`` names the WRONG
+    repository, and the resulting stamp resolves in neither tree's history.
+
+    Resolution order, each honest about what it is:
+
+    1. ``STOCK_GRADER_COMMIT`` — the pin a workflow records when it checks this
+       package out at an explicit ref (a non-editable ``pip install`` leaves no
+       git tree to interrogate, so nothing else can recover it);
+    2. the git revision of the source tree this module lives in;
+    3. ``dist:<version>`` from the installed distribution — deliberately
+       prefixed so it can never be mistaken for a commit hash;
+    4. ``"unknown"``. Never a hash belonging to some other repository.
+    """
+    pinned = os.environ.get("STOCK_GRADER_COMMIT", "").strip()
+    if pinned:
+        return pinned
+    root = Path(__file__).resolve().parents[2]
+    if (root / ".git").exists():
+        commit = current_commit(repo_dir=root)
+        if commit != "unknown":
+            return commit
+    try:
+        from importlib.metadata import version
+
+        return f"dist:{version('stock-grader')}"
     except Exception:
         return "unknown"
 
@@ -221,18 +274,24 @@ def _last_line_sha256(file_path: Path) -> str:
     return last
 
 
-def append_record(path: str | Path, record: ResearchRecord) -> None:
+def append_record(path: str | Path, record: ResearchRecord) -> ResearchRecord:
     """Append a record to the append-only JSONL manifest (creating it if needed).
 
     The stored record is chained: its ``prev_sha256`` is set to the previous
     line's ``integrity_sha256`` (genesis for the first line), regardless of any
     value the caller put on the dataclass — the chain must reflect file order.
+
+    Returns the CHAINED record — the one actually written. ``prev_sha256`` is
+    inside ``payload()``, so the argument's ``integrity_sha256()`` is never the
+    hash on disk: a caller that reports or stores the pre-append hash publishes
+    an evidence pointer that resolves to nothing. Report this return value.
     """
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     chained = replace(record, prev_sha256=_last_line_sha256(file_path))
     with file_path.open("a", encoding="utf-8") as handle:
         handle.write(chained.to_line() + "\n")
+    return chained
 
 
 def load_manifest(path: str | Path) -> list[dict[str, object]]:
@@ -306,6 +365,11 @@ def trial_sharpes_by_experiment(
     one experiment's entry with a fresher measurement (a pre-registered
     re-evaluation) instead of appending a near-duplicate: the shared
     denominator has to stay order-independent and flat across scheduled looks.
+
+    A line that does not hash to its own claim is skipped, exactly as
+    :func:`find_preregistration` and :func:`_promotion_declarations` skip one:
+    an edited ``per_period_sharpe`` must not be allowed to set the deflation
+    dispersion that decides whether a real edge clears its gate.
     """
     excluded = retracted_hashes(records)
     latest: dict[str, float] = {}
@@ -313,6 +377,8 @@ def trial_sharpes_by_experiment(
         if record.get("experiment") == RETRACTION_EXPERIMENT:
             continue
         if str(record.get("integrity_sha256", "")) in excluded:
+            continue
+        if not verify_line(dict(record)):
             continue
         metrics = record.get("metrics")
         if not isinstance(metrics, Mapping):
@@ -600,6 +666,21 @@ def _promotion_declarations(
     return out
 
 
+def declared_policies(
+    records: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Every trustworthy promotion-policy declaration, oldest first.
+
+    The version<->document binding is checkable in both directions only when a
+    caller can see what ELSE a document's bytes are already declared as.
+    """
+    return [
+        declaration
+        for _, declaration in _promotion_declarations(records)
+        if declaration.get("kind") == "promotion-policy"
+    ]
+
+
 def find_promotion_policy(
     records: Sequence[Mapping[str, object]], policy_version: str
 ) -> dict[str, object] | None:
@@ -614,11 +695,23 @@ def find_promotion_policy(
 
 
 def promotion_stage(
-    records: Sequence[Mapping[str, object]], subject_spec_sha256: str
+    records: Sequence[Mapping[str, object]],
+    subject_spec_sha256: str,
+    *,
+    stages: Sequence[str] | None = None,
 ) -> str:
     """The subject's current lifecycle stage: its newest trustworthy
-    transition's ``to_stage``, else the ladder's bottom rung."""
-    stage = PROMOTION_STAGES[0]
+    transition's ``to_stage``, else the ladder's bottom rung.
+
+    ``stages`` is the DECLARED ladder of the policy the caller is validating
+    against. Seeding from the module constant instead would make a policy whose
+    bottom rung is not ``PROMOTION_STAGES[0]`` unenterable: every untouched
+    subject would report a stage absent from its own ladder, and both the
+    honest ``--from-stage`` and the constant's value would be refused.
+    ``PROMOTION_STAGES[0]`` remains the fallback when no policy is in hand.
+    """
+    ladder = [str(s) for s in stages] if stages else list(PROMOTION_STAGES)
+    stage = ladder[0] if ladder else PROMOTION_STAGES[0]
     for _, declaration in _promotion_declarations(records):
         if declaration.get("kind") != "stage-transition":
             continue
@@ -664,7 +757,7 @@ def validate_promotion_transition(
         if isinstance(stages_obj, Sequence) and not isinstance(stages_obj, (str, bytes))
         else list(PROMOTION_STAGES)
     )
-    current = promotion_stage(records, subject)
+    current = promotion_stage(records, subject, stages=stages)
     if current == RETIRED_STAGE:
         return (
             f"subject {subject[:12]} is retired — terminal; revival requires a "
@@ -691,15 +784,26 @@ def validate_promotion_transition(
         )
     if delta == 1:
         evidence = transition.get("evidence_sha256")
-        has_evidence = (
-            isinstance(evidence, Sequence)
-            and not isinstance(evidence, (str, bytes))
-            and len(evidence) > 0
+        listed = (
+            list(evidence)
+            if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes))
+            else []
         )
-        if not has_evidence:
+        if not listed:
             return (
                 "promotion cites no evidence-record integrity hashes; every "
                 "upward transition must name the records it rests on"
+            )
+        # Length alone is not citation: [""] and ["not-a-hash"] both satisfied
+        # "names the records it rests on" while naming nothing. An evidence
+        # pointer must be shaped like the ledger-line hash it claims to be.
+        malformed = [item for item in listed if not EVIDENCE_SHA256_RE.fullmatch(str(item))]
+        if malformed:
+            return (
+                "promotion cites malformed evidence: "
+                + ", ".join(repr(str(item)) for item in malformed[:3])
+                + " — every evidence_sha256 entry must be a 64-character "
+                "lowercase-hex ledger-line integrity hash"
             )
         if to_stage == stages[-1] and not bool(policy.get("live_money_reachable")):
             return (

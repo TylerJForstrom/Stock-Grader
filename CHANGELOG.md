@@ -5,6 +5,88 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **2026-08-04 audit**: nineteen confirmed defects, all of the same shape — something
+  optimistic happening silently where the ecosystem's rules require a computed number or an
+  honest refusal. Every fix carries a regression test in `tests/test_audit_regressions.py`
+  that fails at `f90986b`.
+
+  *Evaluable signal panel.* `panel.parquet` was built from a filesystem glob while every
+  whole-panel number and all three attestations were computed from `counts.json`, with nothing
+  reconciling the two: the writer now refuses a part the accounting does not cover, refuses a
+  rollup whose per-date row counts disagree with `counts.json`, refuses a `--rebuild` that
+  re-prices a closed date to zero rows (rather than deleting the part or silently keeping both),
+  and writes `counts.json` atomically *before* the parquet parts so a crash can only leave
+  accounting ahead of parts — the direction the next run heals. A signal date whose entry day is
+  absent from the vault clone is refused instead of losing 100% of its observations and vanishing
+  from the panel, and `survival_rate` / `panel_observations` / `no_start_price_rows` /
+  `periods_in_panel` are now surfaced. `unresolved_tickers` is persisted per signal date and
+  aggregated from `counts.json`, so the field in build.json's whole-panel block is actually
+  whole-panel (dates closed before the field existed are named in
+  `unresolved_tickers_incomplete_dates`, never papered over with an empty union). A
+  caller-supplied `license_note` can no longer discard the Massive / dividend-archive /
+  stockanalysis.com provenance clause through `+`-before-`or` precedence.
+
+- **Split guard: the foundry table is now a DETECTOR, not a confirmer.** `_foundry_split_lookup`
+  was reachable only after `detect_split` had already matched a price signature, and
+  `PLAUSIBLE_SPLIT_RATIOS` floors at 1.5 by design — so every 5:4, 6:5 or 1.2:1 split recorded in
+  the authoritative table was invisible in both directions, kept with `split_factor=1.0` and a
+  forward return fabricated by the whole size of the split. `split_factor` now applies every
+  foundry split effective in `(entry, exit]` at any ratio, attributed to the bar pair whose
+  interval contains its effective date and arbitrated against the observed move; a ratio the
+  price contradicts, one outside `FOUNDRY_SPLIT_RATIO_BAND`, or one no bar pair can place is
+  UNRESOLVED — dropped and counted, never a silent 1.0. The dividend leg now keys on "a split
+  event occurred in the window" rather than `factor != 1.0`, which had been declaring the
+  per-ex-date share basis safe for exactly the splits the price signature could not see.
+
+- **Research ledger.** `append_record` returns the CHAINED record; `promotion-declare` (both
+  modes) and `decay.record_sweep_trials` report/store that hash instead of the pre-append
+  object's, which was never the hash on disk and produced evidence pointers that resolve to
+  nothing. `cmd_backtest` and `record_sweep_trials` now refuse a ledger whose chain does not
+  verify, as every appending verb already did, and `trial_sharpes_by_experiment` skips a line
+  that does not hash to its own claim so a forged `per_period_sharpe` cannot set the deflation
+  dispersion. `ledger-retract` refuses a `ledger:promotion` record: retraction is a
+  trial-accounting act with no effect on a trials=0 record, and its only real consequence was
+  rewinding `promotion_stage` — un-retiring a terminal subject or undoing a demotion without the
+  reason and evidence a downward transition requires. `promotion-declare` now refuses a policy
+  version the document does not name and refuses binding a NEW version to a document already
+  declared under another, closing the reproduced path where `--live-money-reachable` opened the
+  money rung against bytes that say the rung is closed. Evidence pointers must be 64-character
+  lowercase hex, so `[""]` no longer satisfies "name the records it rests on", and
+  `promotion_stage` seeds from the DECLARED ladder rather than the module constant.
+
+- **Frozen-panel catalog.** `refresh_frozen_manifest` refused nothing: bytes that changed under a
+  cataloged name were re-hashed and re-blessed as `hashed_at: "backfill"`, so the next monthly
+  freeze laundered exactly what `verify_sibling_manifest` refuses, and an unreadable or
+  future-schema manifest was destroyed and rebuilt over whatever was on disk. Both are now
+  refusals on the existing red-freeze path. `verify_sibling_manifest` grows `strict=`, used by
+  `backtest`/`ledger-declare` (opt out with `--allow-unmanifested-panel`, which records the input
+  as UNATTESTED in the ledger line), and `build_panel` records `frozen_inputs_attested` and gates
+  `ready_for_backtest` on it — a panel nothing vouches for can no longer become forward evidence
+  indistinguishably from an attested one.
+
+- **Cadence + monthly workflow.** The freeze clock watched only `frozen_scores`, so
+  `frozen_scores_wide` — half the committed forward evidence, written and committed by the same
+  monthly cron — could stall indefinitely while `check-cadence` reported PASS (it is stale for
+  2026-08 right now, and the fixed clock says so). `check_cadence` now evaluates
+  `FROZEN_ROOTS` and fails if ANY root is stale; `--frozen-root` is repeatable. The
+  pre-registered look schedule names `workflow_dispatch`, which runs the identical
+  ledger-appending path and which `ledger-declare`'s idempotence would have frozen out of the
+  declaration forever. Dated forward reports are placed through a temp file with a
+  refuse-on-different-content guard instead of a bare `>` redirect that truncated the destination
+  *before* the command ran — a failing run could destroy a previous run's report and commit a
+  0-byte evidence artifact.
+
+- **Licensing wall.** Removed vault-derived measured values from this PUBLIC repo's design docs
+  (`docs/majors/M1`–`M5`, `docs/MAJOR_IMPROVEMENTS.md`): per-ticker IB borrow fees and their
+  distribution, FINRA file composition, Finnhub coverage and analyst totals, an SSGA CUSIP, a
+  named ticker's fractional Massive EOD volume and per-ticker closes, dollar-volume figures by
+  screen rank, and two complete measured panel/join results. Schema, field names and the
+  algorithmic spec are unchanged — only the measurements are gone, and they belong in
+  Stock-Vault. `tests/test_licensing_wall.py` is the standing gate.
+
+
 ### Added
 
 - `stock_grader.signal_panel` and `stock-grader build-signal-panel`: the return join for

@@ -89,7 +89,7 @@ Measured, not theorised: the first all-profiles cloud freeze
 wrote nine panels and refused two — `momentum` and `low_volatility` each graded **0 of 82** names. They need
 a dense daily price series, and the freeze runs with SEC data only.
 
-Stock-Vault holds exactly that series: `data/market_eod`, ~501 trading days × ~12,400 tickers, collected
+Stock-Vault holds exactly that series: `data/market_eod`, roughly two years of whole-market sessions, collected
 daily. `VaultDataSource` and `VaultPriceProvider` in `src/stock_grader/data/vault.py` already read and
 hash-verify it. But `grep -n vault src/stock_grader/cli.py` returns **nothing** — the adapter was built and
 never connected, so `--price-provider` has no `vault` choice and no command can reach the archive.

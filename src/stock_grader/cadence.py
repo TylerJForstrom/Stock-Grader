@@ -54,6 +54,7 @@ import argparse
 import datetime as dt
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 # monthly-freeze runs on the 1st at 13:19 UTC.  Three days of slack covers
@@ -67,6 +68,16 @@ ACCOUNTING_GRACE_DAY = 8
 
 ACCOUNTING_FILENAME = "accounting.json"
 ACCOUNTING_SCHEMA_VERSION = "1.0"
+
+# EVERY committed forward-evidence root monthly-freeze writes, not just the
+# first one.  monthly-freeze.yml runs `freeze --out frozen_scores` AND `freeze
+# --out frozen_scores_wide` on the same cron and commits both; docs/UNIVERSE.md
+# calls them "two deliberately separate forward records".  A clock that watched
+# only one left half the evidence with exactly the property this module exists
+# to eliminate: a stalled month leaving the same trace as a healthy one.  A
+# root that does not exist (a wheel install, a partial checkout) is
+# bootstrap-guarded per root, so adding one can never fail a tree that has none.
+FROZEN_ROOTS = ("frozen_scores", "frozen_scores_wide")
 
 # The controlled vocabulary for a profile's monthly state.  Deliberately a
 # closed set of bare labels: refusal DETAIL stays in the workflow log, so the
@@ -156,7 +167,7 @@ def check_cadence(
     today: dt.date,
     *,
     pre_run: bool = False,
-    frozen_root: str = "frozen_scores",
+    frozen_roots: Sequence[str] = FROZEN_ROOTS,
     forward_dir: str = "docs/forward",
 ) -> tuple[bool, list[str]]:
     """Check both expectation clocks; returns ``(ok, report_lines)``.
@@ -166,6 +177,10 @@ def check_cadence(
     accounting, so the accounting clock is held to the *previous* month
     regardless of the day (the freeze clock is unaffected — the panels this
     run consumes must already be frozen).
+
+    The freeze clock is evaluated once PER ROOT and fails if ANY root is stale:
+    the monthly freeze writes several evidence trees, and one healthy tree must
+    never vouch for a stalled sibling.
     """
     root = Path(repo_root)
     ok = True
@@ -193,21 +208,26 @@ def check_cadence(
             "(disabled workflow, dead cron, or a run that never landed its commit)"
         )
 
-    newest_frz = newest_freeze_month(root / frozen_root)
     frz_target = expected_month(today, FREEZE_GRACE_DAY)
-    if newest_frz is None:
-        lines.append(f"BOOTSTRAP freeze: no dated panels under {frozen_root}/<profile>/ yet")
-    elif newest_frz >= frz_target:
-        lines.append(
-            f"PASS freeze: newest freeze month {newest_frz} satisfies expected {frz_target}"
-        )
-    else:
-        ok = False
-        lines.append(
-            f"FAIL freeze: newest freeze month {newest_frz} is older than expected "
-            f"{frz_target} — monthly-freeze missed its cadence and every later "
-            "forward window shrinks with it"
-        )
+    for frozen_root in frozen_roots:
+        newest_frz = newest_freeze_month(root / frozen_root)
+        if newest_frz is None:
+            lines.append(
+                f"BOOTSTRAP freeze[{frozen_root}]: no dated panels under "
+                f"{frozen_root}/<profile>/ yet"
+            )
+        elif newest_frz >= frz_target:
+            lines.append(
+                f"PASS freeze[{frozen_root}]: newest freeze month {newest_frz} "
+                f"satisfies expected {frz_target}"
+            )
+        else:
+            ok = False
+            lines.append(
+                f"FAIL freeze[{frozen_root}]: newest freeze month {newest_frz} is "
+                f"older than expected {frz_target} — monthly-freeze missed its cadence "
+                f"for this evidence root and every later forward window shrinks with it"
+            )
 
     return ok, lines
 
@@ -327,7 +347,7 @@ def run_check(
     repo_root: str = ".",
     pre_run: bool = False,
     as_of: str | None = None,
-    frozen_root: str = "frozen_scores",
+    frozen_roots: Sequence[str] | None = None,
     forward_dir: str = "docs/forward",
 ) -> int:
     if as_of is not None:
@@ -343,7 +363,7 @@ def run_check(
         repo_root,
         today,
         pre_run=pre_run,
-        frozen_root=frozen_root,
+        frozen_roots=frozen_roots or FROZEN_ROOTS,
         forward_dir=forward_dir,
     )
     for line in lines:
@@ -398,7 +418,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument(
         "--as-of", default=None, help="ISO date to evaluate at (default: today UTC)"
     )
-    p_check.add_argument("--frozen-root", default="frozen_scores")
+    p_check.add_argument(
+        "--frozen-root",
+        action="append",
+        dest="frozen_roots",
+        default=None,
+        help="committed freeze evidence root to clock; repeatable "
+        f"(default: {', '.join(FROZEN_ROOTS)})",
+    )
     p_check.add_argument("--forward-dir", default="docs/forward")
 
     p_account = sub.add_parser(
@@ -422,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=args.repo_root,
             pre_run=args.pre_run,
             as_of=args.as_of,
-            frozen_root=args.frozen_root,
+            frozen_roots=args.frozen_roots,
             forward_dir=args.forward_dir,
         )
     return run_account(

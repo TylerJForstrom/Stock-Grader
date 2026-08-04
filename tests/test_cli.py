@@ -508,6 +508,10 @@ def test_backtest_cli_requires_and_reports_a_verifiable_input_contract(
         bootstrap_block_periods=1,
         seed=0,
         allow_unverified_panel=False,
+        # Scratch panels written straight into tmp_path: no producer
+        # cataloged them, so the strict sibling-manifest check must be
+        # opted out of explicitly (the ledger line records UNATTESTED).
+        allow_unmanifested_panel=True,
         format="json",
         allow_mixed_universes=False,
         # Point at a scratch ledger: without this the run appends a junk trial
@@ -572,6 +576,10 @@ def test_backtest_records_trials_and_deflates_by_ledger_history(
             bootstrap_block_periods=1,
             seed=0,
             allow_unverified_panel=False,
+        # Scratch panels written straight into tmp_path: no producer
+        # cataloged them, so the strict sibling-manifest check must be
+        # opted out of explicitly (the ledger line records UNATTESTED).
+        allow_unmanifested_panel=True,
             format="json",
             ledger=str(ledger),
         )
@@ -633,6 +641,10 @@ def test_backtest_null_sharpe_trial_does_not_poison_later_deflation(
             bootstrap_block_periods=1,
             seed=0,
             allow_unverified_panel=False,
+        # Scratch panels written straight into tmp_path: no producer
+        # cataloged them, so the strict sibling-manifest check must be
+        # opted out of explicitly (the ledger line records UNATTESTED).
+        allow_unmanifested_panel=True,
             format="json",
             ledger=str(ledger),
         )
@@ -685,6 +697,10 @@ def _prereg_backtest_args(panel: Path, ledger: Path) -> Namespace:
         bootstrap_block_periods=1,
         seed=0,
         allow_unverified_panel=False,
+        # Scratch panels written straight into tmp_path: no producer
+        # cataloged them, so the strict sibling-manifest check must be
+        # opted out of explicitly (the ledger line records UNATTESTED).
+        allow_unmanifested_panel=True,
         format="json",
         ledger=str(ledger),
     )
@@ -702,6 +718,7 @@ def test_ledger_declare_is_append_once_and_idempotent(tmp_path, capsys) -> None:
     ledger = tmp_path / "ledger.jsonl"
     declare = [
         "ledger-declare",
+        "--allow-unmanifested-panel",
         str(path),
         "--quantiles",
         "2",
@@ -745,6 +762,8 @@ def test_preregistered_reevaluation_keeps_the_trial_denominator_flat(
         cli.main(
             [
                 "ledger-declare",
+        "--allow-unmanifested-panel",
+            "--allow-unmanifested-panel",
                 str(path),
                 "--quantiles",
                 "2",
@@ -1572,7 +1591,10 @@ def test_promotion_declare_policy_then_transition_flow(tmp_path, capsys) -> None
     from stock_grader.research_manifest import load_manifest, trial_sharpes, verify_chain
 
     doc = tmp_path / "PROMOTION.md"
-    doc.write_text("PROMOTION-POLICY v1 bytes\n", encoding="utf-8")
+    # The document must NAME the version it is declared under: binding a NEW
+    # version string to an UNCHANGED document is how the live-money rung gets
+    # opened by text that says it is closed.
+    doc.write_text("PROMOTION-POLICY promotion-policy-v1 bytes\n", encoding="utf-8")
     ledger = tmp_path / "ledger.jsonl"
     policy = [
         "promotion-declare",
@@ -1596,7 +1618,10 @@ def test_promotion_declare_policy_then_transition_flow(tmp_path, capsys) -> None
     # rich wraps console output at terminal width (CI widths differ per OS),
     # so strip the wrap newlines before any substring assertion.
     assert "NEW version" in capsys.readouterr().out.replace("\n", "")
-    doc.write_text("PROMOTION-POLICY v1 bytes\n", encoding="utf-8")
+    # The document must NAME the version it is declared under: binding a NEW
+    # version string to an UNCHANGED document is how the live-money rung gets
+    # opened by text that says it is closed.
+    doc.write_text("PROMOTION-POLICY promotion-policy-v1 bytes\n", encoding="utf-8")
 
     subject = "ab" * 32
     transition = [

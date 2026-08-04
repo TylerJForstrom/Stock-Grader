@@ -76,6 +76,22 @@ jobs:
         # the others, mirroring cmd_freeze's refused-list policy.
         run: |
           set -uo pipefail
+          # Dated artifacts are immutable: an identical re-run is a no-op, a
+          # DIFFERENT result under the same name is a refusal, never a silent
+          # overwrite. (The evaluator is seeded, so a benign re-run reproduces
+          # byte-identical markdown and this stays quiet.)
+          _immutable_place() {
+            src="$1"; dest="$2"
+            if [ -e "$dest" ]; then
+              if cmp -s "$src" "$dest"; then
+                echo "::notice::$dest already written with identical content; leaving it"
+                return 0
+              fi
+              echo "::error::$dest already exists with DIFFERENT content — dated forward artifacts are immutable; refusing to overwrite"
+              return 1
+            fi
+            cp "$src" "$dest"
+          }
           MONTH=$(date -u +%Y-%m); OUT="docs/forward/$MONTH"; mkdir -p build/panels "$OUT"
           STATES="build/panel_states.tsv"; : > "$STATES"
           PROFILES="${{ github.event.inputs.profiles }}"
@@ -97,17 +113,34 @@ jobs:
             # monthly sequential looks in the ledger itself.
             stock-grader ledger-declare "build/panels/$p.parquet" --ledger research_ledger.jsonl \
               --periods-per-year 12 --min-cross-section 20 --quantiles 5 \
-              --schedule "monthly (cron 41 2 6 * *)" \
+              --schedule "monthly (cron 41 2 6 * *) plus explicit workflow_dispatch runs; each run is one disclosed look" \
               || { echo "::error::ledger-declare failed for $p"; printf '%s\trefused_declare\n' "$p" >> "$STATES"; failed=1; continue; }
             # --allow-unverified-panel is mandatory, not a shortcut: return_is_total
             # is honestly False in v1, so the strict contract refuses every panel.
             # The ledger line records "FAILED total_returns_attested" — which is
             # the true state of the evidence.
+            # Write through a temp file, never a bare `>` redirect into the
+            # dated directory. Two reasons, both about immutability:
+            #  1. `>` truncates BEFORE the command runs, so a FAILING run on the
+            #     6th would destroy a SUCCEEDING run's report from the 4th and
+            #     commit a 0-byte evidence artifact.
+            #  2. docs/forward/<month>/ is dated evidence. stock_vault's
+            #     ensembles/scoreboard writers and cmd_freeze all refuse to
+            #     overwrite a dated artifact with DIFFERENT content; this loop
+            #     was the outlier, and accounting.json — written from this same
+            #     loop — is explicitly append-per-run because a month sees more
+            #     than one run.
+            TMP_MD=$(mktemp)
             stock-grader backtest "build/panels/$p.parquet" --ledger research_ledger.jsonl \
               --periods-per-year 12 --min-cross-section 20 --quantiles 5 \
-              --allow-unverified-panel --format md > "$OUT/$p.md" \
-              || { echo "::error::backtest failed for $p"; printf '%s\trefused_backtest\n' "$p" >> "$STATES"; failed=1; continue; }
-            cp "build/panels/$p.build.json" "$OUT/$p.build.json"
+              --allow-unverified-panel --format md > "$TMP_MD" \
+              || { echo "::error::backtest failed for $p"; rm -f "$TMP_MD"; printf '%s\trefused_backtest\n' "$p" >> "$STATES"; failed=1; continue; }
+            if ! _immutable_place "$TMP_MD" "$OUT/$p.md"; then
+              printf '%s\trefused_backtest\n' "$p" >> "$STATES"; failed=1; continue
+            fi
+            if ! _immutable_place "build/panels/$p.build.json" "$OUT/$p.build.json"; then
+              printf '%s\trefused_backtest\n' "$p" >> "$STATES"; failed=1; continue
+            fi
             printf '%s\tevaluated\n' "$p" >> "$STATES"
           done
           # UNCONDITIONAL: every profile's state is accounted every run — the

@@ -143,6 +143,13 @@ def evaluate_seed_panel(panel: pd.DataFrame, workdir: Path, label: str) -> dict:
                 "--ledger",
                 str(ledger_path),
                 *PRODUCTION_BACKTEST_FLAGS,
+                # NOT part of PRODUCTION_BACKTEST_FLAGS: that tuple is quoted
+                # verbatim into a dated calibration artifact, which is
+                # immutable. This is a property of the SCRATCH panel, not of
+                # the evaluation — these synthetic grids are written to a temp
+                # dir that no producer catalogs, so the strict manifest check
+                # would refuse them.
+                "--allow-unmanifested-panel",
                 "--format",
                 "json",
             ]
