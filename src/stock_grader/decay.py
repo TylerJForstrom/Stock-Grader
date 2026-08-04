@@ -54,7 +54,11 @@ __all__ = [
 
 DEFAULT_HORIZONS: tuple[int, ...] = (5, 21, 63, 126)
 PANEL_SCHEMA_VERSION = "1.0"
-ARTIFACT_SCHEMA_VERSION = "1.0"
+# 1.1: inference is averaged over ALL non-overlapping offset subsamples
+# (Jegadeesh-Titman); decay.json embeds inference_reports_by_offset (a list)
+# instead of the single fixed-offset-0 inference_report, and the curve carries
+# half_life_interval. Closed dated artifact directories are never rewritten.
+ARTIFACT_SCHEMA_VERSION = "1.1"
 
 _SPLIT_RATIOS = (2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0)
 
@@ -124,7 +128,10 @@ class HorizonResult:
     is_primary: bool = False
     unusable_reason: str | None = None
     descriptive: BacktestReport | None = None
-    inference: BacktestReport | None = None
+    # One report per non-overlapping offset subsample (Jegadeesh-Titman); the
+    # headline inference numbers are their equal-weight average, never a single
+    # arbitrary phase. Empty list == horizon unusable.
+    inference_by_offset: list[BacktestReport] = field(default_factory=list)
     significance: SignificanceReport | None = None
 
 
@@ -138,6 +145,7 @@ class DecayCurve:
     config: DecayConfig
     horizons: list[HorizonResult] = field(default_factory=list)
     half_life_days: float | None = None
+    half_life_interval: tuple[float, float] | None = None
     half_life_fit_r2: float | None = None
     half_life_note: str = ""
     best_horizon_by_ic_ir: int | None = None
@@ -158,6 +166,7 @@ class DecayCurve:
             "signal_dates": self.signal_dates,
             "config": asdict(self.config),
             "half_life_days": self.half_life_days,
+            "half_life_interval": self.half_life_interval,
             "half_life_fit_r2": self.half_life_fit_r2,
             "half_life_note": self.half_life_note,
             "best_horizon_by_ic_ir": self.best_horizon_by_ic_ir,
@@ -198,9 +207,9 @@ class DecayCurve:
             entry["descriptive_report"] = (
                 json.loads(to_json(result.descriptive)) if result.descriptive else None
             )
-            entry["inference_report"] = (
-                json.loads(to_json(result.inference)) if result.inference else None
-            )
+            entry["inference_reports_by_offset"] = [
+                json.loads(to_json(report)) for report in result.inference_by_offset
+            ]
             entry["significance"] = (
                 json.loads(to_json(result.significance)) if result.significance else None
             )
@@ -373,6 +382,20 @@ def build_horizon_panel(
 # -- evaluation ----------------------------------------------------------------
 
 
+def _offset_average(values: Sequence[float | None]) -> float | None:
+    """Equal-weight mean of one statistic across offset subsamples (JT).
+
+    None unless EVERY offset could compute the statistic — averaging only the
+    offsets that happen to work would re-introduce the phase dependence this
+    average exists to remove.
+    """
+    if not values or any(
+        value is None or not math.isfinite(value) for value in values
+    ):
+        return None
+    return float(sum(values) / len(values))
+
+
 def _median_spacing(signal_dates: pd.DatetimeIndex, sessions: pd.DatetimeIndex) -> int:
     if len(signal_dates) < 2:
         return 21
@@ -461,38 +484,86 @@ def evaluate_decay(
                     seed=config.seed,
                 ),
             )
+            # Jegadeesh-Titman: one non-overlapping subsample per offset phase.
+            # The union uses every signal date exactly once; each subsample
+            # preserves non-overlap internally. A nonempty offset that cannot
+            # be evaluated fails the WHOLE horizon — averaging only the offsets
+            # that happen to work would re-introduce phase dependence.
             distinct = sorted(panel["signal_date"].unique())
-            subsample = panel[panel["signal_date"].isin(distinct[::overlap])]
-            inference = evaluate_walk_forward(
-                subsample,
-                BacktestConfig(
-                    quantiles=config.quantiles,
-                    min_cross_section=config.min_cross_section,
-                    periods_per_year=max(1, round(periods_per_year / overlap)),
-                    transaction_cost_bps=config.transaction_cost_bps,
-                    bootstrap_samples=config.bootstrap_samples,
-                    bootstrap_block_periods=3,
-                    seed=config.seed,
-                ),
+            inference_config = BacktestConfig(
+                quantiles=config.quantiles,
+                min_cross_section=config.min_cross_section,
+                periods_per_year=max(1, round(periods_per_year / overlap)),
+                transaction_cost_bps=config.transaction_cost_bps,
+                bootstrap_samples=config.bootstrap_samples,
+                bootstrap_block_periods=3,
+                seed=config.seed,
             )
+            offset_reports = [
+                evaluate_walk_forward(
+                    panel[panel["signal_date"].isin(distinct[offset::overlap])],
+                    inference_config,
+                )
+                for offset in range(overlap)
+                if distinct[offset::overlap]
+            ]
         except ValueError as exc:
             result.unusable_reason = str(exc)
             curve.horizons.append(result)
             continue
-        if config.non_overlapping_only:
-            descriptive = inference
         result.descriptive = descriptive
-        result.inference = inference
+        result.inference_by_offset = offset_reports
         result.periods = len(descriptive.periods)
-        result.effective_periods = len(inference.periods)
+        result.effective_periods = int(
+            round(sum(len(r.periods) for r in offset_reports) / len(offset_reports))
+        )
         result.observations = int(len(panel))
         result.mean_rank_ic = float(descriptive.mean_rank_ic)
         result.rank_ic_interval = descriptive.rank_ic_interval
-        result.rank_ic_information_ratio = inference.rank_ic_information_ratio
         result.rank_ic_positive_rate = float(descriptive.rank_ic_positive_rate)
-        result.ic_per_sqrt_day = float(descriptive.mean_rank_ic) / math.sqrt(horizon)
-        result.mean_net_spread = float(inference.mean_net_spread)
-        result.annualized_spread_sharpe = inference.annualized_spread_sharpe
+        if config.non_overlapping_only:
+            # Headline descriptive columns from the offset-averaged
+            # non-overlapping view. The interval becomes the ENVELOPE across
+            # offsets: the offsets share overlapping returns, so averaging
+            # correlated estimates must never be presented as a tighter CI.
+            mean_ics = [r.mean_rank_ic for r in offset_reports]
+            positive_rates = [r.rank_ic_positive_rate for r in offset_reports]
+            result.mean_rank_ic = (
+                float(sum(mean_ics) / len(mean_ics))
+                if all(math.isfinite(v) for v in mean_ics)
+                else float("nan")
+            )
+            result.rank_ic_positive_rate = (
+                float(sum(positive_rates) / len(positive_rates))
+                if all(math.isfinite(v) for v in positive_rates)
+                else float("nan")
+            )
+            intervals = [r.rank_ic_interval for r in offset_reports]
+            result.rank_ic_interval = (
+                (
+                    min(interval[0] for interval in intervals),
+                    max(interval[1] for interval in intervals),
+                )
+                if intervals and all(interval is not None for interval in intervals)
+                else None
+            )
+        result.rank_ic_information_ratio = _offset_average(
+            [r.rank_ic_information_ratio for r in offset_reports]
+        )
+        net_spreads = [r.mean_net_spread for r in offset_reports]
+        result.mean_net_spread = (
+            float(sum(net_spreads) / len(net_spreads))
+            if all(math.isfinite(v) for v in net_spreads)
+            else float("nan")
+        )
+        result.annualized_spread_sharpe = _offset_average(
+            [r.annualized_spread_sharpe for r in offset_reports]
+        )
+        result.ic_per_sqrt_day = (
+            float(result.mean_rank_ic) / math.sqrt(horizon)
+            if math.isfinite(result.mean_rank_ic)
+            else float("nan")
+        )
         curve.horizons.append(result)
         usable += 1
 
@@ -505,9 +576,12 @@ def evaluate_decay(
             f"horizon ({shortest}d) needs more archived sessions"
         )
 
-    curve.half_life_days, curve.half_life_fit_r2, curve.half_life_note = fit_half_life(
-        curve.horizons
-    )
+    (
+        curve.half_life_days,
+        curve.half_life_interval,
+        curve.half_life_fit_r2,
+        curve.half_life_note,
+    ) = fit_half_life(curve.horizons)
     by_ir = [
         (r.rank_ic_information_ratio, r.horizon_days)
         for r in curve.horizons
@@ -544,37 +618,89 @@ def evaluate_decay(
     return curve, panels
 
 
+_Z95 = 1.959963984540054  # two-sided 95% normal quantile
+
+
 def fit_half_life(
     results: Sequence[HorizonResult],
-) -> tuple[float | None, float | None, str]:
-    """OLS of ln(mean IC) on horizon; refuses whenever the fit cannot support it."""
+) -> tuple[float | None, tuple[float, float] | None, float | None, str]:
+    """Inverse-variance-weighted OLS of ln(mean IC) on horizon.
+
+    Returns ``(half_life_days, half_life_interval, r2, note)``. Each point is
+    weighted by the precision implied by its per-horizon moving-block-bootstrap
+    IC interval (delta method into log space), so one noisy long-horizon point
+    cannot steer the fit; the 95% half-life interval propagates the slope's
+    known-variance standard error. When any usable horizon lacks a usable
+    interval the fit falls back to unweighted and reports no interval rather
+    than inventing precision. Refuses whenever the fit cannot support a
+    half-life: fewer than 3 positive-IC points, non-decaying IC, or poor fit.
+    """
     points = [
-        (r.horizon_days, r.mean_rank_ic)
+        (r.horizon_days, r.mean_rank_ic, r.rank_ic_interval)
         for r in results
         if r.unusable_reason is None and math.isfinite(r.mean_rank_ic) and r.mean_rank_ic > 0
     ]
     if len(points) < 3:
-        return None, None, "too few positive-IC horizons to fit a decay curve"
+        return None, None, None, "too few positive-IC horizons to fit a decay curve"
     x = np.array([p[0] for p in points], dtype=float)
     y = np.log(np.array([p[1] for p in points], dtype=float))
-    slope, intercept = np.polyfit(x, y, 1)
+
+    log_variances: list[float] | None = []
+    for _, mean_ic, interval in points:
+        if interval is None:
+            log_variances = None
+            break
+        ic_se = (interval[1] - interval[0]) / (2.0 * _Z95)
+        if not (math.isfinite(ic_se) and ic_se > 0.0):
+            log_variances = None
+            break
+        log_variances.append((ic_se / mean_ic) ** 2)  # delta method: Var[ln IC]
+    weighted = log_variances is not None
+    w = 1.0 / np.array(log_variances, dtype=float) if weighted else np.ones_like(x)
+
+    s_w = float(np.sum(w))
+    s_x = float(np.sum(w * x))
+    s_y = float(np.sum(w * y))
+    s_xx = float(np.sum(w * x * x))
+    s_xy = float(np.sum(w * x * y))
+    denominator = s_w * s_xx - s_x * s_x
+    slope = (s_w * s_xy - s_x * s_y) / denominator
+    intercept = (s_xx * s_y - s_x * s_xy) / denominator
     predicted = intercept + slope * x
-    ss_res = float(np.sum((y - predicted) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    ss_res = float(np.sum(w * (y - predicted) ** 2))
+    ss_tot = float(np.sum(w * (y - s_y / s_w) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
     lambda_ = -float(slope)
     if lambda_ <= 0:
-        return None, r2, (
+        return None, None, r2, (
             f"IC does not decay across the horizons tested; the natural holding period "
             f"is at or beyond {max(p[0] for p in points)}d — extend the sweep before "
             f"concluding"
         )
     if r2 < 0.5:
-        return None, r2, (
+        return None, None, r2, (
             f"exponential decay fits poorly (R2={r2:.2f}); the points do not describe "
             f"a clean decay"
         )
-    return math.log(2) / lambda_, r2, "exponential fit accepted"
+    half_life = math.log(2) / lambda_
+    if not weighted:
+        return half_life, None, r2, (
+            "exponential fit accepted (unweighted: a per-horizon IC interval is "
+            "unavailable, so no half-life interval is reported)"
+        )
+    # With known per-point variances the slope's variance is Sw / denominator.
+    lambda_se = math.sqrt(s_w / denominator)
+    if lambda_ - _Z95 * lambda_se <= 0.0:
+        return half_life, None, r2, (
+            "exponential fit accepted (inverse-variance weighted); the decay rate "
+            "is not distinguishable from zero at 95%, so the half-life interval "
+            "is unbounded above and not reported"
+        )
+    interval = (
+        math.log(2) / (lambda_ + _Z95 * lambda_se),
+        math.log(2) / (lambda_ - _Z95 * lambda_se),
+    )
+    return half_life, interval, r2, "exponential fit accepted (inverse-variance weighted)"
 
 
 # -- ledger --------------------------------------------------------------------
@@ -596,15 +722,29 @@ def record_sweep_trials(
     prior = (
         trial_sharpes_from(load_manifest(ledger_path)) if ledger_path.exists() else []
     )
-    usable = [r for r in curve.horizons if r.inference is not None]
+    usable = [r for r in curve.horizons if r.inference_by_offset]
     sweep_sharpes = []
-    spreads_by_horizon: dict[int, list[float]] = {}
+    spreads_by_horizon: dict[int, list[list[float]]] = {}
+    trial_sharpe_by_horizon: dict[int, float | None] = {}
     for result in usable:
-        spreads = [p.net_spread for p in result.inference.periods]
-        spreads_by_horizon[result.horizon_days] = spreads
-        sharpe = per_period_sharpe(spreads) if len(spreads) >= 2 else float("nan")
-        if math.isfinite(sharpe):
-            sweep_sharpes.append(sharpe)
+        # One non-overlapping net-spread series per offset (JT). The trial
+        # Sharpe is their equal-weight average — every period used once, no
+        # arbitrary phase — and only exists when EVERY offset can compute one.
+        per_offset = [
+            [p.net_spread for p in report.periods]
+            for report in result.inference_by_offset
+        ]
+        spreads_by_horizon[result.horizon_days] = per_offset
+        offset_sharpes = [per_period_sharpe(spreads) for spreads in per_offset]
+        trial_sharpe = (
+            float(sum(offset_sharpes) / len(offset_sharpes))
+            if all(len(spreads) >= 2 for spreads in per_offset)
+            and all(math.isfinite(sharpe) for sharpe in offset_sharpes)
+            else None
+        )
+        trial_sharpe_by_horizon[result.horizon_days] = trial_sharpe
+        if trial_sharpe is not None:
+            sweep_sharpes.append(trial_sharpe)
     trial_sharpes = [*prior, *sweep_sharpes]
     n_denominator = len(trial_sharpes)
 
@@ -617,21 +757,32 @@ def record_sweep_trials(
     record_hashes: dict[int, str] = {}
     deflated_benchmark = None
     for result in sorted(usable, key=lambda r: r.horizon_days):
-        spreads = spreads_by_horizon[result.horizon_days]
-        significance = (
-            assess_edge(
-                spreads,
-                trial_sharpes,
-                periods_per_year=(
-                    result.inference.config.periods_per_year
-                    if hasattr(result.inference, "config")
-                    else 12
-                ),
-                bootstrap_seed=curve.config.seed,
-            )
-            if len(spreads) >= 2
-            else None
+        per_offset = spreads_by_horizon[result.horizon_days]
+        periods_per_year = (
+            result.inference_by_offset[0].config.periods_per_year
+            if hasattr(result.inference_by_offset[0], "config")
+            else 12
         )
+        if all(len(spreads) >= 2 for spreads in per_offset):
+            # One honest assessment per offset; record the MOST CONSERVATIVE
+            # (a failing offset first, then lowest DSR, then lowest CI floor),
+            # so the gate can pass only when no phase choice could flip it.
+            # Averaging correlated offsets must never tighten a CI.
+            assessments = [
+                assess_edge(
+                    spreads,
+                    trial_sharpes,
+                    periods_per_year=periods_per_year,
+                    bootstrap_seed=curve.config.seed,
+                )
+                for spreads in per_offset
+            ]
+            significance = min(
+                assessments,
+                key=lambda a: (a.significant, a.deflated_sharpe, a.sharpe_ci_low),
+            )
+        else:
+            significance = None
         result.significance = significance
         verdict_core = significance.verdict if significance else "INSUFFICIENT SAMPLE"
         gate = bool(result.is_primary and significance and significance.significant)
@@ -645,11 +796,7 @@ def record_sweep_trials(
             horizons=[result.horizon_days],
             trials=n_denominator,
             metrics={
-                "per_period_sharpe": (
-                    per_period_sharpe(spreads)
-                    if len(spreads) >= 2 and math.isfinite(per_period_sharpe(spreads))
-                    else None
-                ),
+                "per_period_sharpe": trial_sharpe_by_horizon[result.horizon_days],
                 "mean_net_spread": (
                     result.mean_net_spread if math.isfinite(result.mean_net_spread) else None
                 ),
@@ -675,12 +822,15 @@ def record_sweep_trials(
             leakage_controls=(
                 f"horizon sweep {list(curve.config.horizons)}d, "
                 f"primary={curve.config.primary_horizon}d; one trial per horizon on a "
-                f"shared denominator of {n_denominator}; inference on non-overlapping "
-                f"subsample (stride {overlap}, fixed offset 0); E[max] deflation assumes "
-                f"INDEPENDENT trials — horizons of one score are highly correlated, so "
-                f"this correction OVER-deflates; the remedy is a pre-declared primary "
-                f"horizon, not a private discount; panel contract: FAILED "
-                f"{','.join(failed_contract)}"
+                f"shared denominator of {n_denominator}; inference averaged over all "
+                f"{len(result.inference_by_offset)} non-overlapping offset subsamples "
+                f"(stride {overlap}, Jegadeesh-Titman) — offsets share overlapping "
+                f"returns, so averaging removes the arbitrary phase but must never "
+                f"tighten a CI; significance is the most conservative offset; E[max] "
+                f"deflation assumes INDEPENDENT trials — horizons of one score are "
+                f"highly correlated, so this correction OVER-deflates; the remedy is a "
+                f"pre-declared primary horizon, not a private discount; panel contract: "
+                f"FAILED {','.join(failed_contract)}"
             ),
             gate_passed=gate,
             verdict=f"{prefix} -- {verdict_core}",
@@ -865,16 +1015,30 @@ def decay_to_markdown(curve: DecayCurve) -> str:
                 f"    {result.horizon_days:>4}d | {bar:<18} | {sign}{abs(result.mean_rank_ic):.3f}"
             )
 
+    if curve.half_life_days is None:
+        half_life_line = f"Half-life: not reported — {curve.half_life_note}."
+    else:
+        interval_text = (
+            f"95% interval [{curve.half_life_interval[0]:.0f}, "
+            f"{curve.half_life_interval[1]:.0f}]d, "
+            if curve.half_life_interval is not None
+            else ""
+        )
+        half_life_line = (
+            f"Half-life: **{curve.half_life_days:.0f} trading days** "
+            f"({interval_text}R² {curve.half_life_fit_r2:.2f}; {curve.half_life_note})."
+        )
     lines += [
+        "",
+        ("Inference columns (IC IR, net spread, Sharpe) are Jegadeesh–Titman "
+        "averages over all non-overlapping offset subsamples, and `eff.` is the "
+        "mean periods per offset. The offsets share overlapping returns, so the "
+        "average removes the arbitrary phase choice but never tightens a CI; "
+        "significance uses the most conservative offset."),
         "",
         "## Reading the curve",
         "",
-        (
-            f"Half-life: **{curve.half_life_days:.0f} trading days** "
-            f"(R² {curve.half_life_fit_r2:.2f})."
-            if curve.half_life_days is not None
-            else f"Half-life: not reported — {curve.half_life_note}."
-        ),
+        half_life_line,
         "",
         (f"Best horizon by IC IR: {curve.best_horizon_by_ic_ir or '—'}d; by IC/√d: "
         f"{curve.best_horizon_by_ic_per_sqrt_day or '—'}d. Under a fixed rebalancing "

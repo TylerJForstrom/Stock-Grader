@@ -20,9 +20,37 @@ physically separate panels; a test proves the constraint is forced, not chosen.
 
 With monthly signals a 63-day window overlaps its neighbours. The MEAN of a
 per-date cross-sectional IC stays unbiased under overlap — only its standard
-error is understated — so the descriptive view uses every signal date, while
-the inference view (whose Sharpe feeds `assess_edge`) subsamples at the overlap
-stride with a fixed, pre-declared offset. Never search offsets.
+error is understated — so the descriptive view uses every signal date. The
+inference view is the Jegadeesh–Titman average over ALL `overlap` disjoint
+offset subsamples: each statistic (IC IR, net spread, Sharpe) is computed on
+each non-overlapping subsample and equal-weight averaged, which uses every
+period exactly once, is deterministic and order-independent, and replaces the
+old arbitrary fixed offset 0. Never search offsets — averaging all of them is
+the point.
+
+The offsets are built from the same overlapping returns, so they are strongly
+correlated: the average stabilizes the point estimate but must NEVER be read
+as tightening a CI. Significance and the gate therefore use the most
+conservative offset (a failing offset first, then lowest DSR, then lowest CI
+floor) — the gate passes only when no phase choice could have flipped it. A
+nonempty offset that cannot be evaluated fails the whole horizon; averaging
+only the offsets that happen to work would re-introduce phase dependence.
+`eff.` in the report is the mean periods per offset. When `overlap == 1` the
+single subsample is the whole panel, exactly as before.
+
+## Half-life: weighted fit with an honest interval
+
+`fit_half_life` is an inverse-variance-weighted OLS of ln(mean IC) on horizon:
+each point is weighted by the precision implied by its per-horizon
+moving-block-bootstrap IC interval (delta method into log space), so one noisy
+long-horizon point cannot steer the fit. It reports a 95% half-life interval
+propagated from the slope's known-variance standard error. Every refusal is
+unchanged — fewer than 3 positive-IC horizons, non-decaying IC, poor fit
+(weighted R² < 0.5) — and two more honesty rules apply: when any usable
+horizon lacks an IC interval the fit falls back to unweighted and reports no
+half-life interval rather than inventing precision, and when the decay rate is
+not distinguishable from zero at 95% the interval is unbounded above and
+therefore withheld (the point estimate and the note still say so).
 
 ## The trial charge
 
