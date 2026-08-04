@@ -1,0 +1,40 @@
+{
+  "content_schema_versions": [
+    "1.0"
+  ],
+  "dataset": "frozen_score_panel",
+  "files": [
+    {
+      "bytes": 38372,
+      "columns": {
+        "cik": "str",
+        "code_commit": "str",
+        "config_fingerprint": "str",
+        "coverage": "float64",
+        "graded": "bool",
+        "letter": "str",
+        "percentile": "float64",
+        "profile": "str",
+        "schema_version": "str",
+        "score": "float64",
+        "signal_date": "str",
+        "ticker": "str",
+        "universe_fingerprint": "str",
+        "universe_id": "str",
+        "universe_spec_sha256": "str"
+      },
+      "content_schema_version": "1.0",
+      "hashed_at": "backfill",
+      "name": "2026-07-31.parquet",
+      "rows": 1000,
+      "sha256": "493f1ff5dec237766ba0aa77d73c1aa8715576e8a6fd34565c30e49236de3e14"
+    }
+  ],
+  "generated_at_utc": "2026-08-04T14:15:08Z",
+  "license_note": "Grader-computed scores derived from US-government public-domain SEC EDGAR data (17 USC 105); freely redistributable.",
+  "profile": "growth",
+  "schema_version": "1.0",
+  "source_urls": [
+    "https://www.sec.gov/"
+  ]
+}

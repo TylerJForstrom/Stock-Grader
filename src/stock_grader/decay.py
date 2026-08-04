@@ -253,6 +253,14 @@ def load_frozen_panels(
         )
     if not files:
         raise ValueError(f"no frozen panels under {frozen_dir}")
+    # Manifest-verified reads: a part whose bytes the sibling catalog does not
+    # vouch for raises here (surfaced by cmd_decay as a per-profile refusal);
+    # a directory with no manifest warns and loads — pre-convention frozen
+    # dirs, including retro-backfill roots, are immutable and stay readable.
+    from .frozen_manifest import verify_sibling_manifest
+
+    for path in files:
+        verify_sibling_manifest(path)
     frames = [pd.read_parquet(path) for path in files]
     frame = pd.concat(frames, ignore_index=True)
     missing = _FROZEN_COLUMNS - set(frame.columns)

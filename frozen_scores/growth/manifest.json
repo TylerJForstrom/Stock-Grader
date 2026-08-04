@@ -1,0 +1,86 @@
+{
+  "content_schema_versions": [
+    "1.0"
+  ],
+  "dataset": "frozen_score_panel",
+  "files": [
+    {
+      "bytes": 11304,
+      "columns": {
+        "cik": "str",
+        "code_commit": "str",
+        "config_fingerprint": "str",
+        "coverage": "float64",
+        "graded": "bool",
+        "letter": "str",
+        "percentile": "float64",
+        "profile": "str",
+        "schema_version": "str",
+        "score": "float64",
+        "signal_date": "str",
+        "ticker": "str",
+        "universe_fingerprint": "str"
+      },
+      "content_schema_version": "1.0",
+      "hashed_at": "backfill",
+      "name": "2026-07-30.parquet",
+      "rows": 82,
+      "sha256": "333bea1a8d0f7f5ffda3901213abf02efd48c76bbdc31ac4435ad066dd9a95a1"
+    },
+    {
+      "bytes": 12345,
+      "columns": {
+        "cik": "str",
+        "code_commit": "str",
+        "config_fingerprint": "str",
+        "coverage": "float64",
+        "graded": "bool",
+        "letter": "str",
+        "percentile": "float64",
+        "profile": "str",
+        "schema_version": "str",
+        "score": "float64",
+        "signal_date": "str",
+        "ticker": "str",
+        "universe_fingerprint": "str",
+        "universe_id": "object",
+        "universe_spec_sha256": "object"
+      },
+      "content_schema_version": "1.0",
+      "hashed_at": "backfill",
+      "name": "2026-07-31.parquet",
+      "rows": 82,
+      "sha256": "19bb795f5ededa3ea3c0df62800f3231967857acdb56224672a3a16903fd43a7"
+    },
+    {
+      "bytes": 11312,
+      "columns": {
+        "cik": "str",
+        "code_commit": "str",
+        "config_fingerprint": "str",
+        "coverage": "float64",
+        "graded": "bool",
+        "letter": "str",
+        "percentile": "float64",
+        "profile": "str",
+        "schema_version": "str",
+        "score": "float64",
+        "signal_date": "str",
+        "ticker": "str",
+        "universe_fingerprint": "str"
+      },
+      "content_schema_version": "1.0",
+      "hashed_at": "backfill",
+      "name": "2026-08-01.parquet",
+      "rows": 82,
+      "sha256": "37e52b649e357d0a180c2a52b62de6ae042c73d9876f367bfd2dcc64097bf70e"
+    }
+  ],
+  "generated_at_utc": "2026-08-04T14:15:08Z",
+  "license_note": "Grader-computed scores derived from US-government public-domain SEC EDGAR data (17 USC 105); freely redistributable.",
+  "profile": "growth",
+  "schema_version": "1.0",
+  "source_urls": [
+    "https://www.sec.gov/"
+  ]
+}

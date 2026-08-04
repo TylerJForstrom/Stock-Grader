@@ -2,3 +2,8 @@
 # their line endings: the registered spec uses CRLF and memberships use LF.
 config/universe_spec.json -text whitespace=cr-at-eol
 config/universe_liq*.txt -text
+
+# Frozen score panels are immutable byte-addressed parts whose sha256s are
+# recorded in sibling manifest.json catalogs. Parquet is binary; make that
+# explicit so no platform ever line-ending-translates a hash-pinned part.
+*.parquet -text
