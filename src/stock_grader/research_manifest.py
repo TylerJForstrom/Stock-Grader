@@ -34,19 +34,28 @@ from pathlib import Path
 __all__ = [
     "GENESIS_SHA256",
     "PREREGISTRATION_EXPERIMENT",
+    "PROMOTION_EXPERIMENT",
+    "PROMOTION_STAGES",
+    "RETIRED_STAGE",
     "RETRACTION_EXPERIMENT",
     "ResearchRecord",
     "append_record",
     "current_commit",
     "find_preregistration",
+    "find_promotion_policy",
     "load_manifest",
     "preregistered_experiment",
     "preregistration_record",
+    "promotion_policy_declaration",
+    "promotion_policy_record",
+    "promotion_stage",
+    "promotion_transition_record",
     "retracted_hashes",
     "spec_sha256",
     "summarize_manifest",
     "trial_sharpes",
     "trial_sharpes_by_experiment",
+    "validate_promotion_transition",
     "verify_chain",
     "verify_line",
 ]
@@ -83,6 +92,42 @@ RETRACTION_EXPERIMENT = "ledger:retraction"
 #: problem. The declared schedule makes the peeking *disclosed*, not
 #: corrected; the ledger shows exactly when each look was declared to happen.
 PREREGISTRATION_EXPERIMENT = "ledger:preregistration"
+
+#: Experiment name marking a promotion-lifecycle record.
+#:
+#: Two record kinds ride this experiment name, both additive on the existing
+#: schema exactly like retraction and preregistration (a self-hash in
+#: ``symbols``, the canonical declaration JSON in ``leakage_controls``, no
+#: metrics so neither kind can ever enter the trial denominator):
+#:
+#: - a **policy declaration** binds a versioned promotion-policy document
+#:   (``docs/PROMOTION.md``) by sha256. Amendments are a NEW policy version
+#:   declared by a NEW record — superseded declarations stay in the chain.
+#: - a **stage transition** records one subject (a spec hash) moving between
+#:   declared lifecycle stages under a named policy version, citing the
+#:   integrity hashes of the evidence records the decision rests on.
+#:
+#: Licensing split (the load-bearing design point): this PUBLIC ledger carries
+#: only spec hashes, stage names, the policy version, and evidence-record
+#: integrity hashes. A sha256 is not a derived result. The NUMERIC evidence
+#: behind decisions about license-walled vault signals (Finnhub/FINRA/IB/
+#: SSGA/Massive-derived) lives in Stock-Vault's append-only decision journal
+#: (``stock_vault.decisions``), which these records reference by record hash
+#: and chain head — never by value.
+PROMOTION_EXPERIMENT = "ledger:promotion"
+
+#: The promotion ladder, lowest rung first. ``retired`` is a terminal state
+#: outside the ladder: a retired subject never re-enters — revival means a new
+#: spec, a new subject hash, and a new trial charged.
+PROMOTION_STAGES = (
+    "exploratory",
+    "declared_trial",
+    "shadow_arm",
+    "paper_default",
+    "live_money",
+)
+
+RETIRED_STAGE = "retired"
 
 
 def current_commit() -> str:
@@ -397,6 +442,272 @@ def find_preregistration(
             continue
         match = dict(record)
     return match
+
+
+# -- promotion lifecycle -------------------------------------------------------
+
+
+def promotion_policy_declaration(
+    *,
+    policy_version: str,
+    policy_doc: str,
+    policy_sha256: str,
+    stages: Sequence[str] = PROMOTION_STAGES,
+    live_money_reachable: bool = False,
+) -> dict[str, object]:
+    """Canonical machine-readable core of one promotion-policy version.
+
+    Only what the ledger must ENFORCE is machine-encoded (the stage ladder and
+    whether the live-money rung is reachable); every numeric threshold lives in
+    the policy document itself, whose bytes are bound by ``policy_sha256`` —
+    editing the document without declaring a new version breaks every later
+    transition against it.
+    """
+    return {
+        "kind": "promotion-policy",
+        "policy_version": policy_version,
+        "policy_doc": policy_doc,
+        "policy_sha256": policy_sha256,
+        "stages": list(stages),
+        "live_money_reachable": bool(live_money_reachable),
+    }
+
+
+def promotion_policy_record(
+    declaration: Mapping[str, object],
+    *,
+    market: str = "us_equities",
+    code_commit: str | None = None,
+) -> ResearchRecord:
+    """Build a policy-declaration record (the caller appends it).
+
+    ``symbols[0]`` is the sha256 of the canonical declaration JSON stored in
+    ``leakage_controls`` (recomputable from the record itself, exactly the
+    preregistration tamper contract); ``symbols[1]`` is the policy document's
+    own sha256, so the doc is greppable by hash. No metrics — a policy is not
+    a measurement and must never enter the trial denominator.
+    """
+    return ResearchRecord(
+        experiment=PROMOTION_EXPERIMENT,
+        market=market,
+        symbols=[spec_sha256(declaration), str(declaration.get("policy_sha256", ""))],
+        targets=[],
+        horizons=[],
+        trials=0,
+        metrics={},
+        costs={},
+        benchmark="none",
+        leakage_controls=json.dumps(declaration, sort_keys=True, separators=(",", ":")),
+        gate_passed=False,
+        verdict=(
+            f"PROMOTION-POLICY {declaration.get('policy_version')} declared; "
+            f"doc {declaration.get('policy_doc')} "
+            f"sha256 {declaration.get('policy_sha256')}; amendment only by a NEW "
+            f"version — superseded declarations stay in the chain"
+        ),
+        code_commit=code_commit if code_commit is not None else current_commit(),
+    )
+
+
+def promotion_transition_record(
+    transition: Mapping[str, object],
+    *,
+    market: str = "us_equities",
+    code_commit: str | None = None,
+) -> ResearchRecord:
+    """Build a stage-transition record (validate first, then append).
+
+    ``symbols`` carries hashes only — the transition's own self-hash, the
+    subject's spec hash, then every cited evidence-record integrity hash — so
+    the public line holds no derived results. The full declaration JSON rides
+    in ``leakage_controls`` for recomputation.
+    """
+    evidence = transition.get("evidence_sha256")
+    evidence_list = (
+        [str(item) for item in evidence]
+        if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes))
+        else []
+    )
+    from_stage = str(transition.get("from_stage", ""))
+    to_stage = str(transition.get("to_stage", ""))
+    if to_stage == RETIRED_STAGE:
+        action = "RETIREMENT"
+    elif (
+        to_stage in PROMOTION_STAGES
+        and from_stage in PROMOTION_STAGES
+        and PROMOTION_STAGES.index(to_stage) > PROMOTION_STAGES.index(from_stage)
+    ):
+        action = "PROMOTION"
+    else:
+        action = "DEMOTION"
+    return ResearchRecord(
+        experiment=PROMOTION_EXPERIMENT,
+        market=market,
+        symbols=[
+            spec_sha256(transition),
+            str(transition.get("subject_spec_sha256", "")),
+            *evidence_list,
+        ],
+        targets=[],
+        horizons=[],
+        trials=0,
+        metrics={},
+        costs={},
+        benchmark="none",
+        leakage_controls=json.dumps(transition, sort_keys=True, separators=(",", ":")),
+        gate_passed=False,
+        verdict=(
+            f"{action}: {transition.get('subject')} "
+            f"{from_stage} -> {to_stage} under "
+            f"{transition.get('policy_version')}; {transition.get('reason')}"
+        ),
+        code_commit=code_commit if code_commit is not None else current_commit(),
+    )
+
+
+def _promotion_declarations(
+    records: Sequence[Mapping[str, object]],
+) -> list[tuple[dict[str, object], dict[str, object]]]:
+    """(record, parsed declaration) for every trustworthy promotion record.
+
+    Trustworthy means: unretracted, the line still hashes to its own claim,
+    and the declaration JSON in ``leakage_controls`` recomputes to the
+    self-hash claimed in ``symbols[0]`` — a lying record must neither bless a
+    policy nor move a stage, mirroring :func:`find_preregistration`.
+    """
+    excluded = retracted_hashes(records)
+    out: list[tuple[dict[str, object], dict[str, object]]] = []
+    for record in records:
+        if record.get("experiment") != PROMOTION_EXPERIMENT:
+            continue
+        if str(record.get("integrity_sha256", "")) in excluded:
+            continue
+        if not verify_line(dict(record)):
+            continue
+        symbols = record.get("symbols")
+        if not (isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes))):
+            continue
+        claimed = [str(item) for item in symbols]
+        try:
+            declaration = json.loads(str(record.get("leakage_controls", "")))
+        except ValueError:
+            continue
+        if not isinstance(declaration, Mapping):
+            continue
+        if not claimed or spec_sha256(declaration) != claimed[0]:
+            continue
+        out.append((dict(record), dict(declaration)))
+    return out
+
+
+def find_promotion_policy(
+    records: Sequence[Mapping[str, object]], policy_version: str
+) -> dict[str, object] | None:
+    """Newest trustworthy declaration of ``policy_version`` (parsed), or None."""
+    match: dict[str, object] | None = None
+    for _, declaration in _promotion_declarations(records):
+        if declaration.get("kind") != "promotion-policy":
+            continue
+        if str(declaration.get("policy_version", "")) == policy_version:
+            match = declaration
+    return match
+
+
+def promotion_stage(
+    records: Sequence[Mapping[str, object]], subject_spec_sha256: str
+) -> str:
+    """The subject's current lifecycle stage: its newest trustworthy
+    transition's ``to_stage``, else the ladder's bottom rung."""
+    stage = PROMOTION_STAGES[0]
+    for _, declaration in _promotion_declarations(records):
+        if declaration.get("kind") != "stage-transition":
+            continue
+        if str(declaration.get("subject_spec_sha256", "")) != subject_spec_sha256:
+            continue
+        stage = str(declaration.get("to_stage", stage))
+    return stage
+
+
+def validate_promotion_transition(
+    records: Sequence[Mapping[str, object]], transition: Mapping[str, object]
+) -> str | None:
+    """Why ``transition`` may NOT be appended, or None if it may.
+
+    Enforced against the ledger itself, not against code constants: the rules
+    come from the declared policy record the transition names, so amending
+    behavior requires declaring a new policy version into the chain.
+    """
+    subject = str(transition.get("subject_spec_sha256", ""))
+    from_stage = str(transition.get("from_stage", ""))
+    to_stage = str(transition.get("to_stage", ""))
+    reason = str(transition.get("reason", "")).strip()
+    policy_version = str(transition.get("policy_version", ""))
+    if not subject:
+        return "transition names no subject_spec_sha256"
+    if not reason:
+        return "transition carries no reason"
+    policy = find_promotion_policy(records, policy_version)
+    if policy is None:
+        return (
+            f"policy {policy_version!r} is not declared in this ledger; "
+            f"declare the policy before any transition under it"
+        )
+    if str(transition.get("policy_sha256", "")) != str(policy.get("policy_sha256", "")):
+        return (
+            f"policy document hash mismatch: the transition was built against "
+            f"{str(transition.get('policy_sha256', ''))[:12]} but "
+            f"{policy_version} declared {str(policy.get('policy_sha256', ''))[:12]}"
+        )
+    stages_obj = policy.get("stages")
+    stages = (
+        [str(s) for s in stages_obj]
+        if isinstance(stages_obj, Sequence) and not isinstance(stages_obj, (str, bytes))
+        else list(PROMOTION_STAGES)
+    )
+    current = promotion_stage(records, subject)
+    if current == RETIRED_STAGE:
+        return (
+            f"subject {subject[:12]} is retired — terminal; revival requires a "
+            f"new spec (a new subject hash) and a new trial"
+        )
+    if from_stage != current:
+        return (
+            f"from_stage {from_stage!r} does not match the subject's recorded "
+            f"stage {current!r}"
+        )
+    if to_stage == RETIRED_STAGE:
+        return None
+    if to_stage not in stages:
+        return f"unknown to_stage {to_stage!r}; policy stages: {', '.join(stages)}"
+    if from_stage not in stages:
+        return f"unknown from_stage {from_stage!r}; policy stages: {', '.join(stages)}"
+    delta = stages.index(to_stage) - stages.index(from_stage)
+    if delta == 0:
+        return f"{from_stage!r} -> {to_stage!r} is not a transition"
+    if delta > 1:
+        return (
+            f"promotion must climb exactly one rung: {from_stage!r} -> "
+            f"{to_stage!r} skips {delta - 1}"
+        )
+    if delta == 1:
+        evidence = transition.get("evidence_sha256")
+        has_evidence = (
+            isinstance(evidence, Sequence)
+            and not isinstance(evidence, (str, bytes))
+            and len(evidence) > 0
+        )
+        if not has_evidence:
+            return (
+                "promotion cites no evidence-record integrity hashes; every "
+                "upward transition must name the records it rests on"
+            )
+        if to_stage == stages[-1] and not bool(policy.get("live_money_reachable")):
+            return (
+                f"the {stages[-1]!r} rung is unreachable under {policy_version}: "
+                f"it opens only when a declared gate has passed twice on "
+                f"schedule AND a new policy version declares it reachable"
+            )
+    return None
 
 
 def summarize_manifest(records: Sequence[dict[str, object]]) -> dict[str, object]:

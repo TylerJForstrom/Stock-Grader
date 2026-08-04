@@ -13,6 +13,7 @@ the fundamentals that could be computed, with the shortfall reported rather than
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -1811,6 +1812,114 @@ def cmd_ledger_declare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_promotion_declare(args: argparse.Namespace) -> int:
+    """Append a `ledger:promotion` record: a policy declaration or a stage
+    transition under an already-declared policy.
+
+    Policy mode (no --to-stage): binds the promotion-policy document's exact
+    bytes by sha256 under a version string. Idempotent for an identical
+    version+hash pair; a changed document under the SAME version is refused —
+    amendment is a NEW version, and superseded declarations stay.
+
+    Transition mode (--subject/--from-stage/--to-stage): validated against the
+    policy AS DECLARED IN THE LEDGER, not against code constants — broken
+    chain, undeclared policy, drifted policy doc, wrong current stage, skipped
+    rungs, evidence-free promotions, and the unreachable live-money rung are
+    all refusals. Evidence is cited as integrity hashes only: numeric evidence
+    for license-walled vault signals stays in Stock-Vault's decision journal
+    (see docs/PROMOTION.md, "The public/vault split").
+    """
+    from .research_manifest import (
+        append_record,
+        find_promotion_policy,
+        load_manifest,
+        promotion_policy_declaration,
+        promotion_policy_record,
+        promotion_transition_record,
+        spec_sha256,
+        validate_promotion_transition,
+        verify_chain,
+    )
+
+    policy_doc = Path(args.policy_doc)
+    if not policy_doc.exists():
+        console.print(f"[red]no policy document at {policy_doc}[/red]")
+        return 2
+    doc_sha = hashlib.sha256(policy_doc.read_bytes()).hexdigest()
+    ledger_path = Path(args.ledger)
+    records = load_manifest(ledger_path) if ledger_path.exists() else []
+    if not verify_chain(records):
+        console.print(
+            f"[red]{ledger_path} does not verify; refusing to append to a broken chain[/red]"
+        )
+        return 2
+
+    transition_flags = [args.subject, args.from_stage, args.to_stage]
+    if any(transition_flags) and not all(transition_flags):
+        console.print(
+            "[red]a transition needs --subject, --from-stage and --to-stage together[/red]"
+        )
+        return 2
+
+    if not any(transition_flags):
+        declared = find_promotion_policy(records, args.policy_version)
+        if declared is not None:
+            if str(declared.get("policy_sha256", "")) == doc_sha:
+                console.print(
+                    f"{args.policy_version} already declared in {ledger_path} "
+                    f"(doc sha256 {doc_sha[:12]}); nothing to append"
+                )
+                return 0
+            console.print(
+                f"[red]{args.policy_version} is already declared with doc sha256 "
+                f"{str(declared.get('policy_sha256', ''))[:12]} but {policy_doc} now "
+                f"hashes to {doc_sha[:12]}; a changed policy is a NEW version, "
+                f"never an in-place amendment[/red]"
+            )
+            return 2
+        declaration = promotion_policy_declaration(
+            policy_version=args.policy_version,
+            policy_doc=str(policy_doc),
+            policy_sha256=doc_sha,
+            live_money_reachable=args.live_money_reachable,
+        )
+        record = promotion_policy_record(declaration)
+        append_record(ledger_path, record)
+        console.print(
+            f"declared {args.policy_version} in {ledger_path} "
+            f"(doc {policy_doc} sha256 {doc_sha[:12]}, "
+            f"record {record.integrity_sha256()[:12]})"
+        )
+        return 0
+
+    transition = {
+        "kind": "stage-transition",
+        "policy_version": args.policy_version,
+        "policy_sha256": doc_sha,
+        "subject": args.subject_label or args.subject[:12],
+        "subject_spec_sha256": args.subject,
+        "from_stage": args.from_stage,
+        "to_stage": args.to_stage,
+        "evidence_sha256": list(args.evidence or []),
+        "evidence_journal": args.evidence_journal or "",
+        "evidence_journal_head_sha256": args.evidence_journal_head or "",
+        "reason": args.reason or "",
+    }
+    error = validate_promotion_transition(records, transition)
+    if error is not None:
+        console.print(f"[red]refused: {error}[/red]")
+        return 2
+    record = promotion_transition_record(transition)
+    append_record(ledger_path, record)
+    console.print(
+        f"recorded {args.from_stage} -> {args.to_stage} for "
+        f"{args.subject[:12]} under {args.policy_version} in {ledger_path} "
+        f"(record {record.integrity_sha256()[:12]}, "
+        f"transition sha256 {spec_sha256(transition)[:12]})"
+    )
+    return 0
+
+
 def cmd_methods(args: argparse.Namespace) -> int:
     from rich.box import SIMPLE
     from rich.table import Table
@@ -2257,6 +2366,70 @@ def build_parser() -> argparse.ArgumentParser:
         help="why these records are not hypotheses; recorded verbatim as the verdict",
     )
     p_retract.set_defaults(func=cmd_ledger_retract)
+
+    # Shared ledger options as an argparse parent: parents= must ride on the
+    # SUBPARSER (add_parser), never the top-level parser, or the option lands
+    # before the command word.
+    shared_ledger = argparse.ArgumentParser(add_help=False)
+    shared_ledger.add_argument(
+        "--ledger",
+        default="research_ledger.jsonl",
+        help="append-only hash-chained research ledger",
+    )
+    p_promote = sub.add_parser(
+        "promotion-declare",
+        parents=[shared_ledger],
+        help="append a ledger:promotion record — declare the versioned promotion "
+        "policy, or one stage transition under it (docs/PROMOTION.md)",
+    )
+    p_promote.add_argument(
+        "--policy-doc",
+        default="docs/PROMOTION.md",
+        help="the policy document whose exact bytes the declaration binds by sha256",
+    )
+    p_promote.add_argument(
+        "--policy-version",
+        required=True,
+        help='version string, e.g. "promotion-policy-v1"; amendments are a NEW version',
+    )
+    p_promote.add_argument(
+        "--live-money-reachable",
+        action="store_true",
+        help="policy mode only: declare the live-money rung reachable "
+        "(v1 deliberately does NOT pass this)",
+    )
+    p_promote.add_argument(
+        "--subject",
+        help="transition mode: the promoted spec's sha256 (the subject's identity)",
+    )
+    p_promote.add_argument(
+        "--subject-label",
+        help="human-readable subject name for the verdict line (a name, never a result)",
+    )
+    p_promote.add_argument(
+        "--from-stage", help="transition mode: the subject's current recorded stage"
+    )
+    p_promote.add_argument("--to-stage", help="transition mode: the stage moved to")
+    p_promote.add_argument(
+        "--evidence",
+        nargs="*",
+        help="integrity sha256 of each evidence record the decision rests on "
+        "(ledger lines here, or Stock-Vault decision-journal records)",
+    )
+    p_promote.add_argument(
+        "--evidence-journal",
+        help='locator of the private evidence journal, e.g. '
+        '"Stock-Vault data/decision_journal/decisions.jsonl.gz"',
+    )
+    p_promote.add_argument(
+        "--evidence-journal-head",
+        help="chain-head sha256 of the private evidence journal at decision time",
+    )
+    p_promote.add_argument(
+        "--reason",
+        help="why this transition is being recorded; recorded verbatim in the verdict",
+    )
+    p_promote.set_defaults(func=cmd_promotion_declare)
 
     p_cadence = sub.add_parser(
         "check-cadence",
