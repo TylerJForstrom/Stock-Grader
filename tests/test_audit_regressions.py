@@ -44,6 +44,16 @@ from stock_grader.signal_panel import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FORWARD_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "monthly-forward-backtest.yml"
 
+def _flat(text: str) -> str:
+    """Console output with ALL whitespace removed.
+
+    `rich` hard-wraps to the terminal width, and the wrap point moves with the
+    tmp_path length — so a message can arrive as "does\nnot verify". Dropping
+    newlines alone then glues words together. Compare whitespace-free.
+    """
+    return "".join(text.split())
+
+
 LATER_SIGNAL = dt.date(2026, 8, 10)
 LATER_ENTRY = dt.date(2026, 8, 11)
 LATER_EXIT = dt.date(2026, 8, 14)
@@ -590,7 +600,7 @@ def test_promotion_declare_prints_the_hash_the_ledger_holds(tmp_path, capsys) ->
 
     ledger = tmp_path / "ledger.jsonl"
     assert _declare_policy(tmp_path, ledger, _policy_doc(tmp_path), "promotion-policy-v1") == 0
-    printed = capsys.readouterr().out.replace("\n", "")
+    printed = _flat(capsys.readouterr().out)
     on_disk = str(load_manifest(ledger)[-1]["integrity_sha256"])
     assert on_disk[:12] in printed
 
@@ -601,7 +611,7 @@ def test_promotion_declare_refuses_a_document_that_does_not_name_the_version(
     ledger = tmp_path / "ledger.jsonl"
     doc = _policy_doc(tmp_path, "promotion-policy-v1")
     assert _declare_policy(tmp_path, ledger, doc, "promotion-policy-v2") == 2
-    assert "does not contain the string" in capsys.readouterr().out.replace("\n", "")
+    assert _flat("does not contain the string") in _flat(capsys.readouterr().out)
 
 
 def test_a_new_version_cannot_be_bound_to_the_unchanged_document(tmp_path, capsys) -> None:
@@ -624,8 +634,7 @@ def test_a_new_version_cannot_be_bound_to_the_unchanged_document(tmp_path, capsy
         )
         == 2
     )
-    out = capsys.readouterr().out.replace("\n", "")
-    assert "is already declared as" in out
+    assert _flat("is already declared as") in _flat(capsys.readouterr().out)
 
 
 def test_retracting_a_promotion_record_is_refused(tmp_path, capsys) -> None:
@@ -671,8 +680,8 @@ def test_retracting_a_promotion_record_is_refused(tmp_path, capsys) -> None:
         )
         == 2
     )
-    assert "refusing to retract a ledger:promotion record" in capsys.readouterr().out.replace(
-        "\n", ""
+    assert _flat("refusing to retract a ledger:promotion record") in _flat(
+        capsys.readouterr().out
     )
     assert promotion_stage(load_manifest(ledger), subject) == "declared_trial"
 
@@ -725,7 +734,7 @@ def test_backtest_refuses_to_evaluate_against_a_broken_chain(tmp_path, capsys) -
         )
         == 2
     )
-    assert "does not verify" in capsys.readouterr().out.replace("\n", "")
+    assert _flat("does not verify") in _flat(capsys.readouterr().out)
     assert len(ledger.read_text().splitlines()) == 2  # nothing appended
 
 
