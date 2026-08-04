@@ -294,7 +294,9 @@ def write_accounting(
     else:
         runs = []
 
-    stamp = now if now is not None else dt.datetime.now(dt.UTC)
+    # timezone.utc, not the 3.11+ alias: the bare-script contract means this
+    # module runs on whatever python a sibling repo's runner puts on PATH.
+    stamp = now if now is not None else dt.datetime.now(dt.timezone.utc)  # noqa: UP017
     entry: dict[str, object] = {
         "run_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "event": event,
@@ -335,7 +337,8 @@ def run_check(
             print(f"--as-of must be an ISO date (YYYY-MM-DD), got {as_of!r}", file=sys.stderr)
             return 2
     else:
-        today = dt.datetime.now(dt.UTC).date()
+        # timezone.utc, not the 3.11+ alias — see write_accounting.
+        today = dt.datetime.now(dt.timezone.utc).date()  # noqa: UP017
     ok, lines = check_cadence(
         repo_root,
         today,
