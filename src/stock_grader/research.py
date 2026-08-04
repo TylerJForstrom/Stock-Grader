@@ -305,6 +305,47 @@ def _latest_period(snapshot: SecuritySnapshot) -> str | None:
     return max(indexes).date().isoformat() if indexes else None
 
 
+def _grade_drivers(
+    metrics: list[MetricEvidence], *, limit: int = 5
+) -> tuple[list[MetricEvidence], list[MetricEvidence]]:
+    """Top positive and top negative EXACT score contributions, largest first.
+
+    Sourced from MetricEvidence.contribution, which _metric_evidence copies
+    verbatim from report.explain["metrics"] — the attribution the grade was
+    computed from. Nothing here re-derives or approximates a contribution.
+    """
+    strengths = sorted(
+        (metric for metric in metrics if metric.contribution > 0.0),
+        key=lambda metric: (-metric.contribution, metric.name),
+    )
+    concerns = sorted(
+        (metric for metric in metrics if metric.contribution < 0.0),
+        key=lambda metric: (metric.contribution, metric.name),
+    )
+    return strengths[:limit], concerns[:limit]
+
+
+def _driver_sentence(metric: MetricEvidence) -> str:
+    """One evidence-backed sentence for a single grade driver."""
+
+    head = f"**{metric.name}** ({metric.contribution:+.2f} pts, {metric.pillar})"
+    label = (metric.description or metric.name.replace("_", " ")).rstrip().rstrip(".")
+    clauses: list[str] = []
+    if metric.raw_value is not None:
+        clause = f"{label}: {_fmt(metric.raw_value, metric.unit)}"
+        if metric.peer_median is not None:
+            clause += f" vs peer median {_fmt(metric.peer_median, metric.unit)}"
+        clauses.append(clause)
+    else:
+        clauses.append(label)
+    if metric.peer_percentile is not None and metric.usable_peers:
+        clauses.append(
+            f"more desirable than {metric.peer_percentile:.0f}% of "
+            f"{metric.usable_peers} usable peers"
+        )
+    return head + " — " + "; ".join(clauses) + "."
+
+
 def _interpretation(report: GradeReport) -> str:
     if report.letter == "N/A":
         return "not rated: evidence or required profile coverage was insufficient"
@@ -480,6 +521,54 @@ def research_to_markdown(report: ResearchReport) -> str:
         lines += ["", f"Letter frequencies across model perturbations: {rendered}."]
     if grade.gates:
         lines += ["", "Grading gates: " + ", ".join(grade.gates) + "."]
+
+    if report.metrics:
+        strengths, concerns = _grade_drivers(report.metrics)
+        lines += [
+            "",
+            "## What drove this grade",
+            "",
+            (
+                "Contributions are the per-metric score attributions computed at "
+                "grade time (points on the 0–100 composite relative to the "
+                "50-point neutral baseline), taken verbatim from the grade's "
+                "explain payload — never re-derived approximations."
+            ),
+        ]
+        if strengths:
+            lines += ["", f"Top strengths ({len(strengths)}):", ""]
+            lines += [f"- {_driver_sentence(metric)}" for metric in strengths]
+        else:
+            lines += ["", "No metric contributed positively to this grade."]
+        if concerns:
+            lines += ["", f"Top concerns ({len(concerns)}):", ""]
+            lines += [f"- {_driver_sentence(metric)}" for metric in concerns]
+        else:
+            lines += ["", "No metric contributed negatively to this grade."]
+        explain = grade.explain
+        curve_effect = explain.get("peer_rank_curve_effect")
+        residual = explain.get("attribution_residual")
+        contribution_total = sum(
+            float(value)
+            for value in explain.get("metric_contributions", {}).values()
+        )
+        if (
+            math.isfinite(grade.score)
+            and curve_effect is not None
+            and residual is not None
+            and math.isfinite(float(curve_effect))
+            and math.isfinite(float(residual))
+        ):
+            lines += [
+                "",
+                (
+                    f"Attribution identity: 50.0 baseline "
+                    f"{contribution_total:+.2f} metric contributions "
+                    f"{float(curve_effect):+.2f} peer-rank curve effect "
+                    f"{float(residual):+.2f} unattributed residual = "
+                    f"{grade.score:.1f} final score."
+                ),
+            ]
     lines += [
         "",
         "## Data provenance",
@@ -535,6 +624,14 @@ def research_to_markdown(report: ResearchReport) -> str:
         metric for metric in report.metrics if metric.coverage == Coverage.OK.value
     ]
     available_metrics.sort(key=lambda metric: abs(metric.contribution), reverse=True)
+    # Rows the grade did not use (exact contribution 0.0) collapse to one
+    # audit line below the table instead of padding it with dead weight.
+    zero_contribution = [
+        metric for metric in available_metrics if metric.contribution == 0.0
+    ]
+    available_metrics = [
+        metric for metric in available_metrics if metric.contribution != 0.0
+    ]
     lines += [
         "",
         "## Highest-impact metric evidence",
@@ -554,6 +651,16 @@ def research_to_markdown(report: ResearchReport) -> str:
             f"{_fmt(metric.peer_percentile)} | "
             f"{_fmt(metric.peer_median, metric.unit)} | {iqr} | {metric.usable_peers} |"
         )
+    if zero_contribution:
+        lines += [
+            "",
+            (
+                f"{len(zero_contribution)} computed metrics contributed exactly "
+                "zero to the score and are collapsed here: "
+                + ", ".join(sorted(metric.name for metric in zero_contribution))
+                + "."
+            ),
+        ]
 
     unavailable_metrics = [
         metric for metric in report.metrics if metric.coverage != Coverage.OK.value
