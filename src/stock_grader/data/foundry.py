@@ -40,13 +40,16 @@ _SYMBOL_DIRECTORY_FILES = frozenset(
         "sec_company_tickers_exchange.jsonl",
     }
 )
-# The event stream tags each diff with the directory it came from. Replaying a
-# directory point-in-time needs that tag, so map file name -> event source.
-_SYMBOL_DIRECTORY_EVENT_SOURCE = {
-    "nasdaqlisted.jsonl": "nasdaqlisted",
-    "otherlisted.jsonl": "otherlisted",
-    "sec_company_tickers_exchange.jsonl": "sec_company_tickers_exchange",
-}
+# Point-in-time membership comes from the foundry's published interval tables
+# (data/symbols/pit/, one file per symbol-directory source). The foundry
+# builds them by replaying its own event stream once at the producer; this
+# adapter only does hash-verified date-range lookups. The retired replay
+# implementation lives in Stock-Data's stock_data/pit.py, and equivalence
+# (lookup == replay at every archived event date) is asserted by both repos'
+# test suites before either side may change semantics.
+_PIT_DATASET_DIR = "data/symbols/pit"
+# Interval bookkeeping fields the pit tables add to each directory record.
+_PIT_INTERVAL_FIELDS = frozenset({"valid_from", "valid_to", "provable_from"})
 # TickerPulse attention/sentiment aggregates, mirrored into the foundry daily
 # (ECOSYSTEM rule: TickerPulse metrics enter the grader through the foundry,
 # never directly). Public, allowlist-reviewed counts and scores only — the
@@ -142,34 +145,56 @@ class FoundryDataSource:
         blob = self._read_dataset_file("data/symbols/events", "events.jsonl")
         return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
 
-    def _assert_reconstructable(self, stream: list[dict[str, Any]], asof: str) -> None:
-        """Refuse an asof the event archive cannot testify about.
+    def _pit_members(self, source: str, asof: str) -> list[dict[str, Any]]:
+        """Membership at ``asof`` from the published interval table for a source.
 
-        An event dated D proves snapshots existed on D-1 and D, so the earliest
-        reconstructable membership date is earliest_event - 1. Before that the
-        stream cannot testify: refuse rather than serve today's survivors dressed
-        up as history.
+        The pit tables are half-open intervals (``valid_from <= asof <
+        valid_to``, ``valid_to: null`` = still current); slicing one at a date
+        equals replaying the foundry's event stream backward to that date —
+        the producer builds the table by running that replay once, and both
+        repos' suites assert the equivalence at every archived event date.
+
+        Honesty at the boundary: the manifest's ``reconstructable_from`` is
+        the earliest date the event archive can testify about. Earlier asof
+        values refuse rather than serve today's survivors dressed up as
+        history, exactly as the retired consumer-side replay did.
         """
-        earliest = min((str(e.get("date", "")) for e in stream), default=None)
-        if earliest is None:
-            return
-        import datetime as _dt
-
-        boundary = (_dt.date.fromisoformat(earliest) - _dt.timedelta(days=1)).isoformat()
+        manifest = self.manifest(_PIT_DATASET_DIR)
+        boundary = manifest.get("reconstructable_from")
+        if not isinstance(boundary, str) or not boundary:
+            raise FoundryError(
+                f"{_PIT_DATASET_DIR}/manifest.json lacks reconstructable_from; "
+                "cannot bound the point-in-time archive, refusing to read"
+            )
         if asof < boundary:
             raise FoundryError(
                 f"asof {asof} predates the event archive (reconstructable "
                 f"from {boundary}); point-in-time membership unavailable"
             )
+        blob = self._read_dataset_file(_PIT_DATASET_DIR, f"{source}.jsonl")
+        members = []
+        for line in blob.decode("utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            try:
+                valid_from, valid_to = row["valid_from"], row["valid_to"]
+            except KeyError as exc:
+                raise FoundryError(
+                    f"malformed pit row in {_PIT_DATASET_DIR}/{source}.jsonl "
+                    f"(missing {exc}): {line!r}"
+                ) from exc
+            if valid_from <= asof and (valid_to is None or asof < valid_to):
+                members.append({k: v for k, v in row.items() if k not in _PIT_INTERVAL_FIELDS})
+        return members
 
     def symbol_directory(self, name: str, *, asof: str | None = None) -> list[dict[str, Any]]:
         """Read one manifest-verified symbol directory used by universe screens.
 
-        ``asof`` (ISO date) reconstructs the directory point-in-time by replaying
-        the event stream BACKWARD from the current snapshot, exactly as
-        :meth:`universe` does: rows added after asof are removed, rows removed
-        after asof are restored, rows changed after asof revert to their recorded
-        previous state.
+        ``asof`` (ISO date) reconstructs the directory point-in-time via a
+        hash-verified date-range lookup on the foundry's published interval
+        table (``data/symbols/pit/``), exactly as :meth:`universe` does. The
+        pit file for a source shares the directory file's name.
 
         Without ``asof`` this returns TODAY's directory. Filtering a historical
         universe through today's listing directory silently drops every issuer
@@ -179,30 +204,10 @@ class FoundryDataSource:
         """
         if name not in _SYMBOL_DIRECTORY_FILES:
             raise ValueError(f"unsupported symbol directory: {name}")
+        if asof is not None:
+            return self._pit_members(name.removesuffix(".jsonl"), asof)
         blob = self._read_dataset_file("data/symbols/current", name)
-        records = [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
-        if asof is None:
-            return records
-        source_key = _SYMBOL_DIRECTORY_EVENT_SOURCE[name]
-        stream = self.events()
-        self._assert_reconstructable(stream, asof)
-        # Directory rows are keyed by ticker alone; the SEC exchange directory
-        # additionally carries a CIK, and universe() owns that (cik, ticker) form.
-        members = {str(r.get("ticker", "")): r for r in records}
-        replayed = [
-            e for e in stream if e.get("source") == source_key and str(e.get("date", "")) > asof
-        ]
-        for event in sorted(replayed, key=lambda e: str(e.get("date", "")), reverse=True):
-            record = event.get("record") or {}
-            key = str(record.get("ticker", ""))
-            kind = event.get("event")
-            if kind == "added":
-                members.pop(key, None)
-            elif kind == "removed":
-                members[key] = record
-            elif kind == "changed" and event.get("previous"):
-                members[key] = event["previous"]
-        return list(members.values())
+        return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
 
     def universe(
         self, *, listed_only: bool = True, asof: str | None = None
@@ -213,38 +218,26 @@ class FoundryDataSource:
         the peer-hygiene filter that keeps OTC/pink-sheet names out of
         cross-sectional grading.
 
-        ``asof`` (ISO date) reconstructs point-in-time membership by replaying
-        the event stream BACKWARD from the current snapshot: additions after
-        asof are removed, removals after asof are restored, changes after asof
-        revert to their recorded previous state. Tickers get reused after
-        delistings — grading a past date against today's membership silently
-        maps dead issuers onto their symbol's new owners. The archive only
-        reaches back to its first snapshot (2026-07-28); earlier asof values
-        raise rather than silently serving today's survivors.
+        ``asof`` (ISO date) reconstructs point-in-time membership from the
+        foundry's published interval table (``data/symbols/pit/``, built at
+        the producer by replaying its event stream once): a hash-verified
+        date-range lookup, provably equal to the retired consumer-side
+        replay. Tickers get reused after delistings — grading a past date
+        against today's membership silently maps dead issuers onto their
+        symbol's new owners. The archive only reaches back to the boundary
+        published in the pit manifest (``reconstructable_from``, 2026-07-28);
+        earlier asof values raise rather than silently serving today's
+        survivors.
         """
-        blob = self._read_dataset_file("data/symbols/current", "sec_company_tickers_exchange.jsonl")
-        records = [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
         if asof is not None:
-            members = {(r.get("cik"), r.get("ticker")): r for r in records}
-            stream = self.events()
-            self._assert_reconstructable(stream, asof)
-            replayed = [
-                e
-                for e in stream
-                if e.get("source") == "sec_company_tickers_exchange"
-                and str(e.get("date", "")) > asof
+            records = self._pit_members("sec_company_tickers_exchange", asof)
+        else:
+            blob = self._read_dataset_file(
+                "data/symbols/current", "sec_company_tickers_exchange.jsonl"
+            )
+            records = [
+                json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()
             ]
-            for event in sorted(replayed, key=lambda e: str(e.get("date", "")), reverse=True):
-                record = event.get("record") or {}
-                key = (record.get("cik"), record.get("ticker"))
-                kind = event.get("event")
-                if kind == "added":
-                    members.pop(key, None)
-                elif kind == "removed":
-                    members[key] = record
-                elif kind == "changed" and event.get("previous"):
-                    members[key] = event["previous"]
-            records = list(members.values())
         if listed_only:
             records = [r for r in records if r.get("exchange") in _LISTED_EXCHANGES]
         return records

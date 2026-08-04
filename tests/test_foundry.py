@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -12,8 +13,13 @@ import pytest
 
 from stock_grader.data.foundry import FoundryDataSource, FoundryError
 
+#: Fixture archive boundary: earliest event 2026-07-20, minus one day.
+PIT_BOUNDARY = "2026-07-19"
 
-def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Path:
+
+def build_foundry(
+    root: Path, *, schema="1.0", corrupt: str | None = None, include_pit: bool = True
+) -> Path:
     symbols_dir = root / "data" / "symbols" / "current"
     actions_dir = root / "data" / "corporate_actions"
     symbols_dir.mkdir(parents=True)
@@ -23,6 +29,7 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
         {"cik": 320193, "ticker": "AAPL", "title": "Apple Inc.", "exchange": "Nasdaq"},
         {"cik": 1067983, "ticker": "BRK-B", "title": "Berkshire", "exchange": "NYSE"},
         {"cik": 999999, "ticker": "SCAMCO", "title": "Pink Sheet Co", "exchange": ""},
+        {"cik": 777, "ticker": "NEWCO", "title": "New Co", "exchange": "Nasdaq"},
     ]
     symbols_file = symbols_dir / "sec_company_tickers_exchange.jsonl"
     symbols_file.write_bytes("".join(json.dumps(r) + "\n" for r in exchange_rows).encode("utf-8"))
@@ -103,7 +110,8 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
     events_dir = root / "data" / "symbols" / "events"
     events_dir.mkdir(parents=True)
     events = [
-        # DEADCO delisted on 07-20 (removal event); NEWCO listed on 07-25
+        # DEADCO delisted 07-20; BRK-B retitled 07-22; NEWCO listed 07-25;
+        # DELQ dropped from the Nasdaq directory 07-23.
         {
             "date": "2026-07-20",
             "source": "sec_company_tickers_exchange",
@@ -111,20 +119,116 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
             "record": {"cik": 555, "ticker": "DEADCO", "title": "Dead Co", "exchange": "NYSE"},
         },
         {
+            "date": "2026-07-22",
+            "source": "sec_company_tickers_exchange",
+            "event": "changed",
+            "record": {"cik": 1067983, "ticker": "BRK-B", "title": "Berkshire", "exchange": "NYSE"},
+            "previous": {
+                "cik": 1067983,
+                "ticker": "BRK-B",
+                "title": "Berkshire Hathaway B",
+                "exchange": "NYSE",
+            },
+        },
+        {
             "date": "2026-07-25",
             "source": "sec_company_tickers_exchange",
             "event": "added",
             "record": {"cik": 777, "ticker": "NEWCO", "title": "New Co", "exchange": "Nasdaq"},
         },
+        {
+            "date": "2026-07-23",
+            "source": "nasdaqlisted",
+            "event": "removed",
+            "record": {"ticker": "DELQ", "name": "Delisted Co", "etf": "N", "test_issue": "N"},
+        },
     ]
     events_file = events_dir / "events.jsonl"
     events_file.write_bytes("".join(json.dumps(e) + "\n" for e in events).encode("utf-8"))
 
-    for directory, names in (
-        (symbols_dir, [symbols_file.name]),
-        (actions_dir, [dividends_file.name, splits_file.name]),
-        (events_dir, [events_file.name]),
+    # The published pit interval tables: what Stock-Data's producer-side replay
+    # emits for exactly the current/ + events/ above. Hand-written here — the
+    # conformance test below re-derives membership by replaying events and
+    # fails if these rows ever disagree with the stream.
+    pit_dir = root / "data" / "symbols" / "pit"
+    pit_dir.mkdir(parents=True)
+    pit_tables = {
+        "sec_company_tickers_exchange.jsonl": [
+            {
+                **{"cik": 320193, "ticker": "AAPL", "title": "Apple Inc.", "exchange": "Nasdaq"},
+                "valid_from": PIT_BOUNDARY,
+                "valid_to": None,
+                "provable_from": False,
+            },
+            {
+                **{
+                    "cik": 1067983,
+                    "ticker": "BRK-B",
+                    "title": "Berkshire Hathaway B",
+                    "exchange": "NYSE",
+                },
+                "valid_from": PIT_BOUNDARY,
+                "valid_to": "2026-07-22",
+                "provable_from": False,
+            },
+            {
+                **{"cik": 1067983, "ticker": "BRK-B", "title": "Berkshire", "exchange": "NYSE"},
+                "valid_from": "2026-07-22",
+                "valid_to": None,
+                "provable_from": True,
+            },
+            {
+                **{"cik": 999999, "ticker": "SCAMCO", "title": "Pink Sheet Co", "exchange": ""},
+                "valid_from": PIT_BOUNDARY,
+                "valid_to": None,
+                "provable_from": False,
+            },
+            {
+                **{"cik": 555, "ticker": "DEADCO", "title": "Dead Co", "exchange": "NYSE"},
+                "valid_from": PIT_BOUNDARY,
+                "valid_to": "2026-07-20",
+                "provable_from": False,
+            },
+            {
+                **{"cik": 777, "ticker": "NEWCO", "title": "New Co", "exchange": "Nasdaq"},
+                "valid_from": "2026-07-25",
+                "valid_to": None,
+                "provable_from": True,
+            },
+        ],
+        "nasdaqlisted.jsonl": [
+            {
+                **{"ticker": "AAPL", "name": "Apple", "etf": "N", "test_issue": "N"},
+                "valid_from": PIT_BOUNDARY,
+                "valid_to": None,
+                "provable_from": False,
+            },
+            {
+                **{"ticker": "DELQ", "name": "Delisted Co", "etf": "N", "test_issue": "N"},
+                "valid_from": PIT_BOUNDARY,
+                "valid_to": "2026-07-23",
+                "provable_from": False,
+            },
+        ],
+    }
+    pit_files = []
+    for name, rows in pit_tables.items():
+        (pit_dir / name).write_bytes(
+            "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows).encode("utf-8")
+        )
+        pit_files.append(name)
+
+    for directory, names, extra in (
+        (symbols_dir, [symbols_file.name], {}),
+        (actions_dir, [dividends_file.name, splits_file.name], {}),
+        (events_dir, [events_file.name], {}),
+        (pit_dir, pit_files if include_pit else [], {"reconstructable_from": PIT_BOUNDARY}),
     ):
+        if directory is pit_dir and not include_pit:
+            for name in pit_files:
+                (pit_dir / name).unlink()
+            pit_dir.rmdir()
+            continue
         files = []
         for name in names:
             blob = (directory / name).read_bytes()
@@ -139,6 +243,7 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
                     "source_urls": [],
                     "license_note": "test",
                     "files": files,
+                    **extra,
                 }
             )
         )
@@ -148,7 +253,7 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
 def test_universe_filters_unlisted_venues(tmp_path):
     source = FoundryDataSource(root=build_foundry(tmp_path))
     tickers = source.universe_tickers()
-    assert tickers == ["AAPL", "BRK-B"]  # SCAMCO (no listed exchange) excluded
+    assert tickers == ["AAPL", "BRK-B", "NEWCO"]  # SCAMCO (no listed exchange) excluded
     everything = source.universe_tickers(listed_only=False)
     assert "SCAMCO" in everything
 
@@ -260,13 +365,13 @@ def test_cli_universe_foundry_prefix(tmp_path, monkeypatch):
 
     build_foundry(tmp_path)
     tickers = _load_universe(f"foundry:{tmp_path}")
-    assert tickers == ["AAPL", "BRK-B"]
+    assert tickers == ["AAPL", "BRK-B", "NEWCO"]
 
 
-def test_universe_asof_replays_events_backward(tmp_path):
-    # NEWCO was added 07-25 and DEADCO removed 07-20. As of 07-19 (the day
-    # before the removal, provably within the archive) DEADCO was still alive
-    # and NEWCO not yet listed; as of 07-22 both events' outcomes differ.
+def test_universe_asof_is_a_pit_interval_lookup(tmp_path):
+    # NEWCO was added 07-25 and DEADCO removed 07-20. As of 07-19 (the archive
+    # boundary) DEADCO was still alive and NEWCO not yet listed; as of 07-22
+    # both events' outcomes differ.
     source = FoundryDataSource(root=build_foundry(tmp_path))
     tickers = source.universe_tickers(asof="2026-07-19")
     assert "NEWCO" not in tickers
@@ -276,13 +381,153 @@ def test_universe_asof_replays_events_backward(tmp_path):
     mid = source.universe_tickers(asof="2026-07-22")
     assert "DEADCO" not in mid and "NEWCO" not in mid
     # As of 07-26 (after both events) membership matches current.
-    assert "DEADCO" not in source.universe_tickers(asof="2026-07-26")
+    late = source.universe_tickers(asof="2026-07-26")
+    assert "DEADCO" not in late and "NEWCO" in late
+    # The interval bookkeeping fields never leak into directory records.
+    for record in source.universe(listed_only=False, asof="2026-07-22"):
+        assert not {"valid_from", "valid_to", "provable_from"} & set(record)
+
+
+def _replay_members(current, events, source_key, asof, key_fields):
+    """Reference implementation: the retired consumer-side backward replay.
+
+    Kept ONLY as an executable specification for the conformance test below —
+    production code answers asof queries from the published interval table.
+    """
+
+    def key(record):
+        return tuple(record.get(f) for f in key_fields)
+
+    members = {key(r): r for r in current}
+    replayed = [
+        e for e in events if e.get("source") == source_key and str(e.get("date", "")) > asof
+    ]
+    for event in sorted(replayed, key=lambda e: str(e.get("date", "")), reverse=True):
+        record = event.get("record") or {}
+        kind = event.get("event")
+        if kind == "added":
+            members.pop(key(record), None)
+        elif kind == "removed":
+            members[key(record)] = record
+        elif kind == "changed" and event.get("previous"):
+            members[key(record)] = event["previous"]
+    return members
+
+
+def _canon(rows):
+    return {json.dumps(r, sort_keys=True) for r in rows}
+
+
+def test_pit_table_slice_equals_replayed_universe_at_every_event_date(tmp_path):
+    """The migration's burn-in gate: lookup == replay, at and between all dates.
+
+    universe(asof=D) now slices the published interval table; this replays the
+    same event stream backward — the algorithm the table retired — and demands
+    identical membership on every date of the fixture window, covering added,
+    removed, AND changed events plus the boundary and between-event dates.
+    """
+    source = FoundryDataSource(root=build_foundry(tmp_path))
+    current = source.symbol_directory("sec_company_tickers_exchange.jsonl")
+    events = source.events()
+    for day in range(19, 28):
+        asof = f"2026-07-{day:02d}"
+        replayed = _replay_members(
+            current, events, "sec_company_tickers_exchange", asof, ("cik", "ticker")
+        )
+        looked_up = source.universe(listed_only=False, asof=asof)
+        assert _canon(looked_up) == _canon(replayed.values()), asof
+
+
+def test_symbol_directory_asof_is_a_pit_interval_lookup(tmp_path):
+    source = FoundryDataSource(root=build_foundry(tmp_path))
+    alive = {r["ticker"] for r in source.symbol_directory("nasdaqlisted.jsonl", asof="2026-07-20")}
+    assert alive == {"AAPL", "DELQ"}
+    after = {r["ticker"] for r in source.symbol_directory("nasdaqlisted.jsonl", asof="2026-07-24")}
+    assert after == {"AAPL"}  # DELQ's interval closed on the 07-23 removal
 
 
 def test_universe_asof_before_archive_refuses(tmp_path):
     source = FoundryDataSource(root=build_foundry(tmp_path))
     with pytest.raises(FoundryError, match="predates the event archive"):
         source.universe_tickers(asof="2026-01-01")
+
+
+def test_universe_asof_without_pit_dataset_refuses(tmp_path):
+    """No silent fallback: an asof query on a foundry lacking the pit tables
+    must refuse loudly, never quietly serve today's snapshot as history."""
+    source = FoundryDataSource(root=build_foundry(tmp_path, include_pit=False))
+    with pytest.raises(FoundryError, match="missing foundry file"):
+        source.universe_tickers(asof="2026-07-22")
+    assert source.universe_tickers() == ["AAPL", "BRK-B", "NEWCO"]  # current still readable
+
+
+def test_universe_asof_pit_hash_mismatch_refuses(tmp_path):
+    root = build_foundry(tmp_path)
+    pit_file = root / "data" / "symbols" / "pit" / "sec_company_tickers_exchange.jsonl"
+    pit_file.write_bytes(pit_file.read_bytes() + b"\n")
+    source = FoundryDataSource(root=root)
+    with pytest.raises(FoundryError, match="sha256 mismatch"):
+        source.universe_tickers(asof="2026-07-22")
+
+
+def test_universe_asof_pit_manifest_without_boundary_refuses(tmp_path):
+    root = build_foundry(tmp_path)
+    manifest_path = root / "data" / "symbols" / "pit" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["reconstructable_from"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    source = FoundryDataSource(root=root)
+    with pytest.raises(FoundryError, match="reconstructable_from"):
+        source.universe_tickers(asof="2026-07-22")
+
+
+def test_universe_asof_malformed_pit_row_refuses(tmp_path):
+    root = build_foundry(tmp_path)
+    pit_dir = root / "data" / "symbols" / "pit"
+    pit_file = pit_dir / "sec_company_tickers_exchange.jsonl"
+    blob = (json.dumps({"cik": 1, "ticker": "X", "valid_from": "2026-07-19"}) + "\n").encode()
+    pit_file.write_bytes(blob)
+    manifest_path = pit_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["files"]:
+        if entry["name"] == pit_file.name:
+            entry["sha256"] = hashlib.sha256(blob).hexdigest()
+            entry["bytes"] = len(blob)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    source = FoundryDataSource(root=root)
+    with pytest.raises(FoundryError, match="malformed pit row"):
+        source.universe_tickers(asof="2026-07-22")
+
+
+@pytest.mark.skipif(
+    "STOCK_DATA_ROOT" not in os.environ,
+    reason="set STOCK_DATA_ROOT to a Stock-Data checkout to run the real-archive gate",
+)
+def test_real_archive_pit_lookup_equals_replay_at_every_event_date():
+    """Real-archive burn-in: table slice == replayed universe(asof=D) for every
+    event date in the actual foundry archive (plus its boundary). Run locally
+    against a Stock-Data checkout before trusting a migration; CI covers the
+    same property with fixtures here and with the real archive in Stock-Data's
+    own suite."""
+    source = FoundryDataSource(root=os.environ["STOCK_DATA_ROOT"])
+    current = source.symbol_directory("sec_company_tickers_exchange.jsonl")
+    events = source.events()
+    boundary = source.manifest("data/symbols/pit")["reconstructable_from"]
+    dates = sorted(
+        {boundary}
+        | {
+            str(e["date"])
+            for e in events
+            if e.get("source") == "sec_company_tickers_exchange"
+        }
+    )
+    assert dates, "real archive unexpectedly empty"
+    for asof in dates:
+        replayed = _replay_members(
+            current, events, "sec_company_tickers_exchange", asof, ("cik", "ticker")
+        )
+        looked_up = source.universe(listed_only=False, asof=asof)
+        assert _canon(looked_up) == _canon(replayed.values()), f"diverges at {asof}"
 
 
 def test_explicitly_requested_foundry_fails_closed_on_contract_violation(tmp_path, monkeypatch):
