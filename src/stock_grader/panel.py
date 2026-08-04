@@ -637,6 +637,19 @@ def build_panel(
     if not kept:
         return result
 
+    # Every part consumed is verified against the sibling manifest first: a
+    # frozen panel whose bytes the catalog does not vouch for must not become
+    # forward evidence. Absent manifest (pre-convention directory) warns
+    # inside the verifier and the read proceeds; a mismatch is a refusal.
+    from .frozen_manifest import verify_sibling_manifest
+
+    try:
+        for signal in kept:
+            verify_sibling_manifest(panels[signal])
+    except ValueError as exc:
+        result.refusal = str(exc)
+        return result
+
     # One pass over the frozen panels to learn tickers and resolve CIKs. The
     # foundry CIK fallback is resolved PER SIGNAL DATE: tickers get reused
     # after delistings, so a missing CIK resolved through today's snapshot
@@ -934,7 +947,11 @@ def write_panel(
     result: PanelBuildResult, out_dir: Path, profile: str, config: PanelBuildConfig
 ) -> tuple[Path | None, Path]:
     """Write ``<profile>.parquet`` (stable name — the ledger's experiment key is
-    derived from the panel filename) and ``<profile>.build.json``."""
+    derived from the panel filename) and ``<profile>.build.json``, then refresh
+    the sibling ``manifest.json`` so the ``backtest`` consumption of the panel
+    verifies instead of trusts a bare path."""
+    from .frozen_manifest import refresh_built_panel_manifest
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     sidecar_path = out_dir / f"{profile}.build.json"
@@ -943,9 +960,13 @@ def write_panel(
         encoding="utf-8",
     )
     if result.panel is None:
+        refresh_built_panel_manifest(out_dir, built_now=frozenset({sidecar_path.name}))
         return None, sidecar_path
     panel_path = out_dir / f"{profile}.parquet"
     result.panel.to_parquet(panel_path, index=False)
+    refresh_built_panel_manifest(
+        out_dir, built_now=frozenset({panel_path.name, sidecar_path.name})
+    )
     return panel_path, sidecar_path
 
 

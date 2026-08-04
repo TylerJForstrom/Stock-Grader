@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `stock_grader.frozen_manifest`: sibling `manifest.json` catalogs for score panels — the same
+  manifest convention the foundry and vault datasets carry (schema_version 1.0, per-file
+  sha256/bytes), extended with per-file `rows`/`columns`, honest `hashed_at` provenance
+  (`freeze`/`build`/`backfill`), and a dataset-content version (`content_schema_versions`, the
+  panels' row `schema_version`) kept deliberately distinct from the manifest-format version.
+  `freeze` writes and additively refreshes the catalog for every `frozen_scores*/<profile>/`
+  directory; `build-panel` catalogs its output directory; existing frozen directories were
+  backfilled in place (parts untouched, entries marked `backfill`). Every panel-consuming
+  loader (`backtest`, `ledger-declare`, `build-panel`, `decay`) now verifies a panel's sha256
+  against the sibling manifest when one exists, refusing on mismatch or on a part the catalog
+  does not know; a directory without a manifest predates the convention and loads with an
+  `UnmanifestedPanelWarning`. `.gitattributes` marks `*.parquet -text` so no platform can
+  line-ending-translate a hash-pinned part.
+
 - `stock_grader.peers`: deterministic comparable-company selection with same-business-model,
   SIC, reporting-currency, and market-cap rules plus a fingerprinted selection manifest.
 - `stock_grader.research` and `stock-grader research`: a versioned analyst evidence bundle

@@ -198,6 +198,15 @@ score, and forward return, strict runs require `filed_through`, one of
 `delisting_return_included` columns. See [Validation](docs/VALIDATION.md) before using
 `--allow-unverified-panel`.
 
+Panel reads are manifest-verified. `freeze` writes a `manifest.json` catalog beside each
+`frozen_scores/<profile>/` directory (per-part sha256, rows, columns, and a dataset-content
+version distinct from the manifest-format version), and `build-panel` does the same for its
+output directory. Every panel-consuming path — `backtest`, `ledger-declare`, `build-panel`,
+`decay` — checks a panel's sha256 against the sibling manifest when one exists and refuses on
+mismatch; a directory with no manifest predates the convention and loads with a warning (old
+panels are immutable and are never rewritten to add one — the next freeze catalogs them
+additively, marked `backfill`).
+
 ## Documentation
 
 - [Quick start and CLI](docs/QUICKSTART.md)

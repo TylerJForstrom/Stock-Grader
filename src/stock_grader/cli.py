@@ -1040,10 +1040,51 @@ def cmd_research(args: argparse.Namespace) -> int:
     return 0 if dossier.grade.graded else 3
 
 
+def _refresh_freeze_manifests(
+    out_dir: Path, profiles: list[str], frozen_names: dict[str, str]
+) -> list[str]:
+    """Catalog every requested profile directory that exists.
+
+    ``frozen_names`` maps profile -> the part THIS run froze, so those entries
+    carry ``hashed_at: "freeze"``; parts found already on disk are carried
+    forward from the prior manifest or honestly marked ``backfill``. A part
+    that cannot be cataloged (corrupt bytes) never stops the OTHER profiles'
+    catalogs from being written: it is reported and returned so the caller can
+    go red, and until it is investigated the stale-or-absent manifest makes
+    every downstream consumer of that directory refuse.
+    """
+    from .frozen_manifest import refresh_frozen_manifest
+
+    failures: list[str] = []
+    for profile in profiles:
+        directory = out_dir / profile
+        if not directory.is_dir():
+            continue
+        written = frozen_names.get(profile)
+        try:
+            refresh_frozen_manifest(
+                directory,
+                frozen_now=frozenset({written}) if written else frozenset(),
+            )
+        except ValueError as exc:
+            console.print(f"[red]{profile}: manifest not written: {exc}[/red]")
+            failures.append(profile)
+    return failures
+
+
 def _load_panel_frame(path: Path) -> pd.DataFrame:
-    """Read a score panel exactly as the backtest evaluator will see it."""
+    """Read a score panel exactly as the backtest evaluator will see it.
+
+    The read is manifest-verified: when a sibling ``manifest.json`` catalogs
+    the file, its sha256 must match (mismatch refuses); when no manifest
+    exists the panel loads with a warning — pre-convention directories are
+    immutable, never rewritten, so they stay readable but unattested.
+    """
     if not path.exists():
         raise ValueError(f"panel does not exist: {path}")
+    from .frozen_manifest import verify_sibling_manifest
+
+    verify_sibling_manifest(path)
     if path.suffix.lower() in {".parquet", ".pq"}:
         return pd.read_parquet(path)
     return pd.read_csv(path)
@@ -1315,7 +1356,11 @@ def cmd_freeze(args: argparse.Namespace) -> int:
         else:
             pending.append(profile)
     if not pending:
-        return 0
+        # Even a freeze that froze nothing refreshes the catalogs: a crash
+        # between a prior run's panel write and its manifest write, or a
+        # directory that predates the manifest convention, heals here instead
+        # of refusing downstream forever.
+        return 2 if _refresh_freeze_manifests(out_dir, profiles, {}) else 0
 
     # Built once and graded under every pending profile: the whole point of the
     # multi-profile freeze is that the fetch is the expensive part.
@@ -1329,6 +1374,7 @@ def cmd_freeze(args: argparse.Namespace) -> int:
 
     commit = current_commit()
     refused: list[str] = []
+    frozen_names: dict[str, str] = {}
     configs = {profile: _config_from_args(args, profile=profile) for profile in pending}
     from . import pipeline as pipeline_module
 
@@ -1396,9 +1442,16 @@ def cmd_freeze(args: argparse.Namespace) -> int:
         tmp = out_path.with_suffix(".parquet.tmp")
         frame.to_parquet(tmp, index=False)
         tmp.replace(out_path)
+        frozen_names[profile] = out_path.name
         console.print(
             f"froze {len(frame)} scores ({graded_count} graded) for {signal_date} -> {out_path}"
         )
+
+    # The manifest IS the catalog: freezing a part and cataloging it are one
+    # act. Refreshed for every requested profile directory — refused profiles
+    # included — so a directory whose parts predate the convention is
+    # backfilled the first time any freeze visits it.
+    catalog_failures = _refresh_freeze_manifests(out_dir, profiles, frozen_names)
 
     if refused:
         # Alarm policy. Some profiles simply cannot grade this universe — momentum
@@ -1426,7 +1479,9 @@ def cmd_freeze(args: argparse.Namespace) -> int:
             "[yellow]those profiles have never frozen a panel on this universe "
             "(structural, not a regression); the run stays green[/yellow]"
         )
-    return 0
+    # A part that could not be cataloged is genuinely new information — unlike
+    # a structural refusal it can only mean corrupt bytes in the evidence tree.
+    return 2 if catalog_failures else 0
 
 
 def cmd_decay(args: argparse.Namespace) -> int:
