@@ -54,6 +54,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "GradeConfig",
     "build_metric_matrix",
+    "config_fingerprint",
     "grade_one",
     "grade_universe",
     "grade_universe_multi",
@@ -369,6 +370,16 @@ def _config_manifest(config: GradeConfig) -> tuple[dict[str, object], str]:
         manifest, sort_keys=True, separators=(",", ":"), default=str
     ).encode()
     return manifest, hashlib.sha256(encoded).hexdigest()
+
+
+def config_fingerprint(config: GradeConfig) -> str:
+    """Public accessor for the config comparability key (ECOSYSTEM rule 3).
+
+    Identical to the ``config_fingerprint`` every report carries in its meta;
+    the run journal computes it before grading to find the newest comparable
+    run whose letters can seed hysteresis.
+    """
+    return _config_manifest(config)[1]
 
 
 def _universe_fingerprint(snapshots: list[SecuritySnapshot]) -> str:
