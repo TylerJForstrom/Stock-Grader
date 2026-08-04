@@ -29,9 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check out the private vault (EOD archive + panel archive)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: TylerJForstrom/Stock-Vault
           token: ${{ secrets.VAULT_REPO_TOKEN }}
@@ -41,7 +41,7 @@ jobs:
           # commit step is the only consumer and supplies it per-command.
           persist-credentials: false
       - name: Check out the public foundry (split confirmation)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: TylerJForstrom/Stock-Data
           path: foundry
