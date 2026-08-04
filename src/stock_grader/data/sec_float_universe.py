@@ -19,7 +19,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from .symbols import ticker_variants
+from .symbols import canonical_ticker
 
 log = logging.getLogger(__name__)
 
@@ -209,9 +209,7 @@ def _spec_positive_number(spec: dict[str, Any], key: str, default: float) -> flo
 
 
 def _canonical_ticker(value: object) -> str:
-    ticker = str(value or "").strip().upper().replace(" ", "-")
-    variants = ticker_variants(ticker)
-    return variants[1] if "." in ticker and len(variants) > 1 else ticker
+    return canonical_ticker(str(value or ""))
 
 
 def _required_date(record: dict[str, Any], field: str) -> date:

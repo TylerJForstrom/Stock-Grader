@@ -323,10 +323,13 @@ class VaultDataSource:
         return pd.DataFrame(rows)
 
     def borrow_fee(self, ticker: str) -> dict | None:
-        """Latest fee/availability row for one ticker (IB uses space notation)."""
+        """Latest fee/availability row for one ticker.
+
+        IB writes class shares with a space (``BRK B``); ``ticker_variants``
+        carries that spelling, so no ad-hoc form is built here.
+        """
         table = self.borrow_latest()
-        wanted = {v.replace("-", " ").replace(".", " ") for v in ticker_variants(ticker)}
-        wanted |= set(ticker_variants(ticker))
+        wanted = set(ticker_variants(ticker))
         hit = table[table["symbol"].astype(str).str.upper().isin(wanted)]
         return hit.iloc[0].to_dict() if not hit.empty else None
 
@@ -352,9 +355,7 @@ class VaultDataSource:
         requested = list(symbols)
         alias: dict[str, str] = {}
         for symbol in requested:
-            spellings = set(ticker_variants(symbol))
-            spellings |= {v.replace("-", " ").replace(".", " ") for v in spellings}
-            for spelling in spellings:
+            for spelling in ticker_variants(symbol):
                 claimed = alias.get(spelling.upper())
                 if claimed is not None and claimed != symbol:
                     raise VaultError(

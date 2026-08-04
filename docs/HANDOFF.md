@@ -25,14 +25,18 @@ correct order" from the ecosystem gap analysis. Tier 1 items 1–3 are DONE
 ## The queue (in execution order)
 
 ### 4. Ticker canonicalization spec  (~half day)
-Four symbologies exist: SEC `BRK-B`, Polygon `BRK.B`, IB `BRK B`, TickerPulse
-`BRK.B`. `ticker_variants()` in `src/stock_grader/data/symbols.py` bridges
-dash/dot; VaultDataSource.borrow_fee adds the space form ad hoc.
-- Write the spec into Stock-Data's ECOSYSTEM.md: canonical = SEC dash form.
-- Extend `ticker_variants` with the space form; make every adapter boundary
-  (foundry.py, vault.py, sec_prices.py) canonicalize on read.
-- Copy the ~20-line helper into Stock-Data and Stock-Vault (`no cross-repo
-  imports` rule) and apply at their write paths for NEW data only.
+DONE (2026-08-04). Canonical = SEC dash form, spec written into Stock-Data's
+ECOSYSTEM.md (rule 7). `ticker_variants()` now carries the IB space form and
+`canonical_ticker()` is the shared dash-form canonicalizer; the two ad-hoc
+space-form expansions in VaultDataSource are gone, `FoundryDataSource.trailing_dps`
+matches all spellings instead of exact-equality, and the SEC insider table
+canonicalizes tickers on read (cache schema v3 — dot/space/dash spellings of one
+issuer share one median row). The FINRA no-separator form (`BRKB`) is deliberately
+NOT a variant: a squashed class share can spell another issuer's real ticker, so
+no-separator joins go through Stock-Vault's ambiguity-guarded `build_squash_index`.
+Stock-Data got its own copy (`src/stock_data/tickers.py`, applied in
+`resolve_ciks`); Stock-Vault already had `tickers.py` covering dash/dot/space/squash
+with the same canonical form, so no vault change was needed.
 
 ### 5. events.jsonl into the manifest contract + universe(asof)  (~half day)
 DONE end-to-end (2026-08-04). The events dataset has its own manifested dir
