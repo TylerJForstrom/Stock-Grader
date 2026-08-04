@@ -12,6 +12,7 @@ import pytest
 from tests.test_vault import _gz_jsonl, _manifest
 
 from stock_grader.backtest import BacktestConfig, evaluate_walk_forward
+from stock_grader.data.foundry import FoundryError
 from stock_grader.data.vault import VaultDataSource
 from stock_grader.panel import (
     FORWARD_EPOCH,
@@ -178,7 +179,7 @@ class _Foundry:
             ]
         )
 
-    def universe(self, *, listed_only: bool = False):
+    def universe(self, *, listed_only: bool = False, asof: str | None = None):
         return [{"ticker": t, "cik": int(c)} for t, c in _CIKS.items()]
 
 
@@ -299,6 +300,84 @@ def test_missing_terminal_price_forces_delisting_attestation_false(market_vault,
     assert result.attestations["delisting_return_included"] is False
     assert result.attestations["universe_is_pit"] is False  # outcome-dependent drop
     assert "LOSTCO" in result.unresolved_tickers
+
+
+# -- the point-in-time CIK fallback --------------------------------------------
+
+
+def _frozen_missing_alpha_cik(root: Path) -> Path:
+    """Frozen panels for all SIGNALS where ALPHA's rows carry no CIK."""
+    rows = [
+        _frozen_row(ticker, float(score), cik="" if ticker == "ALPHA" else None)
+        for score, ticker in enumerate(sorted(HEALTHY), start=1)
+    ]
+    for signal in SIGNALS:
+        _write_frozen(root, signal, rows)
+    return root
+
+
+_ALPHA_OWNERS = {"2026-08-03": 3000101, "2026-08-12": 3000202, "2026-08-21": 3000303}
+
+
+class _AsofFoundry(_Foundry):
+    """ALPHA changed hands between signal dates; today's snapshot disagrees
+    with every historical owner."""
+
+    def universe(self, *, listed_only: bool = False, asof: str | None = None):
+        if asof is None:
+            return [{"ticker": "ALPHA", "cik": 3999999}]  # today's owner
+        return [{"ticker": "ALPHA", "cik": _ALPHA_OWNERS[asof]}]
+
+
+def test_missing_cik_resolves_from_the_foundry_map_as_of_each_signal_date(
+    market_vault, tmp_path
+):
+    """A ticker reused after a delisting must resolve to the CIK that owned it
+    ON each signal date — resolving through today's snapshot would stamp the
+    symbol's new owner onto the old owner's history, the exact mis-join the
+    event-replay map exists to prevent."""
+    root = _frozen_missing_alpha_cik(tmp_path / "frozen")
+    result = build_panel(
+        root, "all_weather", market_vault, _AsofFoundry(), _config(), today=TODAY
+    )
+    panel = result.panel
+    alpha = panel[panel["ticker"] == "ALPHA"].set_index("signal_date")["cik"]
+    assert alpha["2026-08-03"] == "0003000101"
+    assert alpha["2026-08-12"] == "0003000202"
+    assert alpha["2026-08-21"] == "0003000303"
+    assert result.cik_map_modes == {s.isoformat(): "pit_replay" for s in SIGNALS}
+    assert [p.cik_from_foundry for p in result.periods] == [1, 1, 1]
+    # The sidecar records the map that served each date.
+    payload = sidecar_payload(result, "all_weather", _config())
+    assert payload["cik_map_modes"] == result.cik_map_modes
+
+
+def test_cik_fallback_to_the_current_snapshot_is_recorded_never_overclaimed(
+    market_vault, tmp_path
+):
+    """A foundry whose event archive cannot reach the signal dates refuses
+    ``asof``: the builder falls back to the current snapshot, records
+    ``current_snapshot`` per date in the sidecar, and flips NO attestation —
+    ``universe_is_pit`` keeps its documented computed meaning either way."""
+
+    class _RefusingFoundry(_Foundry):
+        def universe(self, *, listed_only: bool = False, asof: str | None = None):
+            if asof is not None:
+                raise FoundryError(f"asof {asof} predates the event archive")
+            return [{"ticker": "ALPHA", "cik": 3999999}]
+
+    root = _frozen_missing_alpha_cik(tmp_path / "frozen")
+    result = build_panel(
+        root, "all_weather", market_vault, _RefusingFoundry(), _config(), today=TODAY
+    )
+    alpha = result.panel[result.panel["ticker"] == "ALPHA"]
+    assert set(alpha["cik"]) == {"0003999999"}
+    assert result.cik_map_modes == {
+        s.isoformat(): "current_snapshot" for s in SIGNALS
+    }
+    # The fallback is recorded, not attested: the attestation formula is
+    # untouched (no outcome-dependent drops here, dates are post-epoch).
+    assert result.attestations["universe_is_pit"] is True
 
 
 # -- splits --------------------------------------------------------------------
