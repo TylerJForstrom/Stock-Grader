@@ -91,11 +91,18 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
   difference is not flattened onto the median; n≥100 behavior unchanged.
 
 ### 9. Consumption layer  (~2 days)
-- Run journal: append each run's JSON to `~/.stock-grader/runs/` keyed by
-  asof+fingerprints; `stock-grader diff --since-last TICKER` refuses
-  mismatched fingerprints, reports letter/score/pillar deltas AND the metric
-  contributions that moved them. This finally makes `apply_hysteresis` +
-  `previous_letters` (pipeline.py:797) reachable from the CLI.
+- ~~Run journal + `diff --since-last`~~ DONE (2026-08-03): `journal.py`
+  appends every `grade` run under `~/.stock-grader/runs/` (immutable records
+  keyed by asof+fingerprints; `--journal-dir` overrides, `--no-journal`
+  disables); `stock-grader diff --since-last TICKER` refuses config/peer-set
+  regime breaks (`--allow-fingerprint-drift` accepts one, visibly) and
+  reports letter/score/pillar deltas plus the metric contributions that
+  moved them. `grade --hysteresis` seeds `apply_hysteresis` with the newest
+  comparable run's letters — opt-in per SPEC design decision D9 (prior state
+  is an explicit input). Because the canonical universe fingerprint hashes
+  each member's asof (data vintage), run-over-run comparability uses a
+  vintage-free membership fingerprint over (ticker, cik, sector); `rank`
+  runs are not journaled yet.
 - `ecosystem-status` command in Stock-Data: one table — every clock, last
   tick UTC, staleness vs cadence, via raw GitHub URLs + local vault clone.
 - Dossier "What drove this grade": top-5 strengths/concerns in words from

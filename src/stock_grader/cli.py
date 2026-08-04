@@ -44,12 +44,24 @@ from .data.sec_prices import SECInsiderPriceProvider, check_price_share_basis, r
 from .data.stockanalysis import StockAnalysisPriceProvider
 from .data.synthetic import generate_prices
 from .data.vault import VaultDataSource, VaultPriceProvider
+from .journal import DEFAULT_JOURNAL_DIR as _DEFAULT_JOURNAL_DIR
+from .journal import (
+    JournalError,
+    append_run,
+    comparability_mismatches,
+    diff_reports,
+    membership_fingerprint,
+    previous_letters,
+    resolve_since_last,
+    snapshot_members,
+)
 from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from .peers import explicit_peers, select_peers
-from .pipeline import GradeConfig, grade_universe
+from .pipeline import GradeConfig, config_fingerprint, grade_universe
 from .profiles import consensus_grade, get_profile, profile_names
 from .registry import AGGREGATORS, METRICS, NORMALIZERS, WEIGHTINGS
 from .report import (
+    DISCLAIMER,
     rank_reports,
     render_consensus,
     render_ranking,
@@ -699,6 +711,13 @@ def _config_from_args(args: argparse.Namespace, *, profile: str | None = None) -
     return get_profile(profile or args.profile, **overrides)
 
 
+def _journal_dir_from_args(args: argparse.Namespace) -> Path | None:
+    """The run-journal directory, or None when journaling is off for this run."""
+    if getattr(args, "no_journal", False):
+        return None
+    return Path(getattr(args, "journal_dir", None) or _DEFAULT_JOURNAL_DIR).expanduser()
+
+
 def cmd_grade(args: argparse.Namespace) -> int:
     tickers = [t.upper() for t in args.tickers]
     peers = _resolve_peers(args, tickers)
@@ -709,7 +728,22 @@ def cmd_grade(args: argparse.Namespace) -> int:
         console.print("[red]no securities could be loaded[/red]")
         return 2
 
-    reports = grade_universe(snapshots, _config_from_args(args))
+    config = _config_from_args(args)
+    journal_dir = _journal_dir_from_args(args)
+    previous: dict[str, str] = {}
+    if journal_dir is not None and getattr(args, "hysteresis", False):
+        # Letters from the newest journaled run in the same comparability
+        # regime (config + peer-set membership) seed boundary hysteresis, so a
+        # score drifting a fraction of a point does not flip the letter on
+        # every refresh. Opt-in per SPEC design decision D9: prior state is an
+        # input, so it must be asked for, never silently mixed in from local
+        # state. No comparable run means hysteresis simply stays out.
+        previous = previous_letters(
+            journal_dir,
+            config_fingerprint=config_fingerprint(config),
+            membership_fingerprint=membership_fingerprint(snapshot_members(snapshots)),
+        )
+    reports = grade_universe(snapshots, config, previous_letters=previous or None)
     selected = {t: reports[t] for t in tickers if t in reports}
     if not selected:
         console.print("[red]nothing to grade[/red]")
@@ -722,7 +756,139 @@ def cmd_grade(args: argparse.Namespace) -> int:
     else:
         for report in selected.values():
             render_report(report, console, explain=args.explain)
+
+    if journal_dir is not None:
+        try:
+            append_run(reports, journal_dir=journal_dir, command="grade")
+        except (JournalError, OSError) as exc:
+            # The grade itself is unaffected; say why the journal was not.
+            status_console.print(f"[yellow]run not journaled: {exc}[/yellow]")
     return 0 if any(report.graded for report in selected.values()) else 3
+
+
+def _fmt_delta_number(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:+.2f}" if value else "0.00"
+
+
+def _fmt_number(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}"
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Compare a ticker's newest journaled grade against the run before it.
+
+    Refuses a baseline from a different comparability regime (config or
+    peer-set membership change): presenting cross-regime movement as a delta
+    is exactly the misreading fingerprints exist to prevent. Data-vintage
+    movement between comparable runs is what the diff reports.
+    """
+    journal_dir = Path(args.journal_dir or _DEFAULT_JOURNAL_DIR).expanduser()
+    ticker = args.ticker.upper()
+    try:
+        (base_path, baseline), (cur_path, current) = resolve_since_last(journal_dir, ticker)
+    except JournalError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
+
+    drift = comparability_mismatches(baseline, current)
+    if drift and not args.allow_fingerprint_drift:
+        for reason in drift:
+            console.print(f"[red]{reason}[/red]")
+        console.print(
+            "[red]two scores are comparable only when fingerprints match; pass "
+            "--allow-fingerprint-drift to accept a regime break[/red]"
+        )
+        return 2
+
+    try:
+        payload = diff_reports(baseline, current, ticker)
+    except KeyError:
+        console.print(f"[red]{ticker} missing from a resolved run — journal inconsistent[/red]")
+        return 2
+    payload["fingerprint_drift"] = drift
+    payload["baseline"]["path"] = str(base_path)
+    payload["current"]["path"] = str(cur_path)
+    payload["disclaimer"] = DISCLAIMER
+
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    from rich.box import SIMPLE
+    from rich.table import Table
+    from rich.text import Text
+
+    for reason in drift:
+        console.print(f"[yellow]fingerprint drift accepted: {reason}[/yellow]")
+    console.print(
+        f"[bold white]{ticker}[/bold white]  profile [cyan]{payload['profile']}[/cyan]  "
+        f"{payload['baseline']['asof']} → {payload['current']['asof']}"
+    )
+    console.print(
+        f"[dim]baseline {payload['baseline']['recorded_at_utc']}  →  "
+        f"current {payload['current']['recorded_at_utc']}   "
+        f"config {str(payload['current']['config_fingerprint'])[:12]}…[/dim]"
+    )
+    letter = payload["letter"]
+    score = payload["score"]
+    console.print(
+        f"letter {letter['from']} → {letter['to']}"
+        + ("" if letter["changed"] else "  (unchanged)")
+        + f"   score {_fmt_number(score['from'])} → {_fmt_number(score['to'])} "
+        + f"(Δ {_fmt_delta_number(score['delta'])})"
+    )
+    percentile = payload["percentile"]
+    coverage = payload["coverage"]
+    console.print(
+        f"[dim]percentile {_fmt_number(percentile['from'])} → {_fmt_number(percentile['to'])} "
+        f"(Δ {_fmt_delta_number(percentile['delta'])})   "
+        f"coverage {_fmt_number(coverage['from'])} → {_fmt_number(coverage['to'])}[/dim]"
+    )
+
+    if payload["pillars"]:
+        table = Table(box=SIMPLE, title="Pillar deltas", title_justify="left", header_style="bold")
+        table.add_column("pillar", style="cyan")
+        table.add_column("baseline", justify="right")
+        table.add_column("current", justify="right")
+        table.add_column("Δ", justify="right")
+        for name, entry in payload["pillars"].items():
+            table.add_row(
+                name,
+                _fmt_number(entry["from"]),
+                _fmt_number(entry["to"]),
+                _fmt_delta_number(entry["delta"]),
+            )
+        console.print(table)
+
+    movers = [entry for entry in payload["metric_movers"] if entry["delta"]]
+    if movers:
+        shown = movers[:10]
+        table = Table(
+            box=SIMPLE,
+            title="Metric contributions that moved the grade",
+            title_justify="left",
+            header_style="bold",
+        )
+        table.add_column("metric", style="cyan")
+        table.add_column("baseline", justify="right")
+        table.add_column("current", justify="right")
+        table.add_column("Δ", justify="right")
+        for entry in shown:
+            table.add_row(
+                entry["metric"],
+                _fmt_number(entry["from"]),
+                _fmt_number(entry["to"]),
+                _fmt_delta_number(entry["delta"]),
+            )
+        console.print(table)
+        if len(movers) > len(shown):
+            console.print(f"[dim]{len(movers) - len(shown)} smaller mover(s) not shown[/dim]")
+    else:
+        console.print("[dim]no metric contribution moved between the two runs[/dim]")
+    console.print(Text(DISCLAIMER, style="dim"))
+    return 0
 
 
 def cmd_rank(args: argparse.Namespace) -> int:
@@ -1582,8 +1748,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_grade = sub.add_parser("grade", help="grade one or more securities")
     p_grade.add_argument("tickers", nargs="+")
     p_grade.add_argument("--explain", action="store_true", help="show per-metric drivers")
+    p_grade.add_argument(
+        "--journal-dir",
+        type=lambda value: str(Path(value).expanduser()),
+        help="run-journal directory (default ~/.stock-grader/runs); every grade run "
+        "appends its reports there, which is what feeds letter hysteresis and "
+        "`stock-grader diff --since-last`",
+    )
+    p_grade.add_argument(
+        "--no-journal",
+        action="store_true",
+        help="neither read nor append the run journal; letter hysteresis needs the "
+        "previous run's letters, so this also disables it",
+    )
+    p_grade.add_argument(
+        "--hysteresis",
+        action="store_true",
+        help="keep a letter stable when the score moved only trivially, using the "
+        "previous comparable journaled run's letters as the prior state "
+        "(off by default per design decision D9: prior state is an explicit input)",
+    )
     common(p_grade)
     p_grade.set_defaults(func=cmd_grade)
+
+    p_diff = sub.add_parser(
+        "diff",
+        help="compare a ticker's newest journaled grade against the run before it",
+    )
+    p_diff.add_argument("ticker")
+    p_diff.add_argument(
+        "--since-last",
+        action="store_true",
+        required=True,
+        help="baseline = the most recent earlier journaled run containing TICKER "
+        "(the only baseline mode today; explicit so future modes stay additive)",
+    )
+    p_diff.add_argument(
+        "--journal-dir",
+        type=lambda value: str(Path(value).expanduser()),
+        help="run-journal directory (default ~/.stock-grader/runs)",
+    )
+    p_diff.add_argument(
+        "--allow-fingerprint-drift",
+        action="store_true",
+        help="accept a config or peer-set regime break between the two runs "
+        "(reported in the output rather than hidden)",
+    )
+    p_diff.add_argument("--format", default="text", choices=["text", "json"])
+    p_diff.set_defaults(func=cmd_diff)
 
     p_rank = sub.add_parser("rank", help="rank a universe")
     p_rank.add_argument("--top", type=_positive_int)

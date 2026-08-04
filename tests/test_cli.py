@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from argparse import Namespace
-from datetime import date
+from datetime import UTC, date
 from pathlib import Path
 
 import pandas as pd
@@ -1205,3 +1205,210 @@ def test_ledger_retract_appends_and_keeps_chain_valid(tmp_path):
         cli.main(["ledger-retract", retraction_hash, "--ledger", str(ledger), "--reason", "x"])
         == 2
     )
+
+
+# -- run journal + diff --since-last -------------------------------------------
+
+
+def _journaled_report(
+    ticker: str,
+    score: float,
+    letter: str,
+    config_fp: str,
+    *,
+    contributions: dict[str, float] | None = None,
+    asof: date = date(2026, 7, 28),
+) -> GradeReport:
+    return GradeReport(
+        ticker=ticker,
+        asof=asof,
+        profile="all_weather",
+        score=score,
+        letter=letter,
+        coverage=0.9,
+        explain={"metric_contributions": contributions or {}},
+        meta={
+            "cik": None,
+            "sector": "general",
+            "config_fingerprint": config_fp,
+            "universe_fingerprint": "u" * 64,
+        },
+    )
+
+
+def test_cmd_grade_journals_runs_and_seeds_hysteresis(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """First grade run appends a journal record; the second reads its letters back."""
+    _patch_data_loading(monkeypatch)
+    monkeypatch.setattr(cli, "_resolve_peers", lambda _args, _tickers: [])
+    seen_previous: list[dict[str, str] | None] = []
+    letters = iter(["B+", "B", "B"])
+
+    def fake_grade_universe(snapshots, config, *, previous_letters=None):
+        seen_previous.append(previous_letters)
+        fingerprint = cli.config_fingerprint(config)
+        return {"AAPL": _journaled_report("AAPL", 71.2, next(letters), fingerprint)}
+
+    monkeypatch.setattr(cli, "grade_universe", fake_grade_universe)
+    args = _common_args(
+        tickers=["AAPL"],
+        explain=False,
+        journal_dir=str(tmp_path),
+        no_journal=False,
+        hysteresis=True,
+        format="json",
+    )
+
+    assert cli.cmd_grade(args) == 0
+    assert seen_previous == [None], "a first run has no comparable baseline"
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+    assert cli.cmd_grade(args) == 0
+    assert seen_previous[1] == {"AAPL": "B+"}, "second run must seed hysteresis"
+    assert len(list(tmp_path.glob("*.json"))) == 2
+
+    # Without --hysteresis the journal still appends, but prior letters stay
+    # out of the grade: SPEC design decision D9 keeps prior state opt-in.
+    args.hysteresis = False
+    assert cli.cmd_grade(args) == 0
+    assert seen_previous[2] is None
+    assert len(list(tmp_path.glob("*.json"))) == 3
+    capsys.readouterr()
+
+
+def test_cmd_grade_no_journal_disables_reading_and_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _patch_data_loading(monkeypatch)
+    monkeypatch.setattr(cli, "_resolve_peers", lambda _args, _tickers: [])
+    seen_previous: list[dict[str, str] | None] = []
+
+    def fake_grade_universe(snapshots, config, *, previous_letters=None):
+        seen_previous.append(previous_letters)
+        return {"AAPL": _journaled_report("AAPL", 71.2, "B+", cli.config_fingerprint(config))}
+
+    monkeypatch.setattr(cli, "grade_universe", fake_grade_universe)
+    args = _common_args(
+        tickers=["AAPL"],
+        explain=False,
+        journal_dir=str(tmp_path),
+        no_journal=True,
+        format="json",
+    )
+    assert cli.cmd_grade(args) == 0
+    assert seen_previous == [None]
+    assert not list(tmp_path.glob("*.json"))
+    capsys.readouterr()
+
+
+def test_diff_since_last_reports_deltas_and_movers(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime
+
+    from stock_grader import journal
+
+    config_fp = "c" * 64
+    journal.append_run(
+        {
+            "AAPL": _journaled_report(
+                "AAPL", 71.2, "B+", config_fp, contributions={"roe": 2.0, "margin": 1.0}
+            )
+        },
+        journal_dir=tmp_path,
+        recorded_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    journal.append_run(
+        {
+            "AAPL": _journaled_report(
+                "AAPL",
+                68.9,
+                "B",
+                config_fp,
+                contributions={"roe": -1.0, "margin": 1.2},
+                asof=date(2026, 8, 3),
+            )
+        },
+        journal_dir=tmp_path,
+        recorded_at=datetime(2026, 8, 3, tzinfo=UTC),
+    )
+
+    assert (
+        cli.main(
+            ["diff", "AAPL", "--since-last", "--journal-dir", str(tmp_path), "--format", "json"]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["letter"] == {"from": "B+", "to": "B", "changed": True}
+    assert payload["score"]["delta"] == pytest.approx(-2.3)
+    assert payload["fingerprint_drift"] == []
+    assert [entry["metric"] for entry in payload["metric_movers"]] == ["roe", "margin"]
+    assert "not investment" in payload["disclaimer"]
+
+    # The text rendering carries the same story plus the mandatory disclaimer.
+    assert cli.main(["diff", "AAPL", "--since-last", "--journal-dir", str(tmp_path)]) == 0
+    text = capsys.readouterr().out
+    assert "B+ → B" in text
+    assert "roe" in text
+    assert "not investment" in text
+
+
+def test_diff_refuses_mismatched_fingerprints_unless_overridden(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime
+
+    from stock_grader import journal
+
+    journal.append_run(
+        {"AAPL": _journaled_report("AAPL", 71.2, "B+", "c" * 64)},
+        journal_dir=tmp_path,
+        recorded_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    journal.append_run(
+        {"AAPL": _journaled_report("AAPL", 68.9, "B", "d" * 64)},
+        journal_dir=tmp_path,
+        recorded_at=datetime(2026, 8, 3, tzinfo=UTC),
+    )
+
+    assert cli.main(["diff", "AAPL", "--since-last", "--journal-dir", str(tmp_path)]) == 2
+    assert "comparable only when fingerprints match" in capsys.readouterr().out
+
+    assert (
+        cli.main(
+            [
+                "diff",
+                "AAPL",
+                "--since-last",
+                "--journal-dir",
+                str(tmp_path),
+                "--allow-fingerprint-drift",
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fingerprint_drift"], "an accepted regime break must stay visible"
+
+
+def test_diff_refuses_without_a_baseline(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    assert cli.main(["diff", "AAPL", "--since-last", "--journal-dir", str(tmp_path)]) == 2
+    assert "no journaled run contains AAPL" in capsys.readouterr().out
+
+
+def test_diff_requires_since_last() -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["diff", "AAPL"])
