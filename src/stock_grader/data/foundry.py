@@ -24,6 +24,8 @@ from typing import Any
 
 import pandas as pd
 
+from .symbols import ticker_variants
+
 log = logging.getLogger(__name__)
 
 __all__ = ["FoundryDataSource", "FoundryError"]
@@ -353,10 +355,15 @@ class FoundryDataSource:
         before ``asof`` (default: newest period_end for the ticker). Returns
         None when the foundry has no usable rows — callers must treat that as
         unknown, not zero.
+
+        Matches every ticker spelling (the foundry stores the SEC dash form;
+        callers arrive with dot or space forms), so ``BRK.B`` finds ``BRK-B``
+        rows instead of silently reporting an unknown dividend.
         """
         table = self.dividends()
         rows = table[
-            table["ticker"].eq(ticker.upper()) & table["span_type"].isin(("quarterly", "monthly"))
+            table["ticker"].isin(ticker_variants(ticker))
+            & table["span_type"].isin(("quarterly", "monthly"))
         ]
         if rows.empty:
             return None

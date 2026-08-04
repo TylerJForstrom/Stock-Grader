@@ -179,6 +179,15 @@ before evaluating, with the schedule recorded in the declaration (peeking
 disclosed, not corrected). Panels now carry `horizon_days` (additive column)
 so the spec can observe the horizon.
 
+2026-08-04 -- HANDOFF item 4 (ticker canonicalization): canonical = SEC dash
+form spec'd in Stock-Data ECOSYSTEM.md rule 7; `ticker_variants` gained the IB
+space form plus a shared `canonical_ticker`; vault's two ad-hoc space
+expansions removed; `trailing_dps` spelling-bridged; insider price table
+canonicalized on read (cache v3). Squash form (`BRKB`) deliberately excluded
+from variants (ambiguity); Stock-Data got its helper copy (`tickers.py`,
+wired into `resolve_ciks`); Stock-Vault's existing `tickers.py` already
+conformed, untouched.
+
 2026-08-03 -- M3 shadow arms (Stock-Vault): journal.py (byte-stable gzip — the
 old writer embedded the temp filename in the FNAME header), eod.py
 (manifest-gated stdlib reader), shadow.py (session-major simulator calling the

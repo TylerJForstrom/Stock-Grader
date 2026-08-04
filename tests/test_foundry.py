@@ -69,6 +69,16 @@ def build_foundry(root: Path, *, schema="1.0", corrupt: str | None = None) -> Pa
                 "approximate": False,
                 "flags": "",
             },  # annual rows must not double-count
+            {
+                "ticker": "BRK-B",  # foundry stores the canonical SEC dash form
+                "period_start": "2025-12-28",
+                "period_end": "2026-03-28",
+                "span_type": "quarterly",
+                "dps_current_basis": 0.10,
+                "derived": False,
+                "approximate": False,
+                "flags": "",
+            },
         ]
     )
     dividends_file = actions_dir / "dividends.parquet"
@@ -192,7 +202,7 @@ def test_symbol_directory_reader_is_manifest_verified(tmp_path):
 def test_dividends_and_splits_roundtrip(tmp_path):
     source = FoundryDataSource(root=build_foundry(tmp_path))
     dividends = source.dividends()
-    assert set(dividends["ticker"]) == {"AAPL"}
+    assert set(dividends["ticker"]) == {"AAPL", "BRK-B"}
     splits = source.splits()
     assert splits.iloc[0]["ratio"] == 4.0
     assert splits.iloc[0]["effective_date"] == pd.Timestamp("2020-08-28")
@@ -228,6 +238,14 @@ def test_trailing_dps_sums_recent_quarters_only(tmp_path):
     # row are both excluded (window + span filters).
     assert source.trailing_dps("AAPL") == pytest.approx(0.50)
     assert source.trailing_dps("MSFT") is None  # absent ticker -> unknown, not zero
+
+
+def test_trailing_dps_bridges_ticker_spellings(tmp_path):
+    """The foundry stores SEC dash form; dot and space callers still resolve."""
+    source = FoundryDataSource(root=build_foundry(tmp_path))
+    assert source.trailing_dps("BRK-B") == pytest.approx(0.10)
+    assert source.trailing_dps("BRK.B") == pytest.approx(0.10)
+    assert source.trailing_dps("BRK B") == pytest.approx(0.10)
 
 
 def test_requires_exactly_one_access_mode(tmp_path):

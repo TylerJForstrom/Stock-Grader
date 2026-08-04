@@ -140,6 +140,15 @@ def test_ticker_spelling_bridge_polygon_dots(tmp_path):
     assert series is not None and list(series["close"]) == [471.0, 473.0]
 
 
+def test_ticker_spelling_bridge_ib_spaces(tmp_path):
+    """All four live spellings of one class share resolve to the same issuer."""
+    vault = VaultDataSource(build_vault(tmp_path))
+    series = vault.market_eod_series("BRK B")  # IB space form finds Polygon dot form
+    assert series is not None and list(series["close"]) == [471.0, 473.0]
+    matrix = vault.market_eod_close_matrix(["BRK B"])
+    assert list(matrix["BRK B"].dropna()) == [471.0, 473.0]
+
+
 def test_borrow_fee_bridges_ib_space_notation(tmp_path):
     vault = VaultDataSource(build_vault(tmp_path))
     row = vault.borrow_fee("BRK.B")
