@@ -105,8 +105,11 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
   runs are not journaled yet.
 - `ecosystem-status` command in Stock-Data: one table — every clock, last
   tick UTC, staleness vs cadence, via raw GitHub URLs + local vault clone.
-- Dossier "What drove this grade": top-5 strengths/concerns in words from
-  existing contribution data; collapse zero-contribution rows to a count.
+- ~~Dossier "What drove this grade"~~ DONE (2026-08-03): `research_to_markdown`
+  renders top-5 strengths/concerns in words from the exact explain-payload
+  contributions plus an attribution-identity line; zero-contribution OK rows
+  collapse to a named count. The §4 dossier additions (per-peer comp table,
+  SBC, insider activity, red-flag display) remain deferred in item 10.
 - Provenance header (asof + fingerprint prefixes) in the two markdown
   renderers.
 

@@ -65,10 +65,99 @@ def test_research_markdown_is_complete_and_truthfully_labeled():
     assert "model sensitivity range" in markdown
     assert "not investment advice" in markdown
     assert "Scenario growth rates are assumptions, not forecasts" in markdown
+    # Every metric stays auditable: nonzero-contribution rows in a table,
+    # zero-contribution OK rows named in the collapse line.
+    assert all(metric.name in markdown for metric in report.metrics)
     assert all(
         f"| {metric.name} |" in markdown
         for metric in report.metrics
+        if metric.contribution != 0.0 or metric.coverage != "ok"
     )
+
+
+def test_what_drove_this_grade_renders_exact_payload_attributions():
+    """The strengths/concerns section must quote the grade's own contributions.
+
+    Sourcing is report.explain["metrics"] via MetricEvidence.contribution — the
+    exact per-metric attribution computed at grade time. The rendered points
+    for the top driver on each side must match that payload to the digit.
+    """
+    snapshots = _universe(12)
+    target = snapshots[0]
+    peers, selection = select_peers(target, snapshots[1:], minimum=8, maximum=10)
+    report = build_research_report(target, peers, selection)
+    markdown = research_to_markdown(report)
+
+    assert "## What drove this grade" in markdown
+    assert "never re-derived approximations" in markdown
+
+    contributions = {
+        name: float(detail.get("contribution", 0.0) or 0.0)
+        for name, detail in report.grade.explain["metrics"].items()
+    }
+    positives = sorted(
+        ((c, n) for n, c in contributions.items() if c > 0.0),
+        key=lambda item: (-item[0], item[1]),
+    )
+    negatives = sorted((c, n) for n, c in contributions.items() if c < 0.0)
+    assert positives and negatives, "fixture must exercise both driver sides"
+
+    section = markdown.split("## What drove this grade", 1)[1].split("\n## ", 1)[0]
+    bullets = [line for line in section.splitlines() if line.startswith("- **")]
+    strengths_block = section.split("Top strengths", 1)[1].split("Top concerns", 1)[0]
+    concerns_block = section.split("Top concerns", 1)[1]
+
+    top_strength_points, top_strength = positives[0]
+    top_concern_points, top_concern = negatives[0]
+    assert f"**{top_strength}** ({top_strength_points:+.2f} pts" in strengths_block
+    assert f"**{top_concern}** ({top_concern_points:+.2f} pts" in concerns_block
+    # Bullets follow payload order, capped at five per side.
+    expected_strengths = [name for _, name in positives[:5]]
+    expected_concerns = [name for _, name in negatives[:5]]
+    rendered = [line.split("**")[1] for line in bullets]
+    assert rendered == expected_strengths + expected_concerns
+    # The reconciliation line asserts the identity the payload already carries.
+    assert "Attribution identity: 50.0 baseline" in section
+    assert f"= {report.grade.score:.1f} final score." in section
+    total = sum(contributions.values())
+    assert f"{total:+.2f} metric contributions" in section
+
+
+def test_zero_contribution_ok_rows_collapse_to_a_named_count():
+    """Rows the grade did not use leave the table but stay named and counted."""
+    snapshots = _universe(12)
+    target = snapshots[0]
+    peers, selection = select_peers(target, snapshots[1:], minimum=8, maximum=10)
+    report = build_research_report(target, peers, selection)
+
+    ok_rows = [metric for metric in report.metrics if metric.coverage == "ok"]
+    zeroed = [metric for metric in ok_rows if metric.contribution == 0.0]
+    survivors = [metric for metric in ok_rows if metric.contribution != 0.0]
+    assert zeroed and survivors, "fixture must exercise both branches"
+
+    markdown = research_to_markdown(report)
+    for metric in zeroed:
+        assert f"| {metric.name} |" not in markdown
+    names = ", ".join(sorted(metric.name for metric in zeroed))
+    assert (
+        f"{len(zeroed)} computed metrics contributed exactly zero to the score "
+        f"and are collapsed here: {names}." in markdown
+    )
+    # Rows the grade actually used keep their table lines.
+    assert all(f"| {metric.name} |" in markdown for metric in survivors)
+
+
+def test_driver_section_states_when_a_side_is_empty():
+    snapshots = _universe(10)
+    target = snapshots[0]
+    peers, selection = select_peers(target, snapshots[1:], minimum=8)
+    report = build_research_report(target, peers, selection)
+    for metric in report.metrics:
+        metric.contribution = abs(metric.contribution)
+    markdown = research_to_markdown(report)
+
+    assert "No metric contributed negatively to this grade." in markdown
+    assert "Top concerns" not in markdown
 
 
 def test_peer_percentiles_are_oriented_as_desirability():
