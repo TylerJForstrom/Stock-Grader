@@ -304,6 +304,60 @@ class VaultDataSource:
             return pd.DataFrame(columns=columns)
         return pd.DataFrame(records, columns=columns)
 
+    # -- raw signal-panel observations -------------------------------------
+
+    def signal_panel_dataset(self, signal: str, version: int) -> str:
+        """Dataset path of one signal's raw observation parts."""
+        return f"data/signal_panels/{signal}/v{version}/observations"
+
+    def signal_panel_signals(self, version: int) -> list[str]:
+        """Signals whose raw observation dataset exists for this panel version.
+
+        Discovery, never a second registry: the signal roster, its directions
+        and its cadences live in the vault's own builder, and this adapter
+        learns them from the artifacts it publishes.
+        """
+        root = self.root / "data" / "signal_panels"
+        if not root.is_dir():
+            return []
+        found = []
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir():
+                continue
+            if (entry / f"v{version}" / "observations" / "manifest.json").is_file():
+                found.append(entry.name)
+        return found
+
+    def signal_panel_manifest(self, signal: str, version: int) -> dict:
+        """The observation dataset's manifest (spec, accounting, license note)."""
+        return self._manifest(self.signal_panel_dataset(signal, version))
+
+    def signal_panel_observations(
+        self, signal: str, version: int
+    ) -> dict[dt.date, pd.DataFrame]:
+        """Raw observation parts keyed by signal date, sha256-verified.
+
+        Only ``YYYY-MM-DD.parquet`` names listed in the dataset manifest are
+        read: the rollup (``observations.parquet``) is a convenience copy, and
+        an unmanifested file on disk is unreadable by contract, so neither can
+        become forward evidence by accident.
+        """
+        import io
+
+        dataset = self.signal_panel_dataset(signal, version)
+        manifest = self._manifest(dataset)
+        parts: dict[dt.date, pd.DataFrame] = {}
+        for entry in manifest.get("files", []):
+            name = str(entry.get("name", ""))
+            if not name.endswith(".parquet"):
+                continue
+            try:
+                day = dt.date.fromisoformat(name.removesuffix(".parquet"))
+            except ValueError:
+                continue
+            parts[day] = pd.read_parquet(io.BytesIO(self._read_verified(dataset, name)))
+        return dict(sorted(parts.items()))
+
     # -- borrow ------------------------------------------------------------
 
     def borrow_latest(self) -> pd.DataFrame:
