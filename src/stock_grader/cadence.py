@@ -37,12 +37,23 @@ in a sibling repo's CI.
 
 from __future__ import annotations
 
+import os
+import sys
+
+# Bare-script execution puts THIS file's directory — the stock_grader package,
+# whose types.py shadows the stdlib `types` module — at sys.path[0], and the
+# very next stdlib import would resolve the wrong one ("cannot import name
+# 'GenericAlias' from partially initialized module 'types'"). Drop it before
+# importing anything else. `os` and `sys` are safe: both are already loaded
+# during interpreter startup. Package imports never enter this branch.
+if __name__ == "__main__":
+    _here = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _here]
+
 import argparse
 import datetime as dt
 import json
-import os
 import re
-import sys
 from pathlib import Path
 
 # monthly-freeze runs on the 1st at 13:19 UTC.  Three days of slack covers
