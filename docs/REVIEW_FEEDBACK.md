@@ -147,10 +147,15 @@ plan section, so the reviewer can track progress.
   `asof` on later calls.
 - Dense price providers have no disk cache; Tiingo free tier (~50 req/h) cannot
   complete a full-universe run without one.
-- `research.py` `_fmt` renders unit `ratio` as a percent (asset turnover 1.2
-  prints as "120.0%").
-- `research.py` falls back to an approximate contribution formula mixing exact
-  and inexact math in one dossier; consume the pipeline explain payload verbatim.
+- ~~`research.py` `_fmt` renders unit `ratio` as a percent (asset turnover 1.2
+  prints as "120.0%").~~ DONE (2026-08-02, daa0ee2): ten genuine multiples
+  reclassified `unit="dimensionless"`, rendered `1.42x`; the remaining `ratio`
+  registrations are true percent quantities.
+- ~~`research.py` falls back to an approximate contribution formula mixing exact
+  and inexact math in one dossier; consume the pipeline explain payload
+  verbatim.~~ DONE (2026-08-02, daa0ee2): target-side numbers come exclusively
+  from `report.explain["metrics"]`; the matrix is rebuilt only for peer
+  quartiles; reconciliation test added.
 - The peer-selection layer is wired only into `research`; grade/rank/consensus
   still normalize across the flat mixed-sector universe.
 - The "absolute" half of the hybrid grade is peer-relative as wired; relabel

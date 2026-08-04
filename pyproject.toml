@@ -78,9 +78,12 @@ branch = true
 source = ["stock_grader"]
 
 [tool.coverage.report]
-# This is a blocking ratchet set below the measured 59% baseline. Raise it as the new research,
-# valuation, and CLI surfaces gain tests; never lower it to merge a change.
-fail_under = 70
+# Blocking ratchet, and the single source of truth for the coverage gate: CI passes no
+# --cov-fail-under flag, so pytest-cov enforces this value (verified: a below-bar run exits 1).
+# Measured 76.7% on 2026-08-03 (700 tests, macOS, post-decay/dividend-total-returns); 74 leaves
+# ~2 points for per-platform variance across the CI matrix. Raise it as new surfaces gain
+# tests; never lower it to merge a change.
+fail_under = 74
 show_missing = true
 skip_covered = true
 

@@ -82,17 +82,17 @@ jobs:
         run: mypy --no-incremental
 
       # The suite is deliberately offline: tests build fixtures, so CI never depends on SEC, FRED,
-      # or a market-data endpoint being reachable. The ratchet must move upward as newer modules
-      # gain coverage: it sat at 55 against a measured 75 (2026-08-01), leaving twenty points of
-      # slack in which any single module could lose all its tests and CI would still pass. 70
-      # keeps a small margin for per-platform variance across the matrix.
+      # or a market-data endpoint being reachable. The coverage ratchet lives in exactly one
+      # place — [tool.coverage.report] fail_under in pyproject.toml, which pytest-cov enforces
+      # without a --cov-fail-under flag here (previously the two copies drifted: this file said
+      # 70 against a measured 75, pyproject's comment still said 59). The ratchet must move
+      # upward as newer modules gain coverage; see pyproject for the current measurement.
       - name: Test
         run: >-
           pytest -q
           --cov=stock_grader
           --cov-report=term-missing
           --cov-report=xml
-          --cov-fail-under=70
 
   package:
     name: Build and install wheel
