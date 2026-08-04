@@ -45,6 +45,14 @@ _SYMBOL_DIRECTORY_EVENT_SOURCE = {
     "otherlisted.jsonl": "otherlisted",
     "sec_company_tickers_exchange.jsonl": "sec_company_tickers_exchange",
 }
+# TickerPulse attention/sentiment aggregates, mirrored into the foundry daily
+# (ECOSYSTEM rule: TickerPulse metrics enter the grader through the foundry,
+# never directly). Public, allowlist-reviewed counts and scores only — the
+# mirror carries no post text, author identity, or post identifiers.
+_SENTIMENT_DATASET_DIRS = {
+    "ticker_trends": "data/sentiment/ticker_trends",
+    "ticker_buckets": "data/sentiment/ticker_buckets",
+}
 
 
 class FoundryError(RuntimeError):
@@ -248,6 +256,68 @@ class FoundryDataSource:
                 seen.add(ticker)
                 out.append(ticker)
         return out
+
+    def _sentiment_dataset_dir(self, dataset: str) -> str:
+        try:
+            return _SENTIMENT_DATASET_DIRS[dataset]
+        except KeyError:
+            raise ValueError(
+                f"unsupported sentiment dataset: {dataset!r} "
+                f"(choices: {sorted(_SENTIMENT_DATASET_DIRS)})"
+            ) from None
+
+    def sentiment_days(self, dataset: str = "ticker_trends") -> list[str]:
+        """ISO dates with a mirrored TickerPulse file, from the manifest.
+
+        Only manifested days are listed — an unmanifested file on disk is
+        unreadable by contract, so it is not advertised either.
+        """
+        import datetime as _dt
+
+        manifest = self.manifest(self._sentiment_dataset_dir(dataset))
+        days = []
+        for entry in manifest.get("files", []):
+            name = str(entry.get("name", ""))
+            if not name.endswith(".jsonl"):
+                continue
+            stem = name[: -len(".jsonl")]
+            try:
+                _dt.date.fromisoformat(stem)
+            except ValueError:
+                continue
+            days.append(stem)
+        return sorted(days)
+
+    def sentiment_trends(self, day: str) -> list[dict[str, Any]]:
+        """Per-ticker daily attention/sentiment aggregates for one mirrored day.
+
+        Rows carry the allowlist-reviewed TickerPulse fields (mentions,
+        mentions_prev, engagement, bull/bear/neutral, sentiment_avg,
+        breakout_score, velocity, share_of_voice, phase, ...) — aggregate
+        counts and scores over public social posts; never post text or author
+        identity.
+
+        Point-in-time note for signal work: the file dated D summarizes a
+        24-hour window ending in the early UTC hours of D (US evening of D-1)
+        and is mirrored into the foundry mid-UTC-morning on D — knowable well
+        before D's US market close. Any dated artifact built from it must
+        treat D as the earliest usable signal date, never D-1.
+        """
+        blob = self._read_dataset_file(
+            _SENTIMENT_DATASET_DIRS["ticker_trends"], f"{day}.jsonl"
+        )
+        return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
+
+    def sentiment_buckets(self, day: str) -> list[dict[str, Any]]:
+        """Hourly per-ticker mention/sentiment buckets for one mirrored day.
+
+        Same producer and licensing as :meth:`sentiment_trends`; rows carry
+        bucket_start (UTC) and bucket_minutes alongside the aggregate counts.
+        """
+        blob = self._read_dataset_file(
+            _SENTIMENT_DATASET_DIRS["ticker_buckets"], f"{day}.jsonl"
+        )
+        return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
 
     def dividends(self) -> pd.DataFrame:
         """Reconstructed dividends-per-share on the current split basis.
