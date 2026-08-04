@@ -98,7 +98,9 @@ def _quarter_bounds(quarter: str) -> tuple[date, date]:
 # Bump when the derived-table logic changes (filtering, clipping, median rule):
 # the parquet caches a DERIVED table, so old files stay schema-valid but
 # semantically stale forever unless the version participates in the filename.
-_CACHE_SCHEMA_VERSION = 2
+# v3: tickers are canonicalized to the SEC dash form on read, so one issuer's
+# dot/space/dash spellings collapse into a single median row per day.
+_CACHE_SCHEMA_VERSION = 3
 
 
 def _quarter_cache_path(root: Path, quarter: str) -> Path:
@@ -117,7 +119,18 @@ def _normalize_price_table(frame: pd.DataFrame, quarter: str) -> pd.DataFrame | 
     if not set(_PRICE_COLUMNS).issubset(frame.columns):
         return None
     table = frame[_PRICE_COLUMNS].copy()
-    table["ticker"] = table["ticker"].astype(str).str.upper().str.strip()
+    # Canonicalize on read (vectorized ``canonical_ticker``): filers write the
+    # same class share as BRK-B, BRK.B, or BRK B, and each spelling would
+    # otherwise keep its own row and split the per-day median.
+    table["ticker"] = (
+        table["ticker"]
+        .astype(str)
+        .str.upper()
+        .str.strip()
+        .str.replace(".", "-", regex=False)
+        .str.replace(" ", "-", regex=False)
+        .str.replace(r"-{2,}", "-", regex=True)
+    )
     table["date"] = pd.to_datetime(table["date"], errors="coerce", utc=True)
     table["date"] = table["date"].dt.tz_convert(None).dt.normalize()
     table["price"] = pd.to_numeric(table["price"], errors="coerce")
@@ -382,7 +395,8 @@ class SECInsiderPriceProvider:
         table = self.load(asof=asof)
         if table.empty:
             return None
-        # SEC writes class shares as BRK-B where humans write BRK.B; try both.
+        # The table stores canonical dash-form tickers; callers may arrive with
+        # the dot or space spelling, so every variant is tried.
         rows = table[table["ticker"].isin(ticker_variants(ticker))]
         if rows.empty:
             return None

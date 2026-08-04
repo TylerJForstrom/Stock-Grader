@@ -17,18 +17,31 @@ from stock_grader.data.sec import SECClient
 from stock_grader.data.sec_prices import (
     _CACHE_SCHEMA_VERSION,
     SECInsiderPriceProvider,
+    _normalize_price_table,
     _quarter_cache_path,
 )
-from stock_grader.data.symbols import ticker_variants
+from stock_grader.data.symbols import canonical_ticker, ticker_variants
 
 
 class TestTickerVariants:
-    def test_dot_and_dash_forms_both_tried(self):
-        assert ticker_variants("BRK.B") == ("BRK.B", "BRK-B")
-        assert ticker_variants("brk-b") == ("BRK-B", "BRK.B")
+    def test_dot_dash_and_space_forms_all_tried(self):
+        assert ticker_variants("BRK.B") == ("BRK.B", "BRK-B", "BRK B")
+        assert ticker_variants("brk-b") == ("BRK-B", "BRK.B", "BRK B")
+        assert ticker_variants("BRK B") == ("BRK B", "BRK-B", "BRK.B")
 
     def test_plain_ticker_single_variant(self):
         assert ticker_variants(" aapl ") == ("AAPL",)
+
+    def test_all_live_symbologies_share_one_canonical_form(self):
+        # SEC dash, Polygon dot, IB space: one issuer, one canonical spelling.
+        assert {canonical_ticker(s) for s in ("BRK-B", "BRK.B", "brk b")} == {"BRK-B"}
+
+    def test_squash_form_is_deliberately_not_a_variant(self):
+        # FINRA's no-separator form can spell a DIFFERENT issuer's real ticker,
+        # so it must come from an ambiguity-guarded index (vault's
+        # build_squash_index), never from blind variant expansion.
+        for spelling in ("BRK-B", "BRK.B", "BRK B"):
+            assert "BRKB" not in ticker_variants(spelling)
 
 
 class TestStaleIfError:
@@ -115,3 +128,36 @@ class TestVersionedCache:
     def test_invalid_quarter_rejected(self, tmp_path):
         with pytest.raises(ValueError):
             _quarter_cache_path(tmp_path, "../../evil")
+
+
+class TestInsiderTickerCanonicalization:
+    def test_spellings_of_one_issuer_collapse_to_one_median_row(self):
+        """Filers write BRK-B, BRK.B, and BRK B; the derived table must not
+        split one issuer's day across three rows with three medians."""
+        raw = pd.DataFrame(
+            {
+                "ticker": ["BRK-B", "BRK.B", "BRK B"],
+                "date": ["2026-05-04"] * 3,
+                "price": [470.0, 471.0, 475.0],
+            }
+        )
+        table = _normalize_price_table(raw, "2026q2")
+        assert table is not None
+        assert list(table["ticker"]) == ["BRK-B"]  # canonical SEC dash form
+        assert table["price"].iloc[0] == pytest.approx(471.0)  # one shared median
+
+    def test_price_series_resolves_every_live_spelling(self, tmp_path):
+        from datetime import date
+
+        provider = SECInsiderPriceProvider(
+            cache_dir=tmp_path, client=_StubClient(content=None), quarters=1
+        )
+        asof = date(2026, 8, 4)
+        quarter = provider._recent_quarters(asof, 1)[0]
+        cached = pd.DataFrame(
+            {"ticker": ["BRK.B"], "date": ["2026-05-04"], "price": [471.0]}
+        )
+        cached.to_parquet(_quarter_cache_path(tmp_path, quarter), index=False)
+        for spelling in ("BRK-B", "BRK.B", "BRK B", "brk.b"):
+            series = provider.price_series(spelling, asof=asof)
+            assert series is not None and series.iloc[0] == pytest.approx(471.0)
