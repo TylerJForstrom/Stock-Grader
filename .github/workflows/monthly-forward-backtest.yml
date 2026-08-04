@@ -51,6 +51,7 @@ jobs:
       - run: pip install -e .
 
       - name: Refuse to append to a broken ledger chain
+        id: chain
         run: >-
           python -c "import sys;
           from stock_grader.research_manifest import load_manifest, summarize_manifest;
@@ -58,12 +59,25 @@ jobs:
           print(s);
           sys.exit(0 if s['all_integrity_ok'] and s['chain_ok'] else 1)"
 
+      - name: Cadence self-gate (last month must be accounted for)
+        # Expectation clock, not an age clock: --pre-run holds the accounting
+        # clock to the PREVIOUS month because this very run writes the current
+        # month's artifact. Red here means a whole month of the loop went
+        # missing — the failure email is the alert (collectors.yml pattern),
+        # and the build step below still runs and self-heals by writing THIS
+        # month's accounting. Bootstrap-guarded until the first artifact lands.
+        run: stock-grader check-cadence --repo-root . --pre-run
+
       - name: Build and evaluate every profile
+        # Runs even when the cadence gate is red (self-heal), but never after
+        # a broken ledger chain — a chain failure must stop every append.
+        if: ${{ !cancelled() && steps.chain.outcome == 'success' }}
         # set -uo pipefail without -e: one refusing profile must not suppress
         # the others, mirroring cmd_freeze's refused-list policy.
         run: |
           set -uo pipefail
           MONTH=$(date -u +%Y-%m); OUT="docs/forward/$MONTH"; mkdir -p build/panels "$OUT"
+          STATES="build/panel_states.tsv"; : > "$STATES"
           PROFILES="${{ github.event.inputs.profiles }}"
           [ -z "$PROFILES" ] && PROFILES=$(ls frozen_scores)
           failed=0
@@ -72,9 +86,9 @@ jobs:
               --vault vault --foundry foundry --out build/panels \
               --archive-dir vault/data/backtest_panels \
               --horizon-days 21 --min-cross-section 20 --min-periods 3 \
-              || { echo "::error::build-panel failed for $p"; failed=1; continue; }
+              || { echo "::error::build-panel failed for $p"; printf '%s\trefused_build\n' "$p" >> "$STATES"; failed=1; continue; }
             ready=$(python -c "import json;print(json.load(open('build/panels/$p.build.json'))['ready_for_backtest'])")
-            if [ "$ready" != "True" ]; then echo "::notice::$p not ready for backtest yet"; continue; fi
+            if [ "$ready" != "True" ]; then echo "::notice::$p not ready for backtest yet"; printf '%s\tnot_matured\n' "$p" >> "$STATES"; continue; fi
             # Pre-register the hypothesis before evaluating it (idempotent:
             # an already-declared spec appends nothing). Evaluation flags MUST
             # mirror the backtest invocation below — they are the spec. With
@@ -84,7 +98,7 @@ jobs:
             stock-grader ledger-declare "build/panels/$p.parquet" --ledger research_ledger.jsonl \
               --periods-per-year 12 --min-cross-section 20 --quantiles 5 \
               --schedule "monthly (cron 41 2 6 * *)" \
-              || { echo "::error::ledger-declare failed for $p"; failed=1; continue; }
+              || { echo "::error::ledger-declare failed for $p"; printf '%s\trefused_declare\n' "$p" >> "$STATES"; failed=1; continue; }
             # --allow-unverified-panel is mandatory, not a shortcut: return_is_total
             # is honestly False in v1, so the strict contract refuses every panel.
             # The ledger line records "FAILED total_returns_attested" — which is
@@ -92,9 +106,18 @@ jobs:
             stock-grader backtest "build/panels/$p.parquet" --ledger research_ledger.jsonl \
               --periods-per-year 12 --min-cross-section 20 --quantiles 5 \
               --allow-unverified-panel --format md > "$OUT/$p.md" \
-              || { echo "::error::backtest failed for $p"; failed=1; continue; }
+              || { echo "::error::backtest failed for $p"; printf '%s\trefused_backtest\n' "$p" >> "$STATES"; failed=1; continue; }
             cp "build/panels/$p.build.json" "$OUT/$p.build.json"
+            printf '%s\tevaluated\n' "$p" >> "$STATES"
           done
+          # UNCONDITIONAL: every profile's state is accounted every run — the
+          # loop running and nothing maturing is a recorded fact, not silence.
+          # States are a closed vocabulary, so no refusal message (and no
+          # licensed derived number inside one) can reach this public artifact.
+          stock-grader forward-accounting --month "$MONTH" --states "$STATES" \
+            --out docs/forward --event "${{ github.event_name }}" \
+            --run-id "${{ github.run_id }}" \
+            || { echo "::error::forward-accounting refused"; failed=1; }
           exit $failed
 
       - name: Commit archived panels to the vault

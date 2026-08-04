@@ -1657,6 +1657,43 @@ def cmd_build_panel(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_cadence(args: argparse.Namespace) -> int:
+    """Expectation clocks for the monthly evidence loop (see cadence.py).
+
+    Exit 1 on a missed cadence — in a scheduled workflow the red run's failure
+    email IS the alerting, exactly like the vault's check-staleness gates.
+    Bootstrap-guarded: no artifacts at all passes with a note.
+    """
+    from .cadence import run_check
+
+    return run_check(
+        repo_root=args.repo_root,
+        pre_run=args.pre_run,
+        as_of=args.as_of,
+        frozen_root=args.frozen_root,
+        forward_dir=args.forward_dir,
+    )
+
+
+def cmd_forward_accounting(args: argparse.Namespace) -> int:
+    """Record every profile's monthly forward state, matured or not.
+
+    Written unconditionally by every monthly-forward-backtest run so 'the loop
+    ran and nothing matured' is a recorded fact instead of silence. States are
+    a closed vocabulary (no free-text refusal reasons), which is what keeps
+    licensed derived numbers structurally unable to reach this public artifact.
+    """
+    from .cadence import run_account
+
+    return run_account(
+        month=args.month,
+        states_path=args.states,
+        out=args.out,
+        event=args.event,
+        run_id=args.run_id,
+    )
+
+
 def cmd_ledger_retract(args: argparse.Namespace) -> int:
     """Append a record that excludes earlier lines from trial accounting.
 
@@ -2220,6 +2257,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="why these records are not hypotheses; recorded verbatim as the verdict",
     )
     p_retract.set_defaults(func=cmd_ledger_retract)
+
+    p_cadence = sub.add_parser(
+        "check-cadence",
+        help="verify the evidence loop's monthly expectation clocks "
+        "(forward accounting + freeze); exit 1 on a missed cadence",
+    )
+    p_cadence.add_argument("--repo-root", default=".", help="Stock-Grader checkout root")
+    p_cadence.add_argument(
+        "--pre-run",
+        action="store_true",
+        help="self-gate mode for monthly-forward-backtest itself: the gated run "
+        "writes the current month's accounting, so hold the accounting clock "
+        "to the previous month",
+    )
+    p_cadence.add_argument(
+        "--as-of", default=None, help="ISO date to evaluate at (default: today UTC)"
+    )
+    p_cadence.add_argument("--frozen-root", default="frozen_scores")
+    p_cadence.add_argument("--forward-dir", default="docs/forward")
+    p_cadence.set_defaults(func=cmd_check_cadence)
+
+    p_account = sub.add_parser(
+        "forward-accounting",
+        help="append this run's per-profile evaluated/not-matured/refused states "
+        "to docs/forward/<YYYY-MM>/accounting.json",
+    )
+    p_account.add_argument("--month", required=True, help="YYYY-MM being accounted")
+    p_account.add_argument(
+        "--states", required=True, help="TSV file of '<profile>\\t<state>' lines"
+    )
+    p_account.add_argument("--out", default="docs/forward")
+    p_account.add_argument("--event", default="manual", help="what triggered the run")
+    p_account.add_argument("--run-id", default=None, help="workflow run id, if any")
+    p_account.set_defaults(func=cmd_forward_accounting)
 
     return parser
 
