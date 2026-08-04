@@ -130,8 +130,15 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
   the real account's fills.
 - §4 dossier additions (per-peer comp table, SBC, insider activity, red-flag
   display from the events dataset).
-- Pre-registration record kind in research_manifest (declare grid before
-  running; mark results "primary" only when spec hash matches).
+- ~~Pre-registration record kind~~ DONE (2026-08-04): `ledger:preregistration`
+  records in research_manifest (spec JSON + SHA-256 + declared schedule),
+  `stock-grader ledger-declare` (idempotent, declare-if-absent), and
+  spec-hash matching in `cmd_backtest` — a matched run is a PRIMARY
+  re-evaluation recorded under the declaration's spec-bound experiment name,
+  REPLACING its entry in the shared denominator (trial count stays flat);
+  unmatched runs keep the old per-filename behavior. The monthly workflow
+  declares before evaluating. Peeking is disclosed via the declared schedule,
+  not corrected — see docs/VALIDATION.md "Pre-registration".
 
 ## State of the clocks (verify before starting work)
 

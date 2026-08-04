@@ -843,6 +843,11 @@ def build_panel(
                     "dividend_covered": dividend_covered,
                     "terminal_price_used": terminal,
                     "symbol_changed": price_symbol.upper() != entry_symbol.upper(),
+                    # Additive: the return window's declared length in sessions,
+                    # so a backtest can observe the horizon as part of the
+                    # panel's pre-registration spec instead of trusting a
+                    # sidecar it never reads.
+                    "horizon_days": config.horizon_days,
                     "panel_schema_version": SCHEMA_VERSION,
                     "builder_commit": builder_commit,
                 }

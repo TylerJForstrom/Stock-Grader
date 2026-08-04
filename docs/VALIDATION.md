@@ -225,6 +225,32 @@ appends no trial at all, because `assess_edge` structurally cannot find
 significance below 11 periods and a permanent ledger line for an uninformative
 statistic only burns the trial budget.
 
+**Pre-registration.** The collapse above keys on the experiment name, which for
+`backtest` runs used to be the panel's *file name* — a stable identity only by
+accident. `stock-grader ledger-declare PANEL --schedule ...` appends a
+`ledger:preregistration` record BEFORE any evaluation: the canonical spec JSON
+(panel profiles, scoring-config fingerprints, universe scope, horizon, and the
+evaluation parameters) in `leakage_controls`, its SHA-256 in `symbols`, and the
+declared evaluation schedule in the verdict. A later `backtest` whose observed
+spec hashes to a declared value is recorded as a *primary re-evaluation* under
+the declaration's spec-bound experiment name (`backtest:preregistered:<profile>:
+<spec12>`), references the declaration's line hash, and REPLACES — never
+appends beside — that experiment's entry in the shared denominator, so the
+trial count stays flat across scheduled looks. No matching declaration (or a
+declaration whose stored spec no longer re-hashes to its claimed value — a
+tampered spec refuses the match): today's behavior, a fresh trial. A
+scoring-config change alters the spec hash, so a new configuration is honestly
+a new trial. Two distinct problems are deliberately kept apart here:
+pre-registration fixes trial-count inflation (selection deflation over DISTINCT
+configurations searched); the monthly sequential looks at one accruing sample
+are optional stopping, which the declared schedule makes *disclosed in the
+ledger* — not statistically corrected. One migration consequence: a hypothesis
+evaluated under the old filename-keyed name AND later pre-registered occupies
+two entries in the denominator (its historical look plus the spec-bound one).
+That is over-deflation, never under-deflation; when it matters, retract the
+superseded filename-keyed lines with `ledger-retract --reason "superseded by
+pre-registration <spec12>"` so the exclusion stays auditable.
+
 ## Minimum credible dataset construction
 
 ### Entity and universe history

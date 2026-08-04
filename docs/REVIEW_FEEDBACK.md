@@ -169,6 +169,16 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 
 ## Agent log
 
+2026-08-04 -- Pre-registration record kind (HANDOFF item 10 bullet):
+`ledger:preregistration` records + `ledger-declare` CLI verb + spec-hash
+matching in `cmd_backtest`. A declared spec's monthly re-evaluation is ONE
+trial recorded under a spec-bound experiment name (replaces, never appends,
+in the shared denominator); unmatched runs unchanged; tampered spec hashes
+refuse the match; the monthly-forward-backtest workflow declares-if-absent
+before evaluating, with the schedule recorded in the declaration (peeking
+disclosed, not corrected). Panels now carry `horizon_days` (additive column)
+so the spec can observe the horizon.
+
 2026-08-03 -- M3 shadow arms (Stock-Vault): journal.py (byte-stable gzip — the
 old writer embedded the temp filename in the FNAME header), eod.py
 (manifest-gated stdlib reader), shadow.py (session-major simulator calling the

@@ -651,6 +651,159 @@ def test_backtest_null_sharpe_trial_does_not_poison_later_deflation(
     assert payload["ledger"]["lifetime_trials"] == 1  # only the finite-Sharpe trial counts
 
 
+def _prereg_panel_rows(months: tuple[int, ...]) -> list[dict]:
+    return [
+        {
+            "signal_date": f"2025-{month:02d}-25",
+            "filed_through": f"2025-{month:02d}-25",
+            "return_start": f"2025-{month:02d}-26",
+            "return_end": f"2025-{month + 1:02d}-25",
+            "ticker": f"T{index}",
+            "cik": f"{index + 1:010d}",
+            "score": index + month / 10,
+            "forward_return": (index + month) / 1_000,
+            "profile": "all_weather",
+            "config_fingerprint": "1790775d",
+            "horizon_days": 21,
+            "universe_is_pit": True,
+            "return_is_total": True,
+            "delisting_return_included": True,
+        }
+        for month in months
+        for index in range(10)
+    ]
+
+
+def _prereg_backtest_args(panel: Path, ledger: Path) -> Namespace:
+    return Namespace(
+        panel=str(panel),
+        quantiles=2,
+        min_cross_section=10,
+        periods_per_year=12,
+        transaction_cost_bps=10.0,
+        bootstrap_samples=0,
+        bootstrap_block_periods=1,
+        seed=0,
+        allow_unverified_panel=False,
+        format="json",
+        ledger=str(ledger),
+    )
+
+
+def test_ledger_declare_is_append_once_and_idempotent(tmp_path, capsys) -> None:
+    from stock_grader.research_manifest import (
+        PREREGISTRATION_EXPERIMENT,
+        load_manifest,
+        verify_chain,
+    )
+
+    path = tmp_path / "panel.csv"
+    pd.DataFrame(_prereg_panel_rows((1, 2, 3))).to_csv(path, index=False)
+    ledger = tmp_path / "ledger.jsonl"
+    declare = [
+        "ledger-declare",
+        str(path),
+        "--quantiles",
+        "2",
+        "--min-cross-section",
+        "10",
+        "--ledger",
+        str(ledger),
+        "--schedule",
+        "monthly (cron 41 2 6 * *)",
+    ]
+
+    assert cli.main(declare) == 0
+    records = load_manifest(ledger)
+    assert len(records) == 1
+    assert records[0]["experiment"] == PREREGISTRATION_EXPERIMENT
+    assert "monthly (cron 41 2 6 * *)" in records[0]["verdict"]
+    assert verify_chain(records)
+
+    # Declare-if-absent: the scheduled workflow re-declares every run.
+    assert cli.main(declare) == 0
+    assert len(load_manifest(ledger)) == 1, "an identical spec must not re-append"
+    capsys.readouterr()
+
+
+def test_preregistered_reevaluation_keeps_the_trial_denominator_flat(
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The scheduled monthly look at ONE declared hypothesis is one trial.
+
+    Without the declaration, two years of monthly re-evaluation deflated one
+    hypothesis as ~24 trials and the near-duplicate Sharpes distorted
+    stdev(trial_sharpes) — the E[max] benchmark in significance.py.
+    """
+    from stock_grader.research_manifest import load_manifest, trial_sharpes, verify_chain
+
+    path = tmp_path / "panel.csv"
+    pd.DataFrame(_prereg_panel_rows((1, 2, 3))).to_csv(path, index=False)
+    ledger = tmp_path / "ledger.jsonl"
+    assert (
+        cli.main(
+            [
+                "ledger-declare",
+                str(path),
+                "--quantiles",
+                "2",
+                "--min-cross-section",
+                "10",
+                "--ledger",
+                str(ledger),
+                "--schedule",
+                "monthly (cron 41 2 6 * *)",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    def run(panel: Path) -> dict:
+        assert cli.cmd_backtest(_prereg_backtest_args(panel, ledger)) == 0
+        return json.loads(capsys.readouterr().out)
+
+    first = run(path)
+    assert first["ledger"]["preregistered"] is True
+    assert first["ledger"]["lifetime_trials"] == 1
+
+    # Month two: the sample accrues, the spec is unchanged -> same ONE trial.
+    pd.DataFrame(_prereg_panel_rows((1, 2, 3, 4))).to_csv(path, index=False)
+    second = run(path)
+    assert second["ledger"]["preregistered"] is True
+    assert second["ledger"]["lifetime_trials"] == 1, "a scheduled look is not a new trial"
+
+    records = load_manifest(ledger)
+    assert verify_chain(records)
+    assert records[-1]["trials"] == 1
+    assert records[-1]["experiment"] == records[-2]["experiment"]
+    assert records[-1]["experiment"].startswith("backtest:preregistered:all_weather:")
+    assert records[-1]["symbols"] == [
+        f"preregistration:{records[0]['integrity_sha256']}"
+    ], "the result must reference the declaration it re-evaluates"
+    assert records[-1]["verdict"].startswith("PRIMARY (pre-registered) -- ")
+    assert "disclosed peeking, not corrected" in records[-1]["leakage_controls"]
+    # Shared-denominator consistency: the collapse rule counts both
+    # re-evaluations as ONE hypothesis for every later deflation (decay.py's
+    # record_sweep_trials reads this same function).
+    assert len(trial_sharpes(records)) == 1
+
+    # An UNDECLARED spec (different evaluation parameters) is a new trial and
+    # keeps today's behavior: the denominator grows.
+    undeclared = _prereg_backtest_args(path, ledger)
+    undeclared.transaction_cost_bps = 25.0
+    assert cli.cmd_backtest(undeclared) == 0
+    third = json.loads(capsys.readouterr().out)
+    assert third["ledger"]["preregistered"] is False
+    assert third["ledger"]["lifetime_trials"] == 2
+
+    # A tampered declaration (claimed hash != stored spec) must refuse to bless:
+    # covered structurally in test_research_manifest; here the chain over the
+    # mixed record kinds must still verify end-to-end.
+    assert verify_chain(load_manifest(ledger))
+
+
 def _freeze_args(out: Path, **overrides) -> Namespace:
     values = {
         "out": str(out),

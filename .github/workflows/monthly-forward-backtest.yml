@@ -75,6 +75,16 @@ jobs:
               || { echo "::error::build-panel failed for $p"; failed=1; continue; }
             ready=$(python -c "import json;print(json.load(open('build/panels/$p.build.json'))['ready_for_backtest'])")
             if [ "$ready" != "True" ]; then echo "::notice::$p not ready for backtest yet"; continue; fi
+            # Pre-register the hypothesis before evaluating it (idempotent:
+            # an already-declared spec appends nothing). Evaluation flags MUST
+            # mirror the backtest invocation below — they are the spec. With
+            # the declaration in place every scheduled re-evaluation is ONE
+            # pre-registered trial, and the declared schedule discloses the
+            # monthly sequential looks in the ledger itself.
+            stock-grader ledger-declare "build/panels/$p.parquet" --ledger research_ledger.jsonl \
+              --periods-per-year 12 --min-cross-section 20 --quantiles 5 \
+              --schedule "monthly (cron 41 2 6 * *)" \
+              || { echo "::error::ledger-declare failed for $p"; failed=1; continue; }
             # --allow-unverified-panel is mandatory, not a shortcut: return_is_total
             # is honestly False in v1, so the strict contract refuses every panel.
             # The ledger line records "FAILED total_returns_attested" — which is
