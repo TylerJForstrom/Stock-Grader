@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `stock_grader.cadence` and `stock-grader check-cadence` / `stock-grader forward-accounting`:
+  expectation clocks for the monthly evidence loop (docs/CADENCE.md). Every
+  monthly-forward-backtest run now writes `docs/forward/<YYYY-MM>/accounting.json`
+  unconditionally — each profile's evaluated / not-matured / refused state from a closed
+  vocabulary — so "the loop ran and nothing matured" is a recorded fact rather than silence.
+  `check-cadence` verifies, by jitter-tolerant days of the month, that the current month's
+  accounting artifact exists and that `frozen_scores`' newest freeze is current (closing
+  monthly-freeze's documented lack of a staleness gate); it runs as a bootstrap-guarded
+  self-gate in monthly-forward-backtest and as a weekday cross-coverage check from
+  Stock-Vault's shadow-arms workflow, which executes `cadence.py` as a bare stdlib-only
+  script from its existing Stock-Grader checkout.
+
 - `stock_grader.frozen_manifest`: sibling `manifest.json` catalogs for score panels — the same
   manifest convention the foundry and vault datasets carry (schema_version 1.0, per-file
   sha256/bytes), extended with per-file `rows`/`columns`, honest `hashed_at` provenance

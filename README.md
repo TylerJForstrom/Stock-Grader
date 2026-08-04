@@ -18,6 +18,8 @@ substitute for reading the filings.
 | Build a peer/evidence/valuation dossier | `stock-grader research` | CLI + Python API |
 | Evaluate a frozen historical score panel | `stock-grader backtest` | CLI + Python API |
 | Join frozen panels to realized returns | `stock-grader build-panel` | CLI |
+| Verify the evidence loop's monthly expectation clocks | `stock-grader check-cadence` | CLI |
+| Record each profile's monthly forward state (matured or not) | `stock-grader forward-accounting` | CLI |
 | Retract ledger records from trial accounting | `stock-grader ledger-retract` | CLI |
 | Inspect registered methods and metrics | `stock-grader methods`, `metrics` | CLI |
 | Deterministic comparable-company selection | `stock_grader.peers` | Python API + `research --peer-mode auto` |
