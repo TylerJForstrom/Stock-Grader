@@ -1593,7 +1593,9 @@ def test_promotion_declare_policy_then_transition_flow(tmp_path, capsys) -> None
     # NEW version, superseded declarations stay.
     doc.write_text("quietly edited policy\n", encoding="utf-8")
     assert cli.main(policy) == 2
-    assert "NEW version" in capsys.readouterr().out
+    # rich wraps console output at terminal width (CI widths differ per OS),
+    # so strip the wrap newlines before any substring assertion.
+    assert "NEW version" in capsys.readouterr().out.replace("\n", "")
     doc.write_text("PROMOTION-POLICY v1 bytes\n", encoding="utf-8")
 
     subject = "ab" * 32
@@ -1632,7 +1634,7 @@ def test_promotion_declare_policy_then_transition_flow(tmp_path, capsys) -> None
 
     # Replaying the exact transition is refused: the subject already moved.
     assert cli.main(transition) == 2
-    assert "does not match" in capsys.readouterr().out
+    assert "does not match" in capsys.readouterr().out.replace("\n", "")
 
     # Climbing more than one rung from the recorded stage is refused (and the
     # live-money rung itself is pinned unreachable in the unit tests).
@@ -1640,7 +1642,7 @@ def test_promotion_declare_policy_then_transition_flow(tmp_path, capsys) -> None
     live[live.index("exploratory")] = "declared_trial"
     live[live.index("declared_trial", live.index("--to-stage"))] = "live_money"
     assert cli.main(live) == 2
-    assert "exactly one rung" in capsys.readouterr().out
+    assert "exactly one rung" in capsys.readouterr().out.replace("\n", "")
 
 
 def test_promotion_declare_refuses_broken_chain_and_bad_inputs(tmp_path, capsys) -> None:
@@ -1670,7 +1672,7 @@ def test_promotion_declare_refuses_broken_chain_and_bad_inputs(tmp_path, capsys)
 
     # A partial transition flag set is refused before touching the ledger.
     assert cli.main([*base, "--subject", "ab" * 32]) == 2
-    assert "together" in capsys.readouterr().out
+    assert "together" in capsys.readouterr().out.replace("\n", "")
 
     # Broken chain: two records whose linkage was severed by deleting the
     # middle line. The CLI must refuse to append anything.
@@ -1690,4 +1692,4 @@ def test_promotion_declare_refuses_broken_chain_and_bad_inputs(tmp_path, capsys)
     ledger.write_text("\n".join([lines[0], lines[2]]) + "\n", encoding="utf-8")
 
     assert cli.main(base) == 2
-    assert "refusing to append to a broken chain" in capsys.readouterr().out
+    assert "refusing to append to a broken chain" in capsys.readouterr().out.replace("\n", "")
