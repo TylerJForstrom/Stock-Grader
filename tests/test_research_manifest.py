@@ -297,3 +297,239 @@ def test_preregistered_experiment_name_is_spec_bound_not_filename_bound():
     assert spec_sha256(_SPEC)[:12] in name
     # Any spec change renames the experiment: a new configuration is a new trial.
     assert preregistered_experiment(dict(_SPEC, quantiles=4)) != name
+
+
+# -- promotion lifecycle -------------------------------------------------------
+
+_DOC_SHA = "d0" * 32
+_SUBJECT = "ab" * 32
+
+
+def _policy(version="promotion-policy-v1", doc_sha=_DOC_SHA, reachable=False):
+    from stock_grader.research_manifest import promotion_policy_declaration
+
+    return promotion_policy_declaration(
+        policy_version=version,
+        policy_doc="docs/PROMOTION.md",
+        policy_sha256=doc_sha,
+        live_money_reachable=reachable,
+    )
+
+
+def _transition(from_stage, to_stage, **overrides):
+    transition = {
+        "kind": "stage-transition",
+        "policy_version": "promotion-policy-v1",
+        "policy_sha256": _DOC_SHA,
+        "subject": "all_weather",
+        "subject_spec_sha256": _SUBJECT,
+        "from_stage": from_stage,
+        "to_stage": to_stage,
+        "evidence_sha256": ["cd" * 32],
+        "evidence_journal": "Stock-Vault data/decision_journal/decisions.jsonl.gz",
+        "evidence_journal_head_sha256": "ef" * 32,
+        "reason": "unit test",
+    }
+    transition.update(overrides)
+    return transition
+
+
+def test_promotion_records_are_chained_and_never_trials(tmp_path):
+    from stock_grader.research_manifest import (
+        PROMOTION_EXPERIMENT,
+        append_record,
+        load_manifest,
+        promotion_policy_record,
+        promotion_stage,
+        promotion_transition_record,
+        spec_sha256,
+        trial_sharpes,
+        validate_promotion_transition,
+        verify_chain,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, _synthetic("backtest:something_else", 0.31))
+    policy = _policy()
+    append_record(ledger, promotion_policy_record(policy, code_commit="test"))
+
+    transition = _transition("exploratory", "declared_trial")
+    records = load_manifest(ledger)
+    assert validate_promotion_transition(records, transition) is None
+    append_record(ledger, promotion_transition_record(transition, code_commit="test"))
+
+    records = load_manifest(ledger)
+    assert verify_chain(records), "promotion records must extend the chain, never break it"
+    policy_line, transition_line = records[1], records[2]
+    assert policy_line["experiment"] == PROMOTION_EXPERIMENT
+    assert policy_line["symbols"] == [spec_sha256(policy), _DOC_SHA]
+    assert "amendment only by a NEW version" in policy_line["verdict"]
+    assert transition_line["symbols"] == [spec_sha256(transition), _SUBJECT, "cd" * 32]
+    assert transition_line["verdict"].startswith("PROMOTION: all_weather")
+    # The licensing wall in one assertion: every symbols entry is a bare hash
+    # or the experiment tag — never a number derived from licensed data.
+    assert transition_line["metrics"] == {}
+    assert policy_line["metrics"] == {}
+    # Denominator untouched: only the one real trial counts.
+    assert trial_sharpes(records) == [0.31]
+    assert promotion_stage(records, _SUBJECT) == "declared_trial"
+
+
+def test_promotion_stage_walks_the_ladder_and_tamper_neither_moves_nor_blesses(tmp_path):
+    from stock_grader.research_manifest import (
+        append_record,
+        find_promotion_policy,
+        load_manifest,
+        promotion_policy_record,
+        promotion_stage,
+        promotion_transition_record,
+        verify_chain,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, promotion_policy_record(_policy(), code_commit="test"))
+    append_record(
+        ledger,
+        promotion_transition_record(
+            _transition("exploratory", "declared_trial"), code_commit="test"
+        ),
+    )
+    records = load_manifest(ledger)
+    assert promotion_stage(records, _SUBJECT) == "declared_trial"
+    assert find_promotion_policy(records, "promotion-policy-v1") is not None
+
+    # Naive tamper: edit the stored declarations. verify_chain goes red, and
+    # the doctored lines are treated as absent — a lying record must neither
+    # bless a policy nor move a stage.
+    doctored = [dict(r) for r in records]
+    import json as _json
+
+    lying_policy = _json.loads(doctored[0]["leakage_controls"])
+    lying_policy["live_money_reachable"] = True
+    doctored[0]["leakage_controls"] = _json.dumps(
+        lying_policy, sort_keys=True, separators=(",", ":")
+    )
+    lying_move = _json.loads(doctored[1]["leakage_controls"])
+    lying_move["to_stage"] = "paper_default"
+    doctored[1]["leakage_controls"] = _json.dumps(
+        lying_move, sort_keys=True, separators=(",", ":")
+    )
+    assert not verify_chain(doctored)
+    assert find_promotion_policy(doctored, "promotion-policy-v1") is None
+    assert promotion_stage(doctored, _SUBJECT) == "exploratory"
+
+
+def test_transition_validation_refusals(tmp_path):
+    from stock_grader.research_manifest import (
+        append_record,
+        load_manifest,
+        promotion_policy_record,
+        promotion_transition_record,
+        validate_promotion_transition,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+
+    # No policy declared yet: nothing may transition under it.
+    records = load_manifest(ledger)
+    error = validate_promotion_transition(records, _transition("exploratory", "declared_trial"))
+    assert error is not None and "not declared" in error
+
+    append_record(ledger, promotion_policy_record(_policy(), code_commit="test"))
+    records = load_manifest(ledger)
+
+    ok = _transition("exploratory", "declared_trial")
+    assert validate_promotion_transition(records, ok) is None
+
+    # A drifted policy document is refused: the doc bytes in force must be
+    # the declared ones.
+    drifted = _transition("exploratory", "declared_trial", policy_sha256="9" * 64)
+    assert "hash mismatch" in validate_promotion_transition(records, drifted)
+
+    # from_stage must match the recorded stage.
+    wrong_from = _transition("shadow_arm", "paper_default")
+    assert "does not match" in validate_promotion_transition(records, wrong_from)
+
+    # Promotions climb exactly one rung.
+    skip = _transition("exploratory", "shadow_arm")
+    assert "exactly one rung" in validate_promotion_transition(records, skip)
+
+    # Upward without evidence is refused.
+    unevidenced = _transition("exploratory", "declared_trial", evidence_sha256=[])
+    assert "no evidence" in validate_promotion_transition(records, unevidenced)
+
+    # Reason is always required.
+    unreasoned = _transition("exploratory", "declared_trial", reason="  ")
+    assert "no reason" in validate_promotion_transition(records, unreasoned)
+
+    # Walk the subject to paper_default, then prove live_money is unreachable
+    # under v1 while demotion and retirement remain open.
+    for from_stage, to_stage in (
+        ("exploratory", "declared_trial"),
+        ("declared_trial", "shadow_arm"),
+        ("shadow_arm", "paper_default"),
+    ):
+        step = _transition(from_stage, to_stage)
+        assert validate_promotion_transition(load_manifest(ledger), step) is None
+        append_record(ledger, promotion_transition_record(step, code_commit="test"))
+    records = load_manifest(ledger)
+
+    live = _transition("paper_default", "live_money")
+    assert "unreachable" in validate_promotion_transition(records, live)
+
+    demote = _transition("paper_default", "shadow_arm")
+    assert validate_promotion_transition(records, demote) is None
+
+    retire = _transition("paper_default", "retired")
+    assert validate_promotion_transition(records, retire) is None
+    append_record(ledger, promotion_transition_record(retire, code_commit="test"))
+    records = load_manifest(ledger)
+
+    # Retired is terminal.
+    revive = _transition("retired", "exploratory")
+    assert "terminal" in validate_promotion_transition(records, revive)
+
+
+def test_live_money_opens_only_under_a_new_policy_version(tmp_path):
+    from stock_grader.research_manifest import (
+        append_record,
+        load_manifest,
+        promotion_policy_record,
+        promotion_transition_record,
+        validate_promotion_transition,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, promotion_policy_record(_policy(), code_commit="test"))
+    for from_stage, to_stage in (
+        ("exploratory", "declared_trial"),
+        ("declared_trial", "shadow_arm"),
+        ("shadow_arm", "paper_default"),
+    ):
+        append_record(
+            ledger,
+            promotion_transition_record(
+                _transition(from_stage, to_stage), code_commit="test"
+            ),
+        )
+    # v2 declares the rung reachable — a NEW version, superseding, not editing.
+    v2_sha = "e2" * 32
+    append_record(
+        ledger,
+        promotion_policy_record(
+            _policy(version="promotion-policy-v2", doc_sha=v2_sha, reachable=True),
+            code_commit="test",
+        ),
+    )
+    records = load_manifest(ledger)
+
+    still_v1 = _transition("paper_default", "live_money")
+    assert "unreachable" in validate_promotion_transition(records, still_v1)
+
+    under_v2 = _transition(
+        "paper_default",
+        "live_money",
+        policy_version="promotion-policy-v2",
+        policy_sha256=v2_sha,
+    )
+    assert validate_promotion_transition(records, under_v2) is None

@@ -1565,3 +1565,131 @@ def test_diff_refuses_without_a_baseline(
 def test_diff_requires_since_last() -> None:
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["diff", "AAPL"])
+
+
+def test_promotion_declare_policy_then_transition_flow(tmp_path, capsys) -> None:
+    """The full public half of the promotion split, end to end via the CLI."""
+    from stock_grader.research_manifest import load_manifest, trial_sharpes, verify_chain
+
+    doc = tmp_path / "PROMOTION.md"
+    doc.write_text("PROMOTION-POLICY v1 bytes\n", encoding="utf-8")
+    ledger = tmp_path / "ledger.jsonl"
+    policy = [
+        "promotion-declare",
+        "--ledger",
+        str(ledger),
+        "--policy-doc",
+        str(doc),
+        "--policy-version",
+        "promotion-policy-v1",
+    ]
+
+    assert cli.main(policy) == 0
+    # Declare-if-absent: identical version+hash appends nothing.
+    assert cli.main(policy) == 0
+    assert len(load_manifest(ledger)) == 1
+
+    # A changed document under the SAME version is refused: amendment is a
+    # NEW version, superseded declarations stay.
+    doc.write_text("quietly edited policy\n", encoding="utf-8")
+    assert cli.main(policy) == 2
+    # rich wraps console output at terminal width (CI widths differ per OS),
+    # so strip the wrap newlines before any substring assertion.
+    assert "NEW version" in capsys.readouterr().out.replace("\n", "")
+    doc.write_text("PROMOTION-POLICY v1 bytes\n", encoding="utf-8")
+
+    subject = "ab" * 32
+    transition = [
+        *policy,
+        "--subject",
+        subject,
+        "--subject-label",
+        "borrow_fee_level",
+        "--from-stage",
+        "exploratory",
+        "--to-stage",
+        "declared_trial",
+        "--evidence",
+        "cd" * 32,
+        "--evidence-journal",
+        "Stock-Vault data/decision_journal/decisions.jsonl.gz",
+        "--evidence-journal-head",
+        "ef" * 32,
+        "--reason",
+        "spec + schedule declared in the vault decision journal",
+    ]
+    assert cli.main(transition) == 0
+    capsys.readouterr()
+
+    records = load_manifest(ledger)
+    assert verify_chain(records)
+    assert len(records) == 2
+    line = records[-1]
+    assert line["experiment"] == "ledger:promotion"
+    assert line["verdict"].startswith("PROMOTION: borrow_fee_level")
+    # Licensing wall: the public record carries hashes and names only, and no
+    # metrics — the trial denominator must be untouched.
+    assert line["metrics"] == {}
+    assert trial_sharpes(records) == []
+
+    # Replaying the exact transition is refused: the subject already moved.
+    assert cli.main(transition) == 2
+    assert "does not match" in capsys.readouterr().out.replace("\n", "")
+
+    # Climbing more than one rung from the recorded stage is refused (and the
+    # live-money rung itself is pinned unreachable in the unit tests).
+    live = list(transition)
+    live[live.index("exploratory")] = "declared_trial"
+    live[live.index("declared_trial", live.index("--to-stage"))] = "live_money"
+    assert cli.main(live) == 2
+    assert "exactly one rung" in capsys.readouterr().out.replace("\n", "")
+
+
+def test_promotion_declare_refuses_broken_chain_and_bad_inputs(tmp_path, capsys) -> None:
+    from stock_grader.research_manifest import (
+        promotion_policy_declaration,
+        promotion_policy_record,
+    )
+
+    doc = tmp_path / "PROMOTION.md"
+    doc.write_text("policy bytes\n", encoding="utf-8")
+    ledger = tmp_path / "ledger.jsonl"
+    base = [
+        "promotion-declare",
+        "--ledger",
+        str(ledger),
+        "--policy-doc",
+        str(doc),
+        "--policy-version",
+        "promotion-policy-v1",
+    ]
+
+    # Missing policy document.
+    missing = [*base]
+    missing[missing.index(str(doc))] = str(tmp_path / "absent.md")
+    assert cli.main(missing) == 2
+    capsys.readouterr()
+
+    # A partial transition flag set is refused before touching the ledger.
+    assert cli.main([*base, "--subject", "ab" * 32]) == 2
+    assert "together" in capsys.readouterr().out.replace("\n", "")
+
+    # Broken chain: two records whose linkage was severed by deleting the
+    # middle line. The CLI must refuse to append anything.
+    import hashlib as _hashlib
+
+    declaration = promotion_policy_declaration(
+        policy_version="promotion-policy-v0",
+        policy_doc=str(doc),
+        policy_sha256=_hashlib.sha256(doc.read_bytes()).hexdigest(),
+    )
+    from stock_grader.research_manifest import append_record
+
+    append_record(ledger, promotion_policy_record(declaration, code_commit="test"))
+    append_record(ledger, promotion_policy_record(declaration, code_commit="test2"))
+    append_record(ledger, promotion_policy_record(declaration, code_commit="test3"))
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    ledger.write_text("\n".join([lines[0], lines[2]]) + "\n", encoding="utf-8")
+
+    assert cli.main(base) == 2
+    assert "refusing to append to a broken chain" in capsys.readouterr().out.replace("\n", "")
