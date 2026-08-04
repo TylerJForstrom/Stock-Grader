@@ -118,8 +118,10 @@ See [Valuation](VALUATION.md).
 - The backtest evaluator assumes the caller has already built correct scores and total returns.
 - The strict CLI contract checks required columns and caller attestations; it does not independently
   verify their truth.
-- The evaluator uses `ticker` rather than the additional permanent-ID field for duplicate and
-  turnover membership, so historical symbol changes must be normalized upstream.
+- The evaluator keys duplicate detection and turnover membership by a permanent-ID column
+  (`cik`, `security_id`, or `permanent_id`) whenever the panel supplies one complete, falling
+  back to `ticker` otherwise — so panels without a permanent identifier must still normalize
+  historical symbol changes upstream.
 - It does not automatically prevent outcome-window overlap across signal dates.
 - Quantile portfolios are equal-weight diagnostics, and the fixed turnover charge omits market
   impact, borrow, capacity, taxes, and execution detail.

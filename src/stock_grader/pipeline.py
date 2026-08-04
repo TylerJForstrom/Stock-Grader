@@ -395,15 +395,35 @@ def _selected_weighting_methods(config: GradeConfig) -> set[str]:
     return methods
 
 
-def _validate_supervised_weighting_safety(config: GradeConfig) -> None:
-    """Refuse fitting realised outcomes on the same securities being graded by default."""
+def _validate_supervised_weighting_safety(
+    config: GradeConfig,
+    forward_returns: pd.Series | None = None,
+) -> None:
+    """Refuse both dishonest supervised-weighting outcomes up front.
+
+    Two distinct failure modes share one symptom (a supervised method was selected) and used to
+    share one gate. With realised returns supplied, fitting them on the same securities being
+    graded is look-ahead leakage — blocked unless research explicitly opts in. With no returns
+    supplied at all, the method cannot run and the weighting layer would silently degrade to
+    equal weights while the report still wears the supervised method's name; that is an input
+    error, and no opt-in flag makes it sound.
+    """
     selected = _selected_weighting_methods(config)
     supervised = sorted(
         method
         for method in selected
         if WEIGHT_METHOD_INFO.get(method, {}).get("needs_returns", False)
     )
-    if supervised and not config.allow_in_sample_supervised_weighting:
+    if not supervised:
+        return
+    if forward_returns is None:
+        raise ValueError(
+            f"no forward returns supplied for supervised weighting method(s) "
+            f"{', '.join(supervised)}: without forward_returns these methods would silently "
+            "fall back to equal weights while reporting the supervised method's name. "
+            "Pass forward_returns, or select an unsupervised weighting method."
+        )
+    if not config.allow_in_sample_supervised_weighting:
         raise ValueError(
             "in-sample supervised weighting is blocked: "
             f"{', '.join(supervised)} would fit realised forward returns on the same securities "
@@ -677,7 +697,7 @@ def grade_universe(
     ``config=None`` and the validation order are retained for public-API compatibility.
     """
     config = config or GradeConfig()
-    _validate_supervised_weighting_safety(config)
+    _validate_supervised_weighting_safety(config, forward_returns)
     if not snapshots:
         return {}
     matrix, results = build_metric_matrix(snapshots, names=config.metric_whitelist)
@@ -701,7 +721,7 @@ def grade_universe_multi(
     """Grade one metric cross-section under several profiles without repeated shared work."""
     active = list(configs)
     for config in active:
-        _validate_supervised_weighting_safety(config)
+        _validate_supervised_weighting_safety(config, forward_returns)
     if not active:
         return {}
     if not snapshots:
@@ -768,7 +788,7 @@ def _grade_from_matrix(
             not flip a letter.
     """
     config = config or GradeConfig()
-    _validate_supervised_weighting_safety(config)
+    _validate_supervised_weighting_safety(config, forward_returns)
     if not snapshots:
         return {}
     config_manifest, config_fingerprint = _config_manifest(config)

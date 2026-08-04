@@ -356,16 +356,23 @@ class TestGradeUniverse:
 
     @pytest.mark.parametrize("method", sorted(WEIGHTINGS.names()))
     def test_every_weighting_method_produces_a_grade(self, method):
+        snapshots = _universe()
+        # The catalogue smoke test supplies realised returns so supervised methods genuinely
+        # fit (in-sample, explicitly authorized) instead of silently degrading to equal
+        # weights — selecting one without returns is an input-error refusal, tested below.
+        # Production configs remain blocked by default and are tested separately below.
+        realised = pd.Series(
+            {snapshot.ticker: float(i) for i, snapshot in enumerate(snapshots)},
+            dtype="float64",
+        )
         reports = grade_universe(
-            _universe(),
+            snapshots,
             GradeConfig(
                 metric_weighting=method,
                 pillar_weighting=method,
-                # This catalogue smoke test exercises legacy research methods without realised
-                # returns, so supervised methods fall back rather than fitting. Production configs
-                # remain blocked by default and are tested separately below.
                 allow_in_sample_supervised_weighting=True,
             ),
+            forward_returns=realised,
         )
         assert all(np.isfinite(r.score) for r in reports.values())
 
@@ -388,6 +395,36 @@ class TestGradeUniverse:
                 snapshots,
                 GradeConfig(metric_weighting=method, pillar_weighting=method),
                 forward_returns=realised,
+            )
+
+    @pytest.mark.parametrize(
+        "method",
+        sorted(
+            name
+            for name, info in weighting.WEIGHT_METHOD_INFO.items()
+            if info.get("needs_returns")
+        ),
+    )
+    def test_supervised_weighting_without_returns_is_refused_not_degraded(self, method):
+        """No forward returns is an input error, not a silent equal-weights fallback.
+
+        The research opt-in flag must not silence it either: that flag authorizes fitting
+        in-sample returns, not running a supervised method with nothing to fit — which would
+        report the supervised method's name over plain equal weights.
+        """
+        with pytest.raises(ValueError, match="no forward returns supplied"):
+            grade_universe(
+                _universe(),
+                GradeConfig(metric_weighting=method, pillar_weighting=method),
+            )
+        with pytest.raises(ValueError, match="no forward returns supplied"):
+            grade_universe(
+                _universe(),
+                GradeConfig(
+                    metric_weighting=method,
+                    pillar_weighting=method,
+                    allow_in_sample_supervised_weighting=True,
+                ),
             )
 
     @pytest.mark.parametrize("profile", profile_names())

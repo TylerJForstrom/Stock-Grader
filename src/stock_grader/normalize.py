@@ -47,6 +47,7 @@ __all__ = [
 NEUTRAL_SCORE = 50.0
 _MAD_CONSISTENCY = 1.4826  # makes MAD a consistent estimator of sigma under normality
 _Z_CLIP = 3.0  # z-scores beyond +/-3 sigma map to the ends of the 0..100 scale
+_WINSOR_SMALL_N = 100  # below this, quantile winsorisation is a no-op and a MAD fence is used
 
 
 def _neutral(values: pd.Series) -> pd.Series:
@@ -164,12 +165,28 @@ def robust_z(values: pd.Series, **_: object) -> pd.Series:
 
 
 @NORMALIZERS("winsorized_z")
-def winsorized_z(values: pd.Series, *, lower: float = 0.01, upper: float = 0.99, **_: object) -> pd.Series:
-    """Clamp to quantiles, then z-score."""
+def winsorized_z(
+    values: pd.Series, *, lower: float = 0.01, upper: float = 0.99, k: float = 3.0, **_: object
+) -> pd.Series:
+    """Clamp the tails, then z-score.
+
+    At ``n >= 100`` the clamp is the classic 1st/99th-quantile winsorisation. Below that — every
+    peer group, since sector groups run 8-30 names and the letter floor is 15 — those quantiles
+    interpolate to within a whisker of the observed min and max, so the clamp was a no-op exactly
+    where one outlier does the most damage to the subsequent z-score. Small cross-sections clamp
+    at ``median +/- k * MAD`` (sigma-consistent MAD) instead, which actually bites. A zero MAD
+    keeps the quantile clamp: collapsing onto the median would erase a real difference that the
+    quantile fence at least preserves.
+    """
     clean = values.dropna()
     if len(clean) < 2:
         return _neutral(values)
-    lo, hi = clean.quantile(lower), clean.quantile(upper)
+    lo, hi = float(clean.quantile(lower)), float(clean.quantile(upper))
+    if len(clean) < _WINSOR_SMALL_N:
+        median = float(clean.median())
+        mad = float((clean - median).abs().median()) * _MAD_CONSISTENCY
+        if mad > 0.0 and np.isfinite(mad):
+            lo, hi = median - k * mad, median + k * mad
     return zscore(values.clip(lo, hi))
 
 

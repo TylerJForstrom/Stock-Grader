@@ -16,12 +16,13 @@ structural guarantee), the durable archive goes into the private vault via
 :func:`archive_to_vault`, and only aggregate statistics (the backtest markdown,
 the accounting counts, the ledger line) are committed publicly.
 
-**Total returns.** v1 hard-coded ``return_is_total=False``: the only dividend
-data then available was the foundry's XBRL dataset — three tickers,
-fiscal-period granularity, no ex-dates, fully-split-adjusted against raw
-closes — and this docstring promised to flip only when a per-ex-date
-cash-dividend dataset (ex_date, cash_amount, same unadjusted basis) covers
->= 99% of panel rows. The vault's ``data/dividends/`` archive (Massive
+**Total returns.** v1 hard-coded ``return_is_total=False``: the foundry's XBRL
+dividend dataset (then three tickers; now ~2,800 dividend payers from the
+universe-wide corporate-actions sweep, but still fiscal-period totals with no
+ex-dates — granularity, not coverage, is the durable disqualifier) could not
+place cash inside a return window, and this docstring promised to flip only
+when a per-ex-date cash-dividend dataset (ex_date, cash_amount, same
+unadjusted basis) covers >= 99% of panel rows. The vault's ``data/dividends/`` archive (Massive
 reference dividends: as-declared cash per share, the same unadjusted basis as
 its ``adjusted=false`` closes) satisfies that data shape, so the attestation is
 now COMPUTED per build: ``forward_return`` becomes ``(P_end * split_factor +

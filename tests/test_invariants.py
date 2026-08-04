@@ -95,6 +95,36 @@ def test_non_monotonic_band_penalises_both_extremes():
     assert scored["ideal"] > scored["extreme"]
 
 
+def test_winsorized_z_clamps_the_outlier_at_peer_group_sizes():
+    """At n=20 the 1st/99th quantiles sit next to the observed extremes, so the old quantile
+    clamp was a no-op and one outlier consumed the whole z-score scale: nineteen inliers landed
+    within a fraction of a point of each other. The MAD fence must restore their ordering."""
+    values = pd.Series([*np.linspace(1.0, 2.0, 19), 1000.0])
+    scored = norm.winsorized_z(values)
+    inliers = scored.iloc[:19]
+    assert scored.iloc[19] == scored.max()  # the outlier still ranks first...
+    assert inliers.max() - inliers.min() > 10.0  # ...without flattening everyone else
+    assert inliers.is_monotonic_increasing
+
+
+def test_winsorized_z_small_n_zero_mad_keeps_the_quantile_clamp():
+    """MAD == 0 (half the universe shares one value) must not collapse the fence onto the
+    median — that would erase the one real difference the cross-section contains."""
+    values = pd.Series([1.0] * 12 + [5.0])
+    scored = norm.winsorized_z(values)
+    assert scored.notna().all()
+    assert scored.iloc[-1] > scored.iloc[0]
+
+
+def test_winsorized_z_large_universe_keeps_quantile_behavior():
+    """At n >= 100 the quantile clamp genuinely bites, so the MAD fence must not engage."""
+    rng = np.random.default_rng(7)
+    values = pd.Series(rng.standard_normal(500))
+    clean = values.dropna()
+    expected = norm.zscore(values.clip(clean.quantile(0.01), clean.quantile(0.99)))
+    pd.testing.assert_series_equal(norm.winsorized_z(values), expected)
+
+
 def test_piecewise_works_without_a_universe():
     anchors = [(-0.2, 0.0), (0.0, 20.0), (0.2, 75.0), (0.8, 100.0)]
     good = norm.normalize_series(pd.Series({"X": 0.30}), anchors=anchors, direction=1)

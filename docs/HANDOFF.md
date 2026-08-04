@@ -80,10 +80,15 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
 - ~~`_metric_evidence` fallback mixing~~ DONE (2026-08-02): target-side
   numbers come exclusively from `report.explain["metrics"]`; the matrix is
   rebuilt only for peer quartiles; reconciliation test added.
-- Supervised guard: raise only when a supervised method is selected AND
-  forward_returns is not None (currently blocks even the harmless case).
-- `winsorized_z` (normalize.py): clamp at median±k·MAD when n<100 (the
-  1st/99th quantile clamp is a no-op at these sizes).
+- ~~Supervised guard~~ DONE (2026-08-03): split into two refusals — the
+  leakage block (returns present without opt-in) and a distinct
+  "no forward returns supplied" input error replacing the silent
+  equal-weights fallback. The opt-in flag unlocks only the former; the
+  no-returns case now refuses instead of degrading, which is stricter than
+  the pass-through this bullet originally sketched.
+- ~~`winsorized_z`~~ DONE (2026-08-03): clamps at median±3·MAD
+  (σ-consistent) when n<100; MAD==0 keeps the quantile clamp so a real
+  difference is not flattened onto the median; n≥100 behavior unchanged.
 
 ### 9. Consumption layer  (~2 days)
 - Run journal: append each run's JSON to `~/.stock-grader/runs/` keyed by
