@@ -33,14 +33,20 @@ from pathlib import Path
 
 __all__ = [
     "GENESIS_SHA256",
+    "PREREGISTRATION_EXPERIMENT",
     "RETRACTION_EXPERIMENT",
     "ResearchRecord",
     "append_record",
     "current_commit",
+    "find_preregistration",
     "load_manifest",
+    "preregistered_experiment",
+    "preregistration_record",
     "retracted_hashes",
+    "spec_sha256",
     "summarize_manifest",
     "trial_sharpes",
+    "trial_sharpes_by_experiment",
     "verify_chain",
     "verify_line",
 ]
@@ -57,6 +63,26 @@ GENESIS_SHA256 = "0" * 64
 #: change and the retraction is itself hashed and chained: what was excluded, when,
 #: and why stays permanently auditable.
 RETRACTION_EXPERIMENT = "ledger:retraction"
+
+#: Experiment name marking a pre-registration declaration.
+#:
+#: A declaration records — BEFORE any evaluation runs — the exact spec of one
+#: hypothesis (panel identity, config fingerprints, universe scope, horizon,
+#: evaluation parameters) as a canonical-JSON blob in ``leakage_controls``,
+#: its SHA-256 in ``symbols``, and the declared evaluation schedule in
+#: ``verdict``. A later backtest whose observed spec hashes to the declared
+#: value is a *primary re-evaluation* of that ONE pre-registered trial: it is
+#: recorded under the declaration's stable experiment name, so the
+#: collapse-to-latest rule in :func:`trial_sharpes` charges the hypothesis
+#: exactly once no matter how many scheduled looks accrue. Declarations carry
+#: no metrics, so they never enter the trial denominator themselves.
+#:
+#: Honesty note: pre-registration fixes trial-count inflation (selection
+#: deflation over DISTINCT configurations). It does not correct sequential
+#: looks at one accruing sample — that is optional stopping, a different
+#: problem. The declared schedule makes the peeking *disclosed*, not
+#: corrected; the ledger shows exactly when each look was declared to happen.
+PREREGISTRATION_EXPERIMENT = "ledger:preregistration"
 
 
 def current_commit() -> str:
@@ -226,17 +252,15 @@ def retracted_hashes(records: Sequence[Mapping[str, object]]) -> set[str]:
     return retracted
 
 
-def trial_sharpes(records: Sequence[Mapping[str, object]]) -> list[float]:
-    """Per-period Sharpes of the DISTINCT configurations searched.
+def trial_sharpes_by_experiment(
+    records: Sequence[Mapping[str, object]],
+) -> dict[str, float]:
+    """Most recent finite per-period Sharpe per DISTINCT experiment.
 
-    Retracted records are excluded, as are the retractions themselves. What
-    remains is collapsed to the most recent entry per ``experiment``: re-running
-    one profile every month on a longer sample is that trial measured again, not
-    a new trial, and counting it twelve times a year inflates the deflation
-    benchmark until no real edge could ever clear it.
-
-    Legacy records with distinct experiment names collapse to themselves, so this
-    is backward compatible.
+    The mapping form of :func:`trial_sharpes`, for callers that must REPLACE
+    one experiment's entry with a fresher measurement (a pre-registered
+    re-evaluation) instead of appending a near-duplicate: the shared
+    denominator has to stay order-independent and flat across scheduled looks.
     """
     excluded = retracted_hashes(records)
     latest: dict[str, float] = {}
@@ -254,7 +278,125 @@ def trial_sharpes(records: Sequence[Mapping[str, object]]) -> list[float]:
         if not math.isfinite(float(sharpe)):
             continue
         latest[str(record.get("experiment", ""))] = float(sharpe)
-    return list(latest.values())
+    return latest
+
+
+def trial_sharpes(records: Sequence[Mapping[str, object]]) -> list[float]:
+    """Per-period Sharpes of the DISTINCT configurations searched.
+
+    Retracted records are excluded, as are the retractions themselves. What
+    remains is collapsed to the most recent entry per ``experiment``: re-running
+    one profile every month on a longer sample is that trial measured again, not
+    a new trial, and counting it twelve times a year inflates the deflation
+    benchmark until no real edge could ever clear it.
+
+    Legacy records with distinct experiment names collapse to themselves, so this
+    is backward compatible.
+    """
+    return list(trial_sharpes_by_experiment(records).values())
+
+
+# -- pre-registration ----------------------------------------------------------
+
+
+def spec_sha256(spec: Mapping[str, object]) -> str:
+    """SHA-256 over the canonical JSON serialization of a hypothesis spec."""
+    canonical = json.dumps(spec, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def preregistered_experiment(spec: Mapping[str, object]) -> str:
+    """Stable experiment name for every primary re-evaluation of one spec.
+
+    Embeds the spec hash, never a file name: the identity of a pre-registered
+    hypothesis must not depend on what the panel file happened to be called.
+    """
+    profiles = spec.get("profiles")
+    label = (
+        ",".join(str(p) for p in profiles)
+        if isinstance(profiles, Sequence) and not isinstance(profiles, (str, bytes)) and profiles
+        else "panel"
+    )
+    return f"backtest:preregistered:{label}:{spec_sha256(spec)[:12]}"
+
+
+def preregistration_record(
+    spec: Mapping[str, object],
+    *,
+    schedule: str,
+    market: str = "us_equities",
+    code_commit: str | None = None,
+) -> ResearchRecord:
+    """Build a declaration record for ``spec`` (the caller appends it).
+
+    Rides entirely on the existing schema, like retraction records: the spec's
+    hash in ``symbols``, the canonical spec JSON in ``leakage_controls`` (so
+    the hash is recomputable from the record itself), the declared evaluation
+    schedule in ``verdict``. No metrics — a declaration is not a measurement
+    and must never enter the trial denominator.
+    """
+    horizons = spec.get("horizon_days")
+    return ResearchRecord(
+        experiment=PREREGISTRATION_EXPERIMENT,
+        market=market,
+        symbols=[spec_sha256(spec)],
+        targets=["forward_return"],
+        horizons=(
+            [int(h) for h in horizons]
+            if isinstance(horizons, Sequence) and not isinstance(horizons, (str, bytes))
+            else []
+        ),
+        trials=0,
+        metrics={},
+        costs={},
+        benchmark="zero",
+        leakage_controls=json.dumps(spec, sort_keys=True, separators=(",", ":")),
+        gate_passed=False,
+        verdict=(
+            f"pre-registered {preregistered_experiment(spec)}; evaluation schedule: "
+            f"{schedule}; sequential looks at this one accruing sample are declared "
+            f"— disclosed peeking, not corrected"
+        ),
+        code_commit=code_commit if code_commit is not None else current_commit(),
+    )
+
+
+def find_preregistration(
+    records: Sequence[Mapping[str, object]], spec: Mapping[str, object]
+) -> dict[str, object] | None:
+    """Newest unretracted declaration whose spec hash matches ``spec``.
+
+    Refuses to match a tampered declaration: the record line must still hash
+    to its own claim AND the spec JSON stored in ``leakage_controls`` must
+    recompute to the hash claimed in ``symbols``. A declaration whose stored
+    spec and claimed hash disagree is treated as absent — a lying declaration
+    must not bless anything as pre-registered.
+    """
+    target = spec_sha256(spec)
+    excluded = retracted_hashes(records)
+    match: dict[str, object] | None = None
+    for record in records:
+        if record.get("experiment") != PREREGISTRATION_EXPERIMENT:
+            continue
+        if str(record.get("integrity_sha256", "")) in excluded:
+            continue
+        symbols = record.get("symbols")
+        if not (
+            isinstance(symbols, Sequence)
+            and not isinstance(symbols, (str, bytes))
+            and target in {str(item) for item in symbols}
+        ):
+            continue
+        if not verify_line(dict(record)):
+            continue
+        try:
+            stored_spec = json.loads(str(record.get("leakage_controls", "")))
+        except ValueError:
+            continue
+        if not isinstance(stored_spec, Mapping) or spec_sha256(stored_spec) != target:
+            continue
+        match = dict(record)
+    return match
 
 
 def summarize_manifest(records: Sequence[dict[str, object]]) -> dict[str, object]:

@@ -1040,16 +1040,57 @@ def cmd_research(args: argparse.Namespace) -> int:
     return 0 if dossier.grade.graded else 3
 
 
+def _load_panel_frame(path: Path) -> pd.DataFrame:
+    """Read a score panel exactly as the backtest evaluator will see it."""
+    if not path.exists():
+        raise ValueError(f"panel does not exist: {path}")
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
+
+
+def _backtest_spec(panel: pd.DataFrame, args: argparse.Namespace) -> dict:
+    """The hypothesis identity a backtest run observes, for pre-registration.
+
+    Covers what stays FIXED across scheduled re-evaluations of one declared
+    hypothesis: the panel's identity columns (profile, scoring-config
+    fingerprints, universe scope, horizon) and the evaluation parameters that
+    change the estimator. Deliberately excluded: the data span (the accruing
+    sample IS the point), per-freeze universe fingerprints (they hash each
+    member's data vintage, so they drift monthly without the hypothesis
+    changing), and bootstrap knobs (they shape the CI, not the trial). A
+    scoring-config change DOES change the spec hash — a new configuration is
+    honestly a new trial.
+    """
+
+    def column_values(name: str) -> list:
+        if name not in panel:
+            return []
+        return sorted({str(v) for v in panel[name].dropna().unique()})
+
+    return {
+        "kind": "backtest_panel",
+        "profiles": column_values("profile"),
+        "config_fingerprints": column_values("config_fingerprint"),
+        "universe_ids": column_values("universe_id"),
+        "horizon_days": (
+            sorted({int(v) for v in panel["horizon_days"].dropna().unique()})
+            if "horizon_days" in panel
+            else []
+        ),
+        "targets": ["forward_return"],
+        "quantiles": int(args.quantiles),
+        "min_cross_section": int(args.min_cross_section),
+        "periods_per_year": int(args.periods_per_year),
+        "transaction_cost_bps": float(args.transaction_cost_bps),
+    }
+
+
 def cmd_backtest(args: argparse.Namespace) -> int:
     """Evaluate a caller-supplied, frozen point-in-time score panel."""
 
     path = Path(args.panel)
-    if not path.exists():
-        raise ValueError(f"panel does not exist: {path}")
-    if path.suffix.lower() in {".parquet", ".pq"}:
-        panel = pd.read_parquet(path)
-    else:
-        panel = pd.read_csv(path)
+    panel = _load_panel_frame(path)
     allow_mixed_universes = bool(getattr(args, "allow_mixed_universes", False))
     report = evaluate_walk_forward(
         panel,
@@ -1085,21 +1126,44 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         ResearchRecord,
         append_record,
         current_commit,
+        find_preregistration,
         load_manifest,
+        preregistered_experiment,
+        spec_sha256,
+        trial_sharpes_by_experiment,
     )
-    from .research_manifest import trial_sharpes as trial_sharpes_from
     from .significance import assess_edge, per_period_sharpe
 
     net_spreads = [p.net_spread for p in report.periods]
     ledger_path = Path(getattr(args, "ledger", "research_ledger.jsonl"))
     prior = load_manifest(ledger_path) if ledger_path.exists() else []
+    # Pre-registration lookup: when this run's observed spec was declared BEFORE
+    # any evaluation (see `ledger-declare`), the run is a primary re-evaluation
+    # of that ONE trial — recorded under the declaration's stable experiment
+    # name so the collapse-to-latest denominator stays flat across scheduled
+    # looks — never a new trial. No declaration (or a tampered one): behavior
+    # is unchanged and the run is charged as a fresh trial.
+    spec = _backtest_spec(panel, args)
+    spec_hash = spec_sha256(spec)
+    declaration = find_preregistration(prior, spec)
+    experiment = (
+        preregistered_experiment(spec) if declaration is not None else f"backtest:{path.name}"
+    )
     # Only finite trial Sharpes deflate: a null/NaN sharpe (a panel too short to
     # compute one) is a trial with no usable statistic, and letting it through
     # makes stdev(trial_sharpes) NaN and therefore DSR=NaN on every future run.
-    trial_sharpes = trial_sharpes_from(prior)
+    sharpe_by_experiment = trial_sharpes_by_experiment(prior)
     this_sharpe = per_period_sharpe(net_spreads) if len(net_spreads) >= 2 else float("nan")
-    if math.isfinite(this_sharpe):
-        trial_sharpes.append(this_sharpe)
+    if declaration is not None:
+        # REPLACE, never append: a re-measurement of the declared hypothesis
+        # supersedes its previous look in the shared denominator.
+        if math.isfinite(this_sharpe):
+            sharpe_by_experiment[experiment] = this_sharpe
+        trial_sharpes = list(sharpe_by_experiment.values())
+    else:
+        trial_sharpes = list(sharpe_by_experiment.values())
+        if math.isfinite(this_sharpe):
+            trial_sharpes.append(this_sharpe)
     significance = (
         assess_edge(
             net_spreads,
@@ -1110,12 +1174,17 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         if len(net_spreads) >= 2
         else None
     )
+    declaration_sha = (
+        str(declaration.get("integrity_sha256", "")) if declaration is not None else None
+    )
     append_record(
         ledger_path,
         ResearchRecord(
-            experiment=f"backtest:{path.name}",
+            experiment=experiment,
             market="us_equities",
-            symbols=[],
+            symbols=(
+                [f"preregistration:{declaration_sha}"] if declaration_sha is not None else []
+            ),
             targets=["forward_return"],
             horizons=[],
             trials=len(trial_sharpes),
@@ -1136,9 +1205,19 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             leakage_controls=(
                 "panel attestation contract: "
                 + ("PASS" if not failed_contract else "FAILED " + ",".join(failed_contract))
+                + (
+                    f"; primary re-evaluation of pre-registered declaration "
+                    f"{declaration_sha[:12]} (spec {spec_hash[:12]}); schedule-declared "
+                    f"sequential look — disclosed peeking, not corrected"
+                    if declaration_sha is not None
+                    else ""
+                )
             ),
             gate_passed=bool(significance and significance.significant),
-            verdict=significance.verdict if significance else "insufficient periods",
+            verdict=(
+                ("PRIMARY (pre-registered) -- " if declaration_sha is not None else "")
+                + (significance.verdict if significance else "insufficient periods")
+            ),
             data_span=(
                 f"{report.periods[0].signal_date}..{report.periods[-1].signal_date}"
                 if report.periods
@@ -1147,9 +1226,16 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             code_commit=current_commit(),
         ),
     )
-    status_console.print(
-        f"[dim]trial recorded in {ledger_path} (lifetime trials: {len(trial_sharpes)})[/dim]"
-    )
+    if declaration_sha is not None:
+        status_console.print(
+            f"[dim]primary re-evaluation of pre-registered spec {spec_hash[:12]} "
+            f"recorded in {ledger_path} as {experiment} "
+            f"(lifetime trials unchanged: {len(trial_sharpes)})[/dim]"
+        )
+    else:
+        status_console.print(
+            f"[dim]trial recorded in {ledger_path} (lifetime trials: {len(trial_sharpes)})[/dim]"
+        )
 
     if args.format == "json":
         # Additive keys on the documented report schema - never an envelope.
@@ -1157,6 +1243,10 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         if significance is not None:
             payload["significance"] = json.loads(to_json(significance))
         payload["ledger"] = {"path": str(ledger_path), "lifetime_trials": len(trial_sharpes)}
+        payload["ledger"]["preregistered"] = declaration_sha is not None
+        payload["ledger"]["spec_sha256"] = spec_hash
+        if declaration_sha is not None:
+            payload["ledger"]["declaration_sha256"] = declaration_sha
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         markdown = backtest_to_markdown(report)
@@ -1577,6 +1667,58 @@ def cmd_ledger_retract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ledger_declare(args: argparse.Namespace) -> int:
+    """Pre-register a backtest hypothesis BEFORE evaluating it.
+
+    Appends a declaration record carrying the spec hash of the panel's
+    identity plus the evaluation parameters, and the declared evaluation
+    schedule. Later `backtest` runs whose observed spec matches are recorded
+    as primary re-evaluations of this ONE trial instead of new trials, which
+    is what stops a scheduled monthly re-evaluation from deflating one honest
+    hypothesis as twenty-four.
+
+    Idempotent: an identical spec already declared (and not retracted) appends
+    nothing and exits 0, so a scheduled workflow can declare-if-absent on
+    every run. Note what this does NOT do: the declared schedule makes the
+    sequential looks disclosed, not statistically corrected — optional
+    stopping is a different problem from trial-count inflation.
+    """
+    from .research_manifest import (
+        append_record,
+        find_preregistration,
+        load_manifest,
+        preregistered_experiment,
+        preregistration_record,
+        spec_sha256,
+        verify_chain,
+    )
+
+    panel = _load_panel_frame(Path(args.panel))
+    spec = _backtest_spec(panel, args)
+    spec_hash = spec_sha256(spec)
+    ledger_path = Path(args.ledger)
+    records = load_manifest(ledger_path) if ledger_path.exists() else []
+    if not verify_chain(records):
+        console.print(
+            f"[red]{ledger_path} does not verify; refusing to append to a broken chain[/red]"
+        )
+        return 2
+    existing = find_preregistration(records, spec)
+    if existing is not None:
+        console.print(
+            f"spec {spec_hash[:12]} already declared in {ledger_path} "
+            f"({str(existing.get('integrity_sha256', ''))[:12]}); nothing to append"
+        )
+        return 0
+    record = preregistration_record(spec, schedule=args.schedule)
+    append_record(ledger_path, record)
+    console.print(
+        f"declared {preregistered_experiment(spec)} in {ledger_path} "
+        f"(spec {spec_hash[:12]}, schedule: {args.schedule})"
+    )
+    return 0
+
+
 def cmd_methods(args: argparse.Namespace) -> int:
     from rich.box import SIMPLE
     from rich.table import Table
@@ -1984,6 +2126,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_decay.add_argument("--ledger", default="research_ledger.jsonl")
     p_decay.add_argument("--format", default="text", choices=["text", "json", "md"])
     p_decay.set_defaults(func=cmd_decay)
+
+    p_declare = sub.add_parser(
+        "ledger-declare",
+        help="pre-register a backtest panel spec so scheduled re-evaluations "
+        "count as one trial, not one per look",
+    )
+    p_declare.add_argument("panel", help="CSV or Parquet score panel the spec is read from")
+    # Evaluation parameters are part of the hypothesis identity, so they mirror
+    # the `backtest` subcommand's names AND defaults exactly — a declaration
+    # made with defaults must match a backtest run with defaults.
+    p_declare.add_argument("--quantiles", type=_positive_int, default=5)
+    p_declare.add_argument("--min-cross-section", type=_positive_int, default=20)
+    p_declare.add_argument("--periods-per-year", type=_positive_int, default=12)
+    p_declare.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    p_declare.add_argument("--ledger", default="research_ledger.jsonl")
+    p_declare.add_argument(
+        "--schedule",
+        required=True,
+        help='declared evaluation schedule, recorded verbatim in the declaration, e.g. '
+        '"monthly (cron 41 2 6 * *)" — sequential looks are disclosed, not corrected',
+    )
+    p_declare.set_defaults(func=cmd_ledger_declare)
 
     p_retract = sub.add_parser(
         "ledger-retract",

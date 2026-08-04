@@ -188,3 +188,112 @@ def test_repeated_measurement_of_one_experiment_is_one_trial(tmp_path):
 
     sharpes = trial_sharpes(load_manifest(ledger))
     assert sorted(sharpes) == [0.11, 0.33], "collapse to the latest look per experiment"
+
+
+_SPEC = {
+    "kind": "backtest_panel",
+    "profiles": ["all_weather"],
+    "config_fingerprints": ["1790775d"],
+    "universe_ids": [],
+    "horizon_days": [21],
+    "targets": ["forward_return"],
+    "quantiles": 5,
+    "min_cross_section": 20,
+    "periods_per_year": 12,
+    "transaction_cost_bps": 10.0,
+}
+
+
+def test_preregistration_declaration_is_chained_and_never_a_trial(tmp_path):
+    from stock_grader.research_manifest import (
+        PREREGISTRATION_EXPERIMENT,
+        append_record,
+        find_preregistration,
+        load_manifest,
+        preregistration_record,
+        spec_sha256,
+        trial_sharpes,
+        verify_chain,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, _synthetic("backtest:something_else", 0.31))
+    append_record(
+        ledger, preregistration_record(_SPEC, schedule="monthly (cron 41 2 6 * *)")
+    )
+    records = load_manifest(ledger)
+
+    assert verify_chain(records), "a declaration must extend the chain, never break it"
+    declaration = records[-1]
+    assert declaration["experiment"] == PREREGISTRATION_EXPERIMENT
+    assert declaration["symbols"] == [spec_sha256(_SPEC)]
+    assert "monthly (cron 41 2 6 * *)" in declaration["verdict"]
+    assert "disclosed peeking, not corrected" in declaration["verdict"]
+    # No metrics: the declaration itself must never enter the denominator.
+    assert trial_sharpes(records) == [0.31]
+    found = find_preregistration(records, _SPEC)
+    assert found is not None
+    assert found["integrity_sha256"] == declaration["integrity_sha256"]
+
+
+def test_preregistration_spec_mismatch_or_tamper_refuses_match(tmp_path):
+    from stock_grader.research_manifest import (
+        append_record,
+        find_preregistration,
+        load_manifest,
+        preregistration_record,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, preregistration_record(_SPEC, schedule="monthly"))
+    records = load_manifest(ledger)
+
+    # A different hypothesis (changed scoring config) must not match.
+    drifted = dict(_SPEC, config_fingerprints=["751441e6"])
+    assert find_preregistration(records, drifted) is None
+
+    # A lying declaration: claimed hash and stored spec disagree. It was
+    # honestly appended (chain intact), but it must not bless anything.
+    lying = preregistration_record(drifted, schedule="monthly")
+    from dataclasses import replace
+
+    from stock_grader.research_manifest import spec_sha256
+
+    lying = replace(lying, symbols=[spec_sha256(_SPEC)])
+    append_record(ledger, lying)
+    tampered_records = load_manifest(ledger)
+    # The lying line claims _SPEC's hash, but its stored spec re-hashes to the
+    # drifted spec — the match must be refused even though the newest claim wins
+    # ordinarily.
+    assert (
+        find_preregistration(tampered_records, _SPEC)["integrity_sha256"]
+        == tampered_records[0]["integrity_sha256"]
+    ), "the honest declaration must win; the lying one is treated as absent"
+
+
+def test_retracted_declaration_no_longer_matches(tmp_path):
+    from stock_grader.research_manifest import (
+        RETRACTION_EXPERIMENT,
+        append_record,
+        find_preregistration,
+        load_manifest,
+        preregistration_record,
+    )
+
+    ledger = tmp_path / "ledger.jsonl"
+    append_record(ledger, preregistration_record(_SPEC, schedule="monthly"))
+    declared = load_manifest(ledger)[0]["integrity_sha256"]
+    append_record(ledger, _synthetic(RETRACTION_EXPERIMENT, None, symbols=[declared]))
+
+    records = load_manifest(ledger)
+    assert find_preregistration(records, _SPEC) is None
+
+
+def test_preregistered_experiment_name_is_spec_bound_not_filename_bound():
+    from stock_grader.research_manifest import preregistered_experiment, spec_sha256
+
+    name = preregistered_experiment(_SPEC)
+    assert name.startswith("backtest:preregistered:all_weather:")
+    assert spec_sha256(_SPEC)[:12] in name
+    # Any spec change renames the experiment: a new configuration is a new trial.
+    assert preregistered_experiment(dict(_SPEC, quantiles=4)) != name

@@ -169,6 +169,16 @@ Full details and the complete ordered plan: **docs/REVISED_PLAN.md**.
 
 ## Agent log
 
+2026-08-04 -- Pre-registration record kind (HANDOFF item 10 bullet):
+`ledger:preregistration` records + `ledger-declare` CLI verb + spec-hash
+matching in `cmd_backtest`. A declared spec's monthly re-evaluation is ONE
+trial recorded under a spec-bound experiment name (replaces, never appends,
+in the shared denominator); unmatched runs unchanged; tampered spec hashes
+refuse the match; the monthly-forward-backtest workflow declares-if-absent
+before evaluating, with the schedule recorded in the declaration (peeking
+disclosed, not corrected). Panels now carry `horizon_days` (additive column)
+so the spec can observe the horizon.
+
 2026-08-04 -- HANDOFF item 4 (ticker canonicalization): canonical = SEC dash
 form spec'd in Stock-Data ECOSYSTEM.md rule 7; `ticker_variants` gained the IB
 space form plus a shared `canonical_ticker`; vault's two ad-hoc space
