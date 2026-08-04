@@ -844,3 +844,39 @@ def test_dated_forward_reports_are_not_written_by_a_bare_redirect() -> None:
     assert 'cp "build/panels/$p.build.json" "$OUT/$p.build.json"' not in text
     assert "_immutable_place" in text
     assert "dated forward artifacts are immutable" in text
+
+
+def test_an_unattested_frozen_input_blocks_the_forward_panel(tmp_path: Path) -> None:
+    """`verify_sibling_manifest`'s return value was discarded at every call site.
+
+    A missing manifest warned (invisibly, on stderr, in a green CI run) and the
+    panel built anyway, producing a sidecar and a ledger line byte-identical in
+    shape to a hash-verified build. The boolean now reaches the sidecar and
+    gates ready_for_backtest, which is what the monthly workflow reads.
+    """
+    from tests.test_frozen_manifest import _frozen_profile_dir
+    from tests.test_panel import TODAY, _build_market_vault, _config, _Foundry
+
+    from stock_grader.frozen_manifest import (
+        UnmanifestedPanelWarning,
+        refresh_frozen_manifest,
+    )
+    from stock_grader.panel import build_panel
+
+    root = tmp_path / "frozen"
+    directory = _frozen_profile_dir(root)
+    vault = VaultDataSource(_build_market_vault(tmp_path / "vault"))
+
+    refresh_frozen_manifest(directory)
+    attested = build_panel(root, "all_weather", vault, _Foundry(), _config(), today=TODAY)
+    assert attested.refusal is None
+    assert attested.frozen_inputs_attested is True
+    assert attested.ready_for_backtest is True
+
+    (directory / "manifest.json").unlink()  # one deleted file, no edited hash
+    with pytest.warns(UnmanifestedPanelWarning):
+        bare = build_panel(root, "all_weather", vault, _Foundry(), _config(), today=TODAY)
+    assert bare.refusal is None  # pre-convention reads still work...
+    assert bare.frozen_inputs_attested is False  # ...but they say so
+    assert bare.ready_for_backtest is False
+    assert bare.qualifying_periods == attested.qualifying_periods
