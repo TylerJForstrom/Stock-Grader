@@ -126,6 +126,13 @@ cohort_index.json. Check first that the weekly-events sweep succeeded
   power table)~~ DONE (2026-08-03): `scripts/power_table.py` +
   `docs/calibration/power_table_2026-08-03.{md,json}` — read it before the
   first real forward verdict.
+- ~~Second return chain in Stock-Vault~~ DONE (2026-08-04, panels v6):
+  `stock-grader build-signal-panel` (`stock_grader.signal_panel`) is now the
+  single owner of forward-return semantics for BOTH panel families. The vault
+  exports raw observations and its ported `resolve_forward_return` is deleted;
+  the vault's `signal-panels.yml` checks this repo out and runs the join in the
+  same job. Remaining known duplication: the vault's shadow execution simulator
+  keeps its own split handling — it simulates positions, not panel returns.
 - Li-Mohanram mechanical forecasts (Stock-Data derived artifact; spec in
   docs/DATA-FOUNDRY.md).
 - ~~Paper-trade bridge~~ DONE (M3, 2026-08-03): shadow arms in Stock-Vault

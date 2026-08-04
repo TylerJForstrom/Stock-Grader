@@ -158,6 +158,37 @@ An analysis-grade return panel should additionally provide:
 
 The included providers do not collectively satisfy that institutional data contract.
 
+### One implementation of that contract, not two
+
+Two panel families are evaluated by `backtest`: the frozen score panels this repository freezes,
+and the private vault's signal panels. Until panels v6 each joined its own returns, and the second
+chain was a *port* of the first — `stock_vault/prices.py` said so in its docstring. Two
+implementations under one significance gate is a silent-divergence surface, and it had already
+diverged: this repository's `PLAUSIBLE_SPLIT_RATIOS` carries 1.5 and 2.5, the port's table did
+not, so a 3:2 forward split matched nothing there and survived as a fabricated ~-33% forward
+return — while this side had moved to dividend-inclusive total return.
+
+ECOSYSTEM rule 1 (artifacts, never cross-repo imports) forbids deduplicating that by import, so
+the computation moved. The vault exports raw observations; `stock-grader build-signal-panel`
+(`stock_grader.signal_panel`) joins the returns through the same `stock_grader.panel` chain
+`build-panel` uses:
+
+| element | single implementation |
+|---|---|
+| split detection and cumulative window factor | `panel.detect_split` / `panel.split_factor` (foundry tier, then volume/transaction corroboration; uncorroborated ⇒ excluded and counted) |
+| exit price | `panel.resolve_exit_price` (market_eod → delisted archive → last listed close) |
+| distributions | `panel.load_dividend_events` + `panel.window_months`, window `(entry, exit]` |
+| the total-return bar | `panel.TOTAL_RETURN_COVERAGE_BAR` |
+
+`stock_vault/prices.py` keeps only what a collector needs — trading calendar, median share
+volume, liquidity screen. The vault's shadow execution simulator still carries its own split
+handling: it simulates positions, not panel returns, so "eliminates a whole class of divergence"
+is two-thirds true, not three-thirds. That third implementation is a known, named remainder.
+
+Licensing: the joined rows derive from Massive free-tier closes on top of restricted signal
+sources, so `build-signal-panel` writes only into a private Stock-Vault clone and raises if the
+output path escapes it. Nothing it produces is committed to this public repository.
+
 ## Primary and provider references
 
 References were checked on 2026-07-28:

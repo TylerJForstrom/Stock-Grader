@@ -18,6 +18,7 @@ substitute for reading the filings.
 | Build a peer/evidence/valuation dossier | `stock-grader research` | CLI + Python API |
 | Evaluate a frozen historical score panel | `stock-grader backtest` | CLI + Python API |
 | Join frozen panels to realized returns | `stock-grader build-panel` | CLI |
+| Join the vault's raw signal observations to realized returns | `stock-grader build-signal-panel` | CLI |
 | Verify the evidence loop's monthly expectation clocks | `stock-grader check-cadence` | CLI |
 | Record each profile's monthly forward state (matured or not) | `stock-grader forward-accounting` | CLI |
 | Retract ledger records from trial accounting | `stock-grader ledger-retract` | CLI |
@@ -199,6 +200,29 @@ score, and forward return, strict runs require `filed_through`, one of
 `cik|security_id|permanent_id`, and all-true `universe_is_pit`, `return_is_total`, and
 `delisting_return_included` columns. See [Validation](docs/VALIDATION.md) before using
 `--allow-unverified-panel`.
+
+### One owner for forward-return semantics
+
+Two panel families feed the same evaluator: the frozen score panels this repository freezes, and
+the private vault's signal panels. Until panels v6 both joined returns, and the second chain was
+a *port* of the first — `stock_vault/prices.py` said so in its own docstring. The copies drifted:
+this repository's plausible-split table carries 1.5 and 2.5, the port's never did, so a 3:2
+forward split matched no ratio there, tripped no guard, and survived as a fabricated ~-33%
+forward return — while this side had already moved to dividend-inclusive total return. Rule 1
+(artifacts, never cross-repo imports) forbids the import that would have deduplicated them, so
+the *computation* moved instead.
+
+The vault now exports raw observations — signal, pre-registered score, entry-side cross-section,
+and the outcome window — and `stock-grader build-signal-panel` joins the returns through the same
+`stock_grader.panel` chain `build-panel` uses: `split_factor`, `resolve_exit_price`, the
+per-ex-date dividend window, `TOTAL_RETURN_COVERAGE_BAR`. One implementation cannot diverge from
+itself. Attestations are computed the same way too — `universe_is_pit` needs full point-in-time
+membership *and* zero outcome-dependent drops; `return_is_total` needs measured dividend coverage
+at the bar.
+
+Licensing: the joined rows are derived from Massive free-tier closes on top of restricted signal
+sources, so the builder writes only into a private Stock-Vault clone (a path guard raises
+otherwise). Nothing it produces is committed here — not a file, not a number.
 
 Panel reads are manifest-verified. `freeze` writes a `manifest.json` catalog beside each
 `frozen_scores/<profile>/` directory (per-part sha256, rows, columns, and a dataset-content

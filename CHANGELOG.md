@@ -7,6 +7,37 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `stock_grader.signal_panel` and `stock-grader build-signal-panel`: the return join for
+  Stock-Vault's raw signal observations, making this repository the **single owner of
+  forward-return semantics** for both panel families. The computation previously existed twice —
+  `stock_vault/prices.py`'s `resolve_forward_return` was a documented port of
+  `panel._resolve_exit_price` — and the copies had diverged: this repository's
+  `PLAUSIBLE_SPLIT_RATIOS` carries 1.5 and 2.5, the port's did not, so a 3:2 forward split
+  matched no ratio there, tripped no guard, and survived as a fabricated ~-33% forward return,
+  while this side had already moved to dividend-inclusive total return. ECOSYSTEM rule 1 forbids
+  the cross-repo import that would deduplicate it, so the *computation* moved: the vault now
+  exports observations (signal, pre-registered score, entry-side cross-section, the outcome
+  window) and this builder joins returns through the same `split_factor` /`resolve_exit_price` /
+  per-ex-date dividend chain `build-panel` uses. `tests/test_signal_panel.py` plants that exact
+  3:2 split and proves the fabricated return is dead.
+
+  Attestations are computed, never declared: `universe_is_pit` requires full point-in-time
+  membership *and* zero outcome-dependent drops (partial coverage reports
+  `pit_membership_coverage` instead of rounding up), `return_is_total` requires measured dividend
+  coverage at `TOTAL_RETURN_COVERAGE_BAR`, and a zero-length return window (`return_end <=
+  return_start`) is refused rather than priced as a table of zeros. Per-date parts are immutable
+  and whole-panel accounting is restored from the persisted `counts.json`, so an incremental
+  monthly run and a full rebuild report identical attestations. The joined rows derive from
+  Massive free-tier closes on top of restricted signal sources, so the builder writes only into a
+  private Stock-Vault clone and raises if the output path escapes it; nothing it produces is
+  committed here.
+
+  Supporting changes: `VaultDataSource.signal_panel_signals` / `signal_panel_manifest` /
+  `signal_panel_observations` (manifest-listed, sha256-verified reads of the observation parts);
+  `panel._resolve_exit_price`, `_window_months` and `_vault_manifest` are now the public
+  `resolve_exit_price`, `window_months` and `write_vault_manifest` (the last gains an additive
+  `extra` block, mirroring `stock_vault.manifest.write_manifest`).
+
 - `stock_grader.cadence` and `stock-grader check-cadence` / `stock-grader forward-accounting`:
   expectation clocks for the monthly evidence loop (docs/CADENCE.md). Every
   monthly-forward-backtest run now writes `docs/forward/<YYYY-MM>/accounting.json`

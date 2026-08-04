@@ -1658,6 +1658,119 @@ def cmd_build_panel(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_build_signal_panel(args: argparse.Namespace) -> int:
+    """Join Stock-Vault's raw signal observations to realized forward returns.
+
+    The vault exports observations; this is the ONE place forward-return
+    semantics live (splits, per-ex-date dividends, the delisting exit chain).
+    The evaluable panel is written back INTO the private vault clone beside its
+    observations — never here, and never printed: this repository is public and
+    a per-row return derived from Massive closes must not reach it.
+
+    Exit codes are the workflow contract:
+
+    * 0 — built, or nothing to price yet (a structurally expected state for a
+      signal whose first window has not closed).
+    * 2 — refused: bad artifact, escaped path, or a symbology collision.
+    """
+    from .data.vault import VaultDataSource
+    from .panel import PanelBuildError
+    from .signal_panel import (
+        SIGNAL_PANEL_VERSION,
+        SignalPanelConfig,
+        SignalPanelError,
+        build_signal_panel,
+        write_signal_panel,
+    )
+
+    vault = VaultDataSource(args.vault, verify_hashes=not args.no_verify_hashes)
+    foundry = None
+    if args.foundry:
+        from .data.foundry import FoundryDataSource
+
+        if args.foundry.startswith(("http://", "https://")):
+            foundry = FoundryDataSource(url_base=args.foundry)
+        else:
+            foundry = FoundryDataSource(root=args.foundry)
+
+    version = args.panel_version or SIGNAL_PANEL_VERSION
+    available = vault.signal_panel_signals(version)
+    if args.signal == "all":
+        signals = available
+    else:
+        signals = [args.signal]
+        if args.signal not in available:
+            console.print(
+                f"[red]{args.signal} has no v{version} observation dataset in "
+                f"{args.vault} (available: {', '.join(available) or 'none'})[/red]"
+            )
+            return 2
+    if not signals:
+        console.print(
+            f"no v{version} observation datasets under {args.vault}/data/signal_panels; "
+            "run `stock-vault signal-panel` first"
+        )
+        return 0
+
+    config = SignalPanelConfig(split_tolerance=args.split_tolerance, rebuild=args.rebuild)
+
+    def _log(message: str) -> None:
+        if args.verbose:
+            console.print(f"  {message}")
+
+    summaries = []
+    failed = 0
+    for signal in signals:
+        try:
+            result, new_parts = build_signal_panel(
+                vault,
+                signal,
+                foundry=foundry,
+                version=version,
+                config=config,
+                log=_log,
+            )
+            if result.refusal is not None:
+                console.print(f"[red]{signal}: refusing to build — {result.refusal}[/red]")
+                failed += 1
+                continue
+            write_signal_panel(vault, signal, result, new_parts, version=version)
+        except (SignalPanelError, PanelBuildError) as exc:
+            console.print(f"[red]{signal}: {exc}[/red]")
+            failed += 1
+            continue
+        summaries.append(
+            {
+                "signal": signal,
+                "panel_version": result.panel_version,
+                "periods": result.observation_periods,
+                "kept_rows": result.kept_rows,
+                "unresolved_rows": result.unresolved_rows,
+                "dividend_coverage": round(result.dividend_coverage, 4),
+                "pit_membership_coverage": round(result.pit_membership_coverage, 4),
+                "attestations": result.attestations,
+                "last_run": {
+                    "parts_written": result.parts_written,
+                    "rows_written": result.rows_written,
+                },
+            }
+        )
+    if args.format == "json":
+        print(to_json(summaries))
+    else:
+        for summary in summaries:
+            console.print(
+                f"{summary['signal']} v{summary['panel_version']}: "
+                f"{summary['kept_rows']} row(s) over {summary['periods']} period(s), "
+                f"wrote {summary['last_run']['parts_written']} part(s), "
+                f"unresolved={summary['unresolved_rows']}, "
+                f"dividend_coverage={summary['dividend_coverage']:.1%}, "
+                f"pit_membership={summary['pit_membership_coverage']:.1%}, "
+                f"attestations={summary['attestations']}"
+            )
+    return 2 if failed else 0
+
+
 def cmd_check_cadence(args: argparse.Namespace) -> int:
     """Expectation clocks for the monthly evidence loop (see cadence.py).
 
@@ -2274,6 +2387,41 @@ def build_parser() -> argparse.ArgumentParser:
     p_build.add_argument("--no-verify-hashes", action="store_true")
     p_build.add_argument("--format", choices=("text", "json"), default="text")
     p_build.set_defaults(func=cmd_build_panel)
+
+    p_signal = sub.add_parser(
+        "build-signal-panel",
+        help="join Stock-Vault's raw signal observations to realized forward returns "
+        "(the single owner of forward-return semantics); writes into the vault",
+    )
+    p_signal.add_argument(
+        "--signal", default="all", help="signal name, or 'all' (default) for every dataset"
+    )
+    p_signal.add_argument(
+        "--vault",
+        required=True,
+        help="local Stock-Vault clone; the evaluable panel is written INSIDE it "
+        "(licensed per-row returns never reach this public repo)",
+    )
+    p_signal.add_argument(
+        "--foundry", help="Stock-Data clone or raw URL, for split confirmation"
+    )
+    p_signal.add_argument(
+        "--panel-version",
+        type=_positive_int,
+        default=None,
+        help="vault panel layout to read and write (default: the builder's own)",
+    )
+    p_signal.add_argument("--split-tolerance", type=float, default=0.01)
+    p_signal.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="re-price signal dates whose part already exists (parts are immutable "
+        "by default)",
+    )
+    p_signal.add_argument("--no-verify-hashes", action="store_true")
+    p_signal.add_argument("--verbose", action="store_true")
+    p_signal.add_argument("--format", choices=("text", "json"), default="text")
+    p_signal.set_defaults(func=cmd_build_signal_panel)
 
     p_decay = sub.add_parser(
         "decay",

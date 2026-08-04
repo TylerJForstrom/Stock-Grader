@@ -78,10 +78,13 @@ __all__ = [
     "discover_frozen_panels",
     "load_bars",
     "load_dividend_events",
+    "resolve_exit_price",
     "select_non_overlapping",
     "trading_days",
     "window_for",
+    "window_months",
     "write_panel",
+    "write_vault_manifest",
 ]
 
 SCHEMA_VERSION = "1.0"
@@ -349,7 +352,7 @@ def load_dividend_events(
     return events, months
 
 
-def _window_months(entry: dt.date, exit_: dt.date) -> set[str]:
+def window_months(entry: dt.date, exit_: dt.date) -> set[str]:
     """Calendar months the dividend window ``(entry, exit_]`` touches."""
     cursor = (entry + dt.timedelta(days=1)).replace(day=1)
     months: set[str] = set()
@@ -495,7 +498,7 @@ def split_factor(
 # -- the build -----------------------------------------------------------------
 
 
-def _resolve_exit_price(
+def resolve_exit_price(
     ticker_bars: pd.DataFrame,
     vault: Any,
     ticker: str,
@@ -780,7 +783,7 @@ def build_panel(
                 unresolved_tickers.append(ticker)
                 continue
 
-            resolution = _resolve_exit_price(ticker_bars, vault, ticker, entry, exit_)
+            resolution = resolve_exit_price(ticker_bars, vault, ticker, entry, exit_)
             if resolution is None:
                 accounting.unresolved_dropped += 1
                 outcome_dependent_drops += 1
@@ -803,7 +806,7 @@ def build_panel(
             dividend_cash = 0.0
             dividend_count = 0
             dividend_covered = False
-            if dividend_months and _window_months(entry, exit_) <= dividend_months:
+            if dividend_months and window_months(entry, exit_) <= dividend_months:
                 in_window = [
                     (ex_date, cash, currency)
                     for ex_date, cash, currency in dividend_events.get(ticker, ())
@@ -971,13 +974,20 @@ def write_panel(
     return panel_path, sidecar_path
 
 
-def _vault_manifest(directory: Path, license_note: str, source_urls: list[str]) -> None:
+def write_vault_manifest(
+    directory: Path,
+    license_note: str,
+    source_urls: list[str],
+    extra: dict[str, Any] | None = None,
+) -> None:
     """Vault-shaped manifest over every non-dot, non-manifest file.
 
     A ~25-line copy rather than an import of ``stock_vault.manifest`` — the
     ecosystem rule is artifacts-not-imports, and this is the same precedent set
     for ``ticker_variants``. The shape must match exactly or
-    ``VaultDataSource._manifest`` refuses the dataset.
+    ``VaultDataSource._manifest`` refuses the dataset. ``extra`` mirrors
+    ``stock_vault.manifest.write_manifest``'s own escape hatch: additive
+    dataset-specific keys beside the five contract keys, never replacing one.
     """
     files = []
     for path in sorted(directory.iterdir()):
@@ -991,14 +1001,19 @@ def _vault_manifest(directory: Path, license_note: str, source_urls: list[str]) 
                 "bytes": len(blob),
             }
         )
-    payload = {
+    payload: dict[str, Any] = {
         "schema_version": "1.0",
         "generated_at_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source_urls": sorted(source_urls),
         "license_note": license_note,
         "files": files,
     }
-    (directory / "manifest.json").write_text(json.dumps(payload, indent=2) + "\n")
+    if extra:
+        payload.update(extra)
+        payload["schema_version"] = "1.0"
+    (directory / "manifest.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    )
 
 
 def archive_to_vault(
@@ -1018,7 +1033,7 @@ def archive_to_vault(
     archived = destination / f"{build_date.isoformat()}.parquet"
     shutil.copyfile(panel_path, archived)
     shutil.copyfile(sidecar_path, destination / f"{build_date.isoformat()}.build.json")
-    _vault_manifest(
+    write_vault_manifest(
         destination,
         license_note=(
             "Derived per-row returns from Massive (ex-Polygon) free-tier EOD closes and "
