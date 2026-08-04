@@ -150,8 +150,11 @@ See [Validation](VALIDATION.md).
 
 The project does not currently provide:
 
-- brokerage integration or order execution;
-- portfolio construction, optimization, or tax-lot accounting;
+- brokerage integration or order execution — a deliberate stop, not a gap: OUT OF SCOPE by
+  ecosystem decision (Stock-Data `ECOSYSTEM.md` decision log, 2026-08-04, and its rule 8 money
+  boundary) until a gate declared under the versioned promotion policy (PROMOTION-POLICY v1)
+  passes; revisiting requires a new decision-log entry there;
+- portfolio construction, optimization, or tax-lot accounting — same recorded decision;
 - real-time quotes or alerts;
 - estimate revisions, transcripts, news, or alternative data;
 - complete security-master and corporate-action history;
