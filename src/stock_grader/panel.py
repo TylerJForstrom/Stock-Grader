@@ -577,8 +577,8 @@ def build_panel(
       whichever way the attestation lands.
 
     A frozen row missing its CIK is resolved through the foundry map AS OF
-    its signal date (``universe(asof=...)`` event replay) so a reused ticker
-    never inherits its symbol's new owner; the sidecar's ``cik_map_modes``
+    its signal date (``universe(asof=...)`` point-in-time lookup) so a reused
+    ticker never inherits its symbol's new owner; the sidecar's ``cik_map_modes``
     records the map that served each date, and falling back to the current
     snapshot changes no attestation — it is recorded, not overclaimed.
     """
@@ -641,10 +641,11 @@ def build_panel(
     # foundry CIK fallback is resolved PER SIGNAL DATE: tickers get reused
     # after delistings, so a missing CIK resolved through today's snapshot
     # could silently attach a dead issuer's row to its symbol's new owner.
-    # ``universe(asof=signal_date)`` replays the foundry's symbol events back
-    # to the signal date; when the archive cannot reach it (or the provider
-    # predates ``asof``) the current snapshot is the honest best available,
-    # and the sidecar's ``cik_map_modes`` records which map served each date.
+    # ``universe(asof=signal_date)`` slices the foundry's published
+    # point-in-time interval table at the signal date; when the archive cannot
+    # reach it (or the provider predates ``asof``) the current snapshot is the
+    # honest best available, and the sidecar's ``cik_map_modes`` records which
+    # map served each date.
     frozen_frames = {signal: pd.read_parquet(panels[signal]) for signal in kept}
 
     def _universe_cik_map(asof: str | None) -> dict[str, str] | None:
