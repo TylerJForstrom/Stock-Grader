@@ -32,15 +32,24 @@ def _repo(
     tmp_path: Path,
     *,
     freezes: dict[str, list[str]] | None = None,
+    wide_freezes: dict[str, list[str]] | None = None,
     accounting_months: list[str] | None = None,
 ) -> Path:
-    """A minimal Stock-Grader layout: dated freezes + accounted months."""
+    """A minimal Stock-Grader layout: dated freezes + accounted months.
+
+    ``freezes`` populates ``frozen_scores/``, ``wide_freezes`` the second
+    committed evidence root ``frozen_scores_wide/``. Both are clocked.
+    """
     root = tmp_path / "repo"
-    for profile, dates in (freezes or {}).items():
-        pdir = root / "frozen_scores" / profile
-        pdir.mkdir(parents=True, exist_ok=True)
-        for day in dates:
-            (pdir / f"{day}.parquet").write_bytes(b"")
+    for base, mapping in (
+        ("frozen_scores", freezes),
+        ("frozen_scores_wide", wide_freezes),
+    ):
+        for profile, dates in (mapping or {}).items():
+            pdir = root / base / profile
+            pdir.mkdir(parents=True, exist_ok=True)
+            for day in dates:
+                (pdir / f"{day}.parquet").write_bytes(b"")
     for month in accounting_months or []:
         mdir = root / "docs" / "forward" / month
         mdir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +75,8 @@ def test_bootstrap_passes_with_notes_when_nothing_exists(tmp_path) -> None:
     root = _repo(tmp_path)
     ok, lines = cadence.check_cadence(root, dt.date(2026, 8, 20))
     assert ok
-    assert sum("BOOTSTRAP" in line for line in lines) == 2
+    # One accounting clock plus one freeze clock PER evidence root.
+    assert sum("BOOTSTRAP" in line for line in lines) == 1 + len(cadence.FROZEN_ROOTS)
 
 
 def test_freeze_clock_tolerates_jitter_then_demands_the_current_month(tmp_path) -> None:
@@ -303,7 +313,7 @@ def test_cadence_runs_as_a_bare_uninstalled_script(tmp_path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("BOOTSTRAP") == 2
+    assert result.stdout.count("BOOTSTRAP") == 1 + len(cadence.FROZEN_ROOTS)
 
 
 # ------------------------------------------------------------ workflow wiring

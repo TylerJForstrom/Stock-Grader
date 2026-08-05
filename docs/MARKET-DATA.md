@@ -175,7 +175,7 @@ the computation moved. The vault exports raw observations; `stock-grader build-s
 
 | element | single implementation |
 |---|---|
-| split detection and cumulative window factor | `panel.detect_split` / `panel.split_factor` (foundry tier, then volume/transaction corroboration; uncorroborated ⇒ excluded and counted) |
+| split detection and cumulative window factor | `panel.detect_split` / `panel.split_factor` (foundry table as the DETECTOR — every recorded split in `(entry, exit]` at any ratio, arbitrated against the observed move; then price signature + volume/transaction corroboration for dates the foundry does not cover; contradicted, implausible, unplaceable or uncorroborated ⇒ excluded and counted) |
 | exit price | `panel.resolve_exit_price` (market_eod → delisted archive → last listed close) |
 | distributions | `panel.load_dividend_events` + `panel.window_months`, window `(entry, exit]` |
 | the total-return bar | `panel.TOTAL_RETURN_COVERAGE_BAR` |

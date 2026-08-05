@@ -717,19 +717,31 @@ def fit_half_life(
 def record_sweep_trials(
     curve: DecayCurve, *, ledger_path: Path, alpha: float = 0.05
 ) -> dict:
-    """Every horizon is its own trial, on ONE order-independent denominator."""
+    """Every horizon is its own trial, on ONE order-independent denominator.
+
+    Raises ``ValueError`` on a ledger whose chain does not verify: this
+    verb reads the trial denominator AND extends the chain, exactly like
+    ``backtest``, and every appending verb in the CLI already refuses a broken
+    chain. ``stock-grader decay`` is documented as a hand-run command, so the
+    workflow-level chain gate does not cover it.
+    """
     from .research_manifest import (
         ResearchRecord,
         append_record,
         current_commit,
         load_manifest,
+        verify_chain,
     )
     from .research_manifest import trial_sharpes as trial_sharpes_from
 
     ledger_path = Path(ledger_path)
-    prior = (
-        trial_sharpes_from(load_manifest(ledger_path)) if ledger_path.exists() else []
-    )
+    records = load_manifest(ledger_path) if ledger_path.exists() else []
+    if not verify_chain(records):
+        raise ValueError(
+            f"{ledger_path} does not verify; refusing to evaluate against a broken "
+            f"chain or append to it"
+        )
+    prior = trial_sharpes_from(records)
     usable = [r for r in curve.horizons if r.inference_by_offset]
     sweep_sharpes = []
     spreads_by_horizon: dict[int, list[list[float]]] = {}
@@ -845,8 +857,12 @@ def record_sweep_trials(
             data_span=f"{curve.signal_dates[0]}..{curve.signal_dates[-1]}",
             code_commit=current_commit(),
         )
-        append_record(ledger_path, record)
-        record_hashes[result.horizon_days] = record.integrity_sha256()
+        # The chained record's hash, not the pre-append object's: prev_sha256
+        # is inside the hashed payload, so they always differ, and this one is
+        # baked into an immutable dated decay.json whose ledger.record_hashes
+        # must reconcile with the ledger forever.
+        written = append_record(ledger_path, record)
+        record_hashes[result.horizon_days] = written.integrity_sha256()
         if significance is not None:
             deflated_benchmark = significance.deflated_benchmark_sr
 

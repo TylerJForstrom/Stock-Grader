@@ -254,15 +254,18 @@ def test_backtest_cli_refuses_a_tampered_panel(tmp_path, capsys):
     refresh_frozen_manifest(directory)
     part = directory / f"{SIGNALS[0].isoformat()}.parquet"
     _tamper(part)
-    assert cli.main(["backtest", str(part)]) == 1
+    # 2, the documented refusal code — a refusal RETURNS rather than falling
+    # through to main()'s generic exception handler (exit 1).
+    assert cli.main(["backtest", str(part)]) == 2
     assert "sha256 mismatch" in capsys.readouterr().out
 
 
 def test_panel_loader_warns_on_unmanifested_panel_and_still_loads(tmp_path):
+    """The non-strict path — genuinely pre-convention directories stay readable."""
     directory = _frozen_profile_dir(tmp_path / "frozen")
     part = directory / f"{SIGNALS[0].isoformat()}.parquet"
     with pytest.warns(UnmanifestedPanelWarning):
-        frame = cli._load_panel_frame(part)
+        frame = cli._load_panel_frame(part, strict=False)
     assert len(frame) == len(_healthy_rows())
 
 

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,14 @@ class SignalPeriodAccounting:
     dividend_cash_rows: int = 0
     pit_membership_rows: int = 0
     kept: int = 0
+    # The tickers behind ``unresolved_dropped``, persisted per signal date.
+    # Without this field the identities lived only in the run that priced them:
+    # build.json reported them in its whole-panel block while an incremental
+    # run — which re-prices nothing — rebuilt that block from counts.json and
+    # emitted an empty list beside a non-zero unresolved_rows. An affirmative
+    # "no repeat offenders" is exactly the optimistic reading the accounting
+    # exists to prevent.
+    unresolved_tickers: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -134,6 +143,22 @@ class SignalPanelResult:
     unresolved_rows: int = 0
     unresolved_fraction: float = 0.0
     unresolved_tickers: list[str] = field(default_factory=list)
+    # Signal dates whose persisted accounting records unresolved drops but no
+    # offender identities: parts closed before SignalPeriodAccounting carried
+    # the field. Named rather than papered over — an empty union over these
+    # dates is missing data, not an absence of offenders.
+    unresolved_tickers_incomplete_dates: list[str] = field(default_factory=list)
+    # Whole-panel coverage, from the SAME persisted accounting as everything
+    # else here. A signal date can lose 100% of its observations (no archived
+    # entry bar) and simply vanish from the rollup, contributing 0 to every
+    # numerator AND every denominator; that is a pre-registration denominator
+    # problem, and it needs a number of its own rather than a silently perfect
+    # attestation.
+    panel_observations: int = 0
+    no_start_price_rows: int = 0
+    survival_rate: float = 0.0
+    periods_accounted: int = 0
+    periods_in_panel: int = 0
     dividend_coverage: float = 0.0
     dividend_archive_months: int = 0
     pit_membership_coverage: float = 0.0
@@ -283,6 +308,32 @@ def build_signal_panel(
         windows[day] = (entry, exit_)
 
     days = sorted(vault.market_eod_available_days())
+    available = set(days)
+    # Entry pricing requires an EXACT bar on the entry day, so a signal date
+    # whose entry day is absent from this clone loses 100% of its observations,
+    # writes no part, and disappears from panel.parquet — contributing nothing
+    # to any numerator OR denominator while the survivors attest perfectly.
+    # The only structural guard used to be "no pending window has a single
+    # archived day", which nine healthy windows satisfy on behalf of three
+    # missing ones. Refuse per period instead: an honest refusal beats a
+    # silently truncated panel (the same principle as the zero-length window
+    # refusal above).
+    uncovered = sorted(
+        f"{day.isoformat()} (entry {entry.isoformat()})"
+        for day, (entry, _exit) in windows.items()
+        if entry not in available
+    )
+    if uncovered:
+        result.refusal = (
+            "the vault EOD archive has no bar on the entry day of "
+            f"{len(uncovered)} pending signal date(s): {', '.join(uncovered)}. "
+            "Every observation of those dates would drop for want of an entry "
+            "price and the period would vanish from the panel entirely; refusing "
+            "rather than silently shrinking the pre-registered trial count. A "
+            "shallow or partially synced vault clone, or an archive window that "
+            "has rolled past these dates, is the usual cause."
+        )
+        return result, {}
     needed_days: set[dt.date] = set()
     for entry, exit_ in windows.values():
         needed_days.update(d for d in days if entry <= d <= exit_)
@@ -311,9 +362,16 @@ def build_signal_panel(
             # corroboration tier, exactly as build_panel does. Never fatal.
             foundry_splits = None
 
-    from .research_manifest import current_commit
+    from .research_manifest import package_commit
 
-    builder_commit = current_commit()
+    # NOT current_commit(): this builder runs with the Stock-VAULT checkout as
+    # the process working directory (the vault's signal-panels workflow owns
+    # the job), so a bare `git rev-parse` stamps a vault hash into a column
+    # whose whole purpose is to name the revision of the return-join
+    # implementation. Rows would then carry a hash that resolves in neither
+    # tree, and two parts priced by two different return implementations would
+    # be indistinguishable after the fact.
+    builder_commit = package_commit()
     new_parts: dict[dt.date, pd.DataFrame] = {}
 
     for signal_date in pending:
@@ -361,13 +419,13 @@ def build_signal_panel(
             )
             if split_unresolved:
                 accounting.unresolved_dropped += 1
-                result.unresolved_tickers.append(ticker)
+                accounting.unresolved_tickers.append(ticker)
                 continue
 
             resolution = resolve_exit_price(ticker_bars, vault, ticker, entry, exit_)
             if resolution is None:
                 accounting.unresolved_dropped += 1
-                result.unresolved_tickers.append(ticker)
+                accounting.unresolved_tickers.append(ticker)
                 continue
             end_close, return_source, price_symbol, terminal = resolution
             if return_source == "market_eod":
@@ -395,7 +453,11 @@ def build_signal_panel(
                 foreign_cash = any(currency not in ("", "USD") for _, _, currency in in_window)
                 if foreign_cash:
                     pass  # non-USD cash against USD closes: basis unresolvable
-                elif in_window and factor != 1.0:
+                elif in_window and split_source != "none":
+                    # "A split event occurred in (entry, exit]", not "the factor
+                    # moved". Keying on factor != 1.0 silently declared the
+                    # basis safe for every split the price signature could not
+                    # see, adding pre-split cash on a post-split share basis.
                     pass  # mid-window split: per-ex-date share basis unknowable
                 else:
                     dividend_covered = True
@@ -459,6 +521,7 @@ def build_signal_panel(
             )
             accounting.kept += 1
 
+        accounting.unresolved_tickers = sorted(set(accounting.unresolved_tickers))
         result.periods.append(accounting)
         if rows:
             part = pd.DataFrame(rows).sort_values("ticker").reset_index(drop=True)
@@ -469,7 +532,6 @@ def build_signal_panel(
             f"unresolved={accounting.unresolved_dropped}"
         )
 
-    result.unresolved_tickers = sorted(set(result.unresolved_tickers))
     return result, new_parts
 
 
@@ -483,6 +545,11 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     the same discipline the vault applies to its own counts.json. Reading the
     file back means an incremental run and a full rebuild report identical
     whole-panel attestations.
+
+    Everything this function sets is whole-panel, including the unresolved
+    ticker identities and the observation->kept survival numbers: a field in
+    the whole-panel block that is actually last-run-only reads as an
+    affirmative fact ("no repeat offenders") when it is really missing data.
     """
     kept = sum(int(entry.get("kept", 0)) for entry in counts_by_date.values())
     unresolved = sum(int(entry.get("unresolved_dropped", 0)) for entry in counts_by_date.values())
@@ -490,12 +557,35 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     pit_rows = sum(
         int(entry.get("pit_membership_rows", 0)) for entry in counts_by_date.values()
     )
+    observed = sum(int(entry.get("observations", 0)) for entry in counts_by_date.values())
+    no_start = sum(
+        int(entry.get("no_start_price_dropped", 0)) for entry in counts_by_date.values()
+    )
     considered = kept + unresolved
     result.kept_rows = kept
     result.unresolved_rows = unresolved
     result.unresolved_fraction = unresolved / considered if considered else 0.0
     result.dividend_coverage = covered / kept if kept else 0.0
     result.pit_membership_coverage = pit_rows / kept if kept else 0.0
+    result.panel_observations = observed
+    result.no_start_price_rows = no_start
+    result.survival_rate = kept / observed if observed else 0.0
+    result.periods_accounted = len(counts_by_date)
+    result.periods_in_panel = sum(
+        1 for entry in counts_by_date.values() if int(entry.get("kept", 0)) > 0
+    )
+    # Offender identities are whole-panel too, or the label lies: they are
+    # unioned from the SAME persisted accounting as every number beside them.
+    identities: set[str] = set()
+    incomplete: list[str] = []
+    for signal_date, entry in counts_by_date.items():
+        recorded = entry.get("unresolved_tickers")
+        listed = [str(item) for item in recorded] if isinstance(recorded, list) else []
+        identities.update(listed)
+        if int(entry.get("unresolved_dropped", 0)) > 0 and not listed:
+            incomplete.append(str(signal_date))
+    result.unresolved_tickers = sorted(identities)
+    result.unresolved_tickers_incomplete_dates = sorted(incomplete)
     result.attestations = {
         # Zero outcome-dependent drops AND full point-in-time membership. Both
         # legs, or the panel says False and reports its coverage.
@@ -545,14 +635,38 @@ def write_signal_panel(
         json.loads(counts_path.read_text(encoding="utf-8")) if counts_path.is_file() else {}
     )
     for accounting in result.periods:
+        # A re-priced signal date that now yields ZERO rows writes no part, so
+        # the stale part from the previous build survives and keeps
+        # contributing its rows to the rollup while its accounting is
+        # overwritten with zeros. Deleting the part would destroy closed
+        # evidence; keeping both would attest over rows whose outcome-dependent
+        # drops are no longer in the ledger. Refuse, and version instead.
+        stale_part = out_dir / f"{accounting.signal_date}.parquet"
+        if accounting.kept == 0 and stale_part.is_file():
+            raise SignalPanelError(
+                f"{signal} {accounting.signal_date} re-priced to zero kept rows but "
+                f"{stale_part.name} is already on disk with "
+                f"{int(counts_by_date.get(accounting.signal_date, {}).get('kept', 0))} "
+                f"row(s) of closed accounting. Erasing that part would destroy closed "
+                f"evidence and keeping it would leave panel.parquet carrying rows this "
+                f"build can no longer account for. Panels are versioned, never "
+                f"rewritten: build a new panel version instead."
+            )
         counts_by_date[accounting.signal_date] = asdict(accounting)
+    # counts.json FIRST, and atomically. The parts and the accounting are one
+    # artifact; an interrupt must leave counts ahead of parts (the next run's
+    # pending filter keys off part existence, so it re-prices and heals) rather
+    # than parts ahead of counts (that date's accounting is then never
+    # regenerated, and _aggregate's .get defaults read the hole as zero
+    # unresolved drops — the attestation-friendly direction). Stock-Vault's own
+    # writer has used an atomic write for exactly this reason.
+    _atomic_write_text(
+        counts_path, json.dumps(counts_by_date, indent=2, sort_keys=True) + "\n"
+    )
     for signal_date, part in sorted(new_parts.items()):
         part.to_parquet(out_dir / f"{signal_date.isoformat()}.parquet", index=False)
         result.parts_written += 1
         result.rows_written += len(part)
-    counts_path.write_text(
-        json.dumps(counts_by_date, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
 
     _aggregate(counts_by_date, result)
 
@@ -561,10 +675,40 @@ def write_signal_panel(
         for path in out_dir.glob("*.parquet")
         if path.name != "panel.parquet" and _is_iso_stem(path.stem)
     )
+    # The rollup and the accounting must be ONE source of truth. Every whole-panel
+    # number and all three attestations come from counts.json; every row in
+    # panel.parquet comes from a filesystem glob. Nothing used to reconcile them,
+    # so a part on disk with no counts entry — or a counts entry whose kept total
+    # no longer matches the part's rows — silently flipped attestations True over
+    # rows the ledger had stopped accounting for.
+    on_disk = {path.stem for path in parts}
+    orphan_parts = sorted(on_disk - set(counts_by_date))
+    if orphan_parts:
+        raise SignalPanelError(
+            f"{signal} has part file(s) with no entry in counts.json: "
+            f"{', '.join(orphan_parts)}. Every whole-panel number and all three "
+            f"attestations are computed from counts.json, so rows nothing accounts "
+            f"for would be attested by numbers that never saw them. Re-run with "
+            f"--rebuild to regenerate the missing accounting."
+        )
     panel_path = out_dir / "panel.parquet"
     if parts:
         rollup = pd.concat([pd.read_parquet(p) for p in parts], ignore_index=True)
         rollup = rollup.sort_values(["signal_date", "ticker"]).reset_index(drop=True)
+        rows_by_date = rollup.groupby("signal_date").size().to_dict()
+        divergent = sorted(
+            f"{date}: panel {int(rows)} row(s) vs counts kept "
+            f"{int(counts_by_date.get(str(date), {}).get('kept', 0))}"
+            for date, rows in rows_by_date.items()
+            if int(rows) != int(counts_by_date.get(str(date), {}).get("kept", 0))
+        )
+        if divergent:
+            raise SignalPanelError(
+                f"{signal} rollup and counts.json disagree on {len(divergent)} signal "
+                f"date(s): {'; '.join(divergent)}. The attestations stamped on every "
+                f"row of this rollup are computed from counts.json alone; refusing to "
+                f"write a panel whose rows and whose accounting are different row sets."
+            )
         for name, value in result.attestations.items():
             rollup[name] = value
         rollup.to_parquet(panel_path, index=False)
@@ -578,8 +722,16 @@ def write_signal_panel(
     write_vault_manifest(
         out_dir,
         license_note=(
-            license_note
-            or str(manifest.get("license_note", ""))
+            # Parenthesized deliberately: `+` binds tighter than `or`, so the
+            # unbracketed form read as `license_note or (manifest_note +
+            # clause)` and a caller-supplied note discarded the entire returns
+            # clause — the Massive EOD, the per-ex-date dividend archive, the
+            # stockanalysis.com delisted histories and "do not redistribute
+            # rows". That clause is a fact about what these bytes CONTAIN, not
+            # a restatement of the upstream manifest, so no caller may
+            # supersede it; the sibling source_urls below unions for the same
+            # reason.
+            (license_note or str(manifest.get("license_note", "")))
             + " Forward returns joined from Massive (ex-Polygon) free-tier EOD closes, the "
             "vault's per-ex-date dividend archive and stockanalysis.com delisted histories; "
             "private archive, do not redistribute rows."
@@ -604,6 +756,8 @@ def write_signal_panel(
             "kept_rows": result.kept_rows,
             "unresolved_rows": result.unresolved_rows,
             "unresolved_fraction": round(result.unresolved_fraction, 6),
+            "survival_rate": round(result.survival_rate, 6),
+            "periods_in_panel": result.periods_in_panel,
             "dividend_coverage": round(result.dividend_coverage, 6),
             "dividend_archive_months": result.dividend_archive_months,
             "pit_membership_coverage": round(result.pit_membership_coverage, 6),
@@ -611,6 +765,13 @@ def write_signal_panel(
         },
     )
     return panel_path
+
+
+def _atomic_write_text(path: Path, payload: str) -> None:
+    """Write via tmp + ``os.replace``: a reader never sees a half-file."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _is_iso_stem(stem: str) -> bool:
@@ -623,14 +784,16 @@ def _is_iso_stem(stem: str) -> bool:
 
 def build_payload(result: SignalPanelResult) -> dict:
     """Flat sidecar JSON — additive keys only, never an envelope."""
-    from .research_manifest import current_commit
+    from .research_manifest import package_commit
 
     return {
         "schema_version": SIGNAL_PANEL_SCHEMA_VERSION,
         "signal": result.signal,
         "panel_version": result.panel_version,
         "built_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "builder_commit": current_commit(),
+        # The GRADER's revision — this job runs with the vault as CWD, and the
+        # field names the owner of forward-return semantics. See package_commit.
+        "builder_commit": package_commit(),
         "return_semantics": {
             "owner": "stock_grader.signal_panel (single implementation)",
             "formula": "(P_end * split_factor + in-window cash) / P_entry - 1",
@@ -645,6 +808,12 @@ def build_payload(result: SignalPanelResult) -> dict:
         "unresolved_rows": result.unresolved_rows,
         "unresolved_fraction": result.unresolved_fraction,
         "unresolved_tickers": result.unresolved_tickers,
+        "unresolved_tickers_incomplete_dates": result.unresolved_tickers_incomplete_dates,
+        "panel_observations": result.panel_observations,
+        "no_start_price_rows": result.no_start_price_rows,
+        "survival_rate": result.survival_rate,
+        "periods_accounted": result.periods_accounted,
+        "periods_in_panel": result.periods_in_panel,
         "dividend_coverage": result.dividend_coverage,
         "dividend_archive_months": result.dividend_archive_months,
         "pit_membership_coverage": result.pit_membership_coverage,

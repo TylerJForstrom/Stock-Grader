@@ -52,6 +52,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import shutil
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -76,6 +77,7 @@ __all__ = [
     "build_panel",
     "detect_split",
     "discover_frozen_panels",
+    "foundry_splits_in_window",
     "load_bars",
     "load_dividend_events",
     "resolve_exit_price",
@@ -99,8 +101,25 @@ FORWARD_EPOCH = dt.date(2026, 7, 30)
 
 #: Split ratios that occur in practice. The smallest is 1.5, so the detector can
 #: only fire on a one-day move beyond roughly -33% or +50% — ordinary volatility
-#: cannot trip it.
+#: cannot trip it. That floor is deliberate and must NOT be lowered: it is what
+#: stops a bad day from being mistaken for a corporate action. It is also why
+#: the price signature can never be the DETECTOR for a 5:4, 6:5 or 1.2:1 split —
+#: see :func:`split_factor`, which reads the foundry's authoritative table first.
 PLAUSIBLE_SPLIT_RATIOS = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0)
+
+#: Widest ratio the foundry table may assert before this code treats the row as
+#: unusable rather than authoritative. ``splits.jsonl`` carries parse artifacts
+#: spanning ~3e-06 to ~1.1e8; a 50:1 split is already extraordinary, and nothing
+#: beyond this band is a ratio a return may be multiplied by.
+FOUNDRY_SPLIT_RATIO_BAND = (1.0 / 50.0, 50.0)
+
+#: How far the observed one-day price ratio may sit from a foundry-recorded
+#: split before the two are treated as contradicting each other. A real split
+#: moves the close by the ratio plus that day's ordinary return, so a tight band
+#: still admits genuine events; wider than this and a flat price would accept a
+#: 1.25 ratio, fabricating the very return this tier exists to prevent.
+#: Contradiction is UNRESOLVED (dropped and counted), never a silent 1.0.
+FOUNDRY_SPLIT_PRICE_TOLERANCE = 0.10
 
 #: The module docstring's own historical bar for attesting total returns: the
 #: per-ex-date dividend archive must honestly cover at least this fraction of
@@ -173,6 +192,12 @@ class PanelBuildResult:
     unresolved_tickers: list[str] = field(default_factory=list)
     dividend_coverage: float = 0.0
     dividend_archive_months: int = 0
+    # Did EVERY frozen part consumed verify against a sibling manifest? A
+    # missing manifest used to warn and load, and the boolean was discarded, so
+    # an unattested build was byte-indistinguishable downstream from an
+    # attested one. It is recorded here and gates ready_for_backtest: a panel
+    # nothing attests must not become forward evidence.
+    frozen_inputs_attested: bool = True
     refusal: str | None = None
     ready_for_backtest: bool = False
 
@@ -409,19 +434,38 @@ def _volume_corroborates(
     return 0.4 <= transaction_ratio <= 2.5
 
 
-def _foundry_split_lookup(
+def foundry_splits_in_window(
     foundry_splits: pd.DataFrame | None,
     ticker: str,
     cik: str,
     *,
-    day: dt.date,
-    candidate: float,
-    tolerance: float,
-) -> float | None:
-    """Tier A: a foundry split row matching ticker/CIK, date, and ratio."""
+    entry: dt.date,
+    exit_: dt.date,
+) -> tuple[list[tuple[dt.date, float]], list[tuple[dt.date, float]]]:
+    """Tier A as a DETECTOR: every foundry split effective in ``(entry, exit]``.
+
+    Returns ``(usable, implausible)`` — both lists of ``(effective_date,
+    ratio)``, oldest first. ``usable`` ratios sit inside
+    :data:`FOUNDRY_SPLIT_RATIO_BAND`; ``implausible`` ones do not, and a caller
+    must treat those as unresolved rather than as an absence of a split: the
+    table asserts an event, and a ratio this code will not multiply by is
+    missing information, not a factor of 1.0.
+
+    This is the inversion that matters. The foundry table is authoritative,
+    carries ``effective_date`` and ``ratio`` for every split, and used to be
+    reachable ONLY after the price signature had already guessed a ratio — so
+    it could confirm, never detect. Every ratio between 1/1.5 and 1.5 (5:4,
+    6:5, 1.2:1, and their reverse counterparts) was therefore invisible in both
+    directions: the row survived with ``split_factor=1.0``, its forward return
+    fabricated by the whole size of the split, and — because the dividend leg
+    keyed off that same 1.0 — was also marked dividend-covered.
+    """
+    usable: list[tuple[dt.date, float]] = []
+    implausible: list[tuple[dt.date, float]] = []
     if foundry_splits is None or foundry_splits.empty:
-        return None
+        return usable, implausible
     variants = set(ticker_variants(ticker))
+    low, high = FOUNDRY_SPLIT_RATIO_BAND
     for _, row in foundry_splits.iterrows():
         row_ticker = str(row.get("ticker", "")).upper()
         row_cik = str(row.get("cik", "")).strip().zfill(10) if row.get("cik") else ""
@@ -429,16 +473,20 @@ def _foundry_split_lookup(
             continue
         effective = row.get("effective_date")
         effective_date = effective.date() if hasattr(effective, "date") else effective
-        if effective_date != day:
+        if not isinstance(effective_date, dt.date):
             continue
-        ratio = float(row.get("ratio", 0.0))
-        if ratio <= 0:
+        if not (entry < effective_date <= exit_):
             continue
-        # A foundry ratio of R corrects a forward split: factor = R.
-        for factor in (ratio, 1.0 / ratio):
-            if abs(factor / candidate - 1.0) <= max(tolerance * 2, 0.02):
-                return factor
-    return None
+        try:
+            ratio = float(row.get("ratio", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(ratio) or ratio <= 0 or ratio == 1.0:
+            continue
+        (usable if low <= ratio <= high else implausible).append((effective_date, ratio))
+    usable.sort()
+    implausible.sort()
+    return usable, implausible
 
 
 def split_factor(
@@ -455,28 +503,76 @@ def split_factor(
 
     Returns ``(factor, source, unresolved)`` where source is one of
     ``none | foundry | reconstructed | mixed``. ``unresolved=True`` means a
-    split-shaped move was neither confirmed by the foundry nor corroborated by
-    volume: the observation must be EXCLUDED and counted — keeping it fabricates
-    a -50% return, dropping it silently digs a survivorship hole.
+    split could not be resolved honestly: the observation must be EXCLUDED and
+    counted — keeping it fabricates a return, dropping it silently digs a
+    survivorship hole.
+
+    Two tiers, in this order:
+
+    1. **Foundry (detector).** Every split the authoritative table records as
+       effective in ``(entry, exit]`` is applied, whatever its ratio. Each is
+       attributed to the bar pair whose interval contains its effective date
+       (so a halted or missing session still lands on the gap it caused) and
+       arbitrated against the observed move, in the orientation closest to it;
+       a foundry ratio the price series contradicts by more than
+       :data:`FOUNDRY_SPLIT_PRICE_TOLERANCE` is unresolved, never applied and
+       never ignored. A recorded split whose ratio is outside
+       :data:`FOUNDRY_SPLIT_RATIO_BAND`, or that this window has no bar pair to
+       place it against, is likewise unresolved.
+    2. **Price signature + volume corroboration (fallback).** For pairs the
+       foundry does not cover: :func:`detect_split` proposes a ratio from
+       :data:`PLAUSIBLE_SPLIT_RATIOS` and volume/transaction behavior
+       corroborates it. Uncorroborated split-shaped moves stay unresolved.
     """
     window = ticker_bars[(ticker_bars["date"] > entry) & (ticker_bars["date"] <= exit_)]
     window = pd.concat([ticker_bars[ticker_bars["date"] == entry], window]).sort_values("date")
+    recorded, implausible = foundry_splits_in_window(
+        foundry_splits, ticker, cik, entry=entry, exit_=exit_
+    )
+    if implausible:
+        # The table asserts an event and hands over a number no return may be
+        # multiplied by. That is missing information, not a factor of 1.0.
+        return 1.0, "none", True
     if len(window) < 2:
-        return 1.0, "none", False
+        # No pair to place or corroborate a recorded split against, while the
+        # exit price will come from the delisting chain on a LATER date: an
+        # unadjusted split would ride straight into the return.
+        return (1.0, "none", True) if recorded else (1.0, "none", False)
     factor = 1.0
     sources: set[str] = set()
     rows = window.to_dict("records")
+    placed: set[dt.date] = set()
     for prev, current in pairwise(rows):
-        candidate = detect_split(float(prev["close"]), float(current["close"]), tolerance)
-        if candidate is None:
-            continue
-        day = current["date"]
-        confirmed = _foundry_split_lookup(
-            foundry_splits, ticker, cik, day=day, candidate=candidate, tolerance=tolerance
-        )
-        if confirmed is not None:
-            factor *= confirmed
+        previous_day, day = prev["date"], current["date"]
+        prev_close, close = float(prev["close"]), float(current["close"])
+        # Every recorded split whose effective date falls in this gap, so a
+        # session missing from the archive cannot hide one.
+        in_gap = [
+            (effective, ratio)
+            for effective, ratio in recorded
+            if previous_day < effective <= day
+        ]
+        if in_gap:
+            placed.update(effective for effective, _ in in_gap)
+            observed = prev_close / close if prev_close > 0 and close > 0 else None
+            step = 1.0
+            for _effective, ratio in in_gap:
+                step *= ratio
+            if observed is None:
+                return 1.0, "none", True
+            # The table's orientation convention is "factor = ratio", but a
+            # confirmer that accepted 1/ratio has always been tolerated here;
+            # arbitrate with the price rather than assume.
+            best = min((step, 1.0 / step), key=lambda f: abs(observed / f - 1.0))
+            if abs(observed / best - 1.0) > FOUNDRY_SPLIT_PRICE_TOLERANCE:
+                # The authoritative table and the price series disagree. Either
+                # could be right; neither can price this row honestly.
+                return 1.0, "none", True
+            factor *= best
             sources.add("foundry")
+            continue
+        candidate = detect_split(prev_close, close, tolerance)
+        if candidate is None:
             continue
         if _volume_corroborates(
             candidate,
@@ -489,6 +585,12 @@ def split_factor(
             sources.add("reconstructed")
             continue
         return 1.0, "none", True  # split-shaped, uncorroborated: unresolved
+    # A recorded split after the window's last bar needs no adjustment: the exit
+    # close this row will use predates it. One inside the bar range that no pair
+    # claimed cannot be placed, and is unresolved.
+    last_bar = rows[-1]["date"]
+    if any(effective not in placed and effective <= last_bar for effective, _ in recorded):
+        return 1.0, "none", True
     if not sources:
         return 1.0, "none", False
     source = sources.pop() if len(sources) == 1 else "mixed"
@@ -647,8 +749,16 @@ def build_panel(
     from .frozen_manifest import verify_sibling_manifest
 
     try:
-        for signal in kept:
-            verify_sibling_manifest(panels[signal])
+        # The return value is load-bearing, not decorative: False means "no
+        # manifest at all", which the verifier only warns about. Recording it
+        # is what stops an unattested read from being indistinguishable from an
+        # attested one in the sidecar and in the ledger's leakage_controls.
+        # A list, not a generator: `all` short-circuits, and a later part's
+        # sha256 mismatch must still raise even when an earlier one was
+        # unmanifested.
+        result.frozen_inputs_attested = all(
+            [verify_sibling_manifest(panels[signal]) for signal in kept]
+        )
     except ValueError as exc:
         result.refusal = str(exc)
         return result
@@ -815,7 +925,9 @@ def build_panel(
                 foreign_cash = any(currency not in ("", "USD") for _, _, currency in in_window)
                 if foreign_cash:
                     pass  # non-USD cash against USD closes: basis unresolvable
-                elif in_window and factor != 1.0:
+                elif in_window and split_source != "none":
+                    # "A split event occurred in (entry, exit]", not "the factor
+                    # moved" — see signal_panel.py for the same correction.
                     pass  # mid-window split: per-ex-date share basis unknowable
                 else:
                     dividend_covered = True
@@ -915,7 +1027,9 @@ def build_panel(
             )
         result.panel = panel
 
-    result.ready_for_backtest = result.qualifying_periods >= config.min_periods
+    result.ready_for_backtest = (
+        result.qualifying_periods >= config.min_periods and result.frozen_inputs_attested
+    )
     return result
 
 
@@ -943,6 +1057,7 @@ def sidecar_payload(result: PanelBuildResult, profile: str, config: PanelBuildCo
         "unresolved_fraction": result.unresolved_fraction,
         "dividend_coverage": result.dividend_coverage,
         "dividend_archive_months": result.dividend_archive_months,
+        "frozen_inputs_attested": result.frozen_inputs_attested,
         "ready_for_backtest": result.ready_for_backtest,
     }
 

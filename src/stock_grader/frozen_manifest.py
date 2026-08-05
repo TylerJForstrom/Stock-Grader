@@ -105,18 +105,34 @@ def _sha256(path: Path) -> str:
 def _prior_entries(manifest_path: Path) -> dict[str, dict]:
     """Entries of an existing manifest, for provenance carry-forward.
 
-    An unreadable or foreign-format prior manifest yields no carry-forward:
-    the producer heals its own catalog by rewriting it, and every entry it
-    cannot vouch for is honestly re-marked ``backfill``.
+    NO manifest means a pre-convention directory: an empty carry-forward is
+    correct, and every entry is honestly marked ``backfill``. A manifest that
+    is PRESENT but unreadable, or written to a schema_version this code does
+    not understand, is a different thing entirely — ``verify_sibling_manifest``
+    refuses both — and returning ``{}`` for them made the producer destroy the
+    catalog the consumer refuses and rebuild it over whatever bytes are on
+    disk, silencing the alarm. Refuse instead: the producer may extend a
+    catalog, never overwrite one it cannot read.
     """
     if not manifest_path.is_file():
         return {}
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return {}
-    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
-        return {}
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError(
+            f"{manifest_path} exists but cannot be parsed ({exc}); refusing to "
+            f"overwrite a catalog this code cannot read — a corrupt manifest must "
+            f"be investigated, never silently rebuilt"
+        ) from exc
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != (
+        MANIFEST_SCHEMA_VERSION
+    ):
+        version = manifest.get("schema_version") if isinstance(manifest, dict) else None
+        raise ValueError(
+            f"{manifest_path} declares manifest schema_version {version!r} "
+            f"(supported: {MANIFEST_SCHEMA_VERSION}); refusing to downgrade a catalog "
+            f"written by code that knows more than this does"
+        )
     entries = {}
     for entry in manifest.get("files", []):
         if isinstance(entry, dict) and isinstance(entry.get("name"), str):
@@ -131,17 +147,31 @@ def _file_entry(
     produced_label: str,
 ) -> dict:
     """One catalog entry. Identical bytes carry their prior catalog block —
-    including ``hashed_at`` — forward unchanged; new or changed bytes are
-    read and described afresh."""
+    including ``hashed_at`` — forward unchanged; bytes this run produced are
+    read and described afresh.
+
+    Bytes that CHANGED under a name the catalog already attested, and that this
+    run did not produce, are a refusal. ``verify_sibling_manifest`` calls that
+    state "corruption or tampering, never a version bump" and raises; before
+    this guard the writer re-hashed it, wrote the new digest with
+    ``hashed_at: "backfill"``, and the next read verified clean — the producer
+    laundering exactly what the consumer refuses. The freeze already goes red
+    on an uncatalogable part, so this reuses that alarm path.
+    """
     digest = _sha256(path)
     previous = prior.get(path.name)
-    if (
-        path.name not in produced_now
-        and previous is not None
-        and previous.get("sha256") == digest
-        and previous.get("hashed_at") in ("freeze", "build", "backfill")
-    ):
-        return dict(previous)
+    if path.name not in produced_now and previous is not None:
+        recorded = previous.get("sha256")
+        if isinstance(recorded, str) and recorded != digest:
+            raise ValueError(
+                f"{path} changed under a name the catalog already attests: the "
+                f"manifest records {recorded}, the bytes hash to {digest}. Panels are "
+                f"immutable — a changed part is corruption or tampering, never a "
+                f"version bump; refusing to re-bless it. Restore the cataloged bytes "
+                f"or retire the part under a new date."
+            )
+        if recorded == digest and previous.get("hashed_at") in ("freeze", "build", "backfill"):
+            return dict(previous)
     entry: dict[str, object] = {
         "name": path.name,
         "sha256": digest,
@@ -288,7 +318,7 @@ def refresh_built_panel_manifest(
     )
 
 
-def verify_sibling_manifest(path: Path | str) -> bool:
+def verify_sibling_manifest(path: Path | str, *, strict: bool = False) -> bool:
     """Verify one panel file against the ``manifest.json`` beside it.
 
     Returns True when the sibling manifest catalogs the file and its sha256
@@ -300,10 +330,25 @@ def verify_sibling_manifest(path: Path | str) -> bool:
     or a sha256 mismatch. Panels are immutable, so a changed part is
     corruption or tampering, never a version bump — the only honest response
     is refusal.
+
+    ``strict=True`` turns the missing-manifest case into the same refusal. Use
+    it for any directory whose producer catalogs by contract — the committed
+    evidence roots and ``build/panels`` — because there the escape hatch is not
+    a pre-convention directory, it is a deleted file: without it, the strongest
+    control in the pipeline is defeated by removing one path instead of by
+    editing a hash, and the warning it degrades to is invisible in CI.
     """
     path = Path(path)
     manifest_path = path.parent / "manifest.json"
     if not manifest_path.is_file():
+        if strict:
+            raise ValueError(
+                f"{path} has no sibling manifest.json and this read requires "
+                f"attestation: the producer of this directory catalogs every part it "
+                f"writes, so an absent catalog is a deleted or never-written one, not "
+                f"a pre-convention directory. Refusing to treat unattested bytes as "
+                f"attested."
+            )
         warnings.warn(
             f"{path} has no sibling manifest.json: nothing attests these bytes. "
             f"Directories that predate the manifest convention stay readable, but "

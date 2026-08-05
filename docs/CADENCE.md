@@ -60,7 +60,12 @@ Modeled on the vault's `check_market_eod` (expectation-based, with
 | Clock | Expectation | Grace day |
 |---|---|---|
 | accounting | `docs/forward/<YYYY-MM>/accounting.json` exists for the current month | day **8** (cron fires the 6th; two days for GitHub cron jitter/skips) |
-| freeze | newest `frozen_scores/<profile>/<YYYY-MM-DD>.parquet` is from the current month | day **4** (cron fires the 1st) |
+| freeze | newest `<root>/<profile>/<YYYY-MM-DD>.parquet` is from the current month, for **every** committed evidence root (`frozen_scores`, `frozen_scores_wide`) | day **4** (cron fires the 1st) |
+
+The freeze clock is evaluated once per root and fails if ANY root is stale:
+monthly-freeze writes both trees on the same cron and commits both, and one
+healthy tree must never vouch for a stalled sibling. `--frozen-root` is
+repeatable if a caller needs a different set.
 
 Before a clock's grace day, the previous month satisfies it. Both clocks are
 derived from artifact filenames, never mtimes. Both are **bootstrap-guarded**:

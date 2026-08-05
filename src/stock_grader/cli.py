@@ -1073,19 +1073,21 @@ def _refresh_freeze_manifests(
     return failures
 
 
-def _load_panel_frame(path: Path) -> pd.DataFrame:
+def _load_panel_frame(path: Path, *, strict: bool = True) -> pd.DataFrame:
     """Read a score panel exactly as the backtest evaluator will see it.
 
-    The read is manifest-verified: when a sibling ``manifest.json`` catalogs
-    the file, its sha256 must match (mismatch refuses); when no manifest
-    exists the panel loads with a warning — pre-convention directories are
-    immutable, never rewritten, so they stay readable but unattested.
+    The read is manifest-verified: a sibling ``manifest.json`` must catalog the
+    file and its sha256 must match. Strict by default because everything that
+    reaches this function was cataloged by its producer — ``write_panel``
+    always writes a manifest beside the panel — so an absent catalog means a
+    deleted one, and this path appends a permanent line to the append-only
+    ledger. ``strict=False`` is for genuinely pre-convention directories.
     """
     if not path.exists():
         raise ValueError(f"panel does not exist: {path}")
     from .frozen_manifest import verify_sibling_manifest
 
-    verify_sibling_manifest(path)
+    verify_sibling_manifest(path, strict=strict)
     if path.suffix.lower() in {".parquet", ".pq"}:
         return pd.read_parquet(path)
     return pd.read_csv(path)
@@ -1132,7 +1134,20 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     """Evaluate a caller-supplied, frozen point-in-time score panel."""
 
     path = Path(args.panel)
-    panel = _load_panel_frame(path)
+    panel_attested = True
+    try:
+        panel = _load_panel_frame(
+            path, strict=not getattr(args, "allow_unmanifested_panel", False)
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
+    if getattr(args, "allow_unmanifested_panel", False):
+        from .frozen_manifest import verify_sibling_manifest
+
+        panel_attested = (path.parent / "manifest.json").is_file() and verify_sibling_manifest(
+            path
+        )
     allow_mixed_universes = bool(getattr(args, "allow_mixed_universes", False))
     report = evaluate_walk_forward(
         panel,
@@ -1173,12 +1188,26 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         preregistered_experiment,
         spec_sha256,
         trial_sharpes_by_experiment,
+        verify_chain,
     )
     from .significance import assess_edge, per_period_sharpe
 
     net_spreads = [p.net_spread for p in report.periods]
     ledger_path = Path(getattr(args, "ledger", "research_ledger.jsonl"))
     prior = load_manifest(ledger_path) if ledger_path.exists() else []
+    # The CONSUMING verb must refuse what the appending verbs already refuse.
+    # This path both reads the trial denominator (which sets the deflation
+    # dispersion, and therefore gate_passed) and extends the chain. Evaluating
+    # against evidence the ledger itself can prove forged, then recording the
+    # result as if it were sound, is the silent fallback the chain exists to
+    # prevent. The scheduled workflow gates on this separately; a hand-run
+    # `stock-grader backtest` had no guard at all.
+    if not verify_chain(prior):
+        console.print(
+            f"[red]{ledger_path} does not verify; refusing to evaluate against a "
+            f"broken chain or append to it[/red]"
+        )
+        return 2
     # Pre-registration lookup: when this run's observed spec was declared BEFORE
     # any evaluation (see `ledger-declare`), the run is a primary re-evaluation
     # of that ONE trial — recorded under the declaration's stable experiment
@@ -1247,6 +1276,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             leakage_controls=(
                 "panel attestation contract: "
                 + ("PASS" if not failed_contract else "FAILED " + ",".join(failed_contract))
+                # An unattested input is a permanent property of this result,
+                # not a transient warning on stderr: without it the ledger line
+                # for a panel nothing vouches for is byte-identical to one for a
+                # hash-verified panel.
+                + ("" if panel_attested else "; panel input UNATTESTED (no sibling manifest)")
                 + (
                     f"; primary re-evaluation of pre-registered declaration "
                     f"{declaration_sha[:12]} (spec {spec_hash[:12]}); schedule-declared "
@@ -1541,7 +1575,12 @@ def cmd_decay(args: argparse.Namespace) -> int:
             console.print(f"[red]{profile}: {exc}[/red]")
             exit_code = 2
             continue
-        curve.ledger = record_sweep_trials(curve, ledger_path=Path(args.ledger))
+        try:
+            curve.ledger = record_sweep_trials(curve, ledger_path=Path(args.ledger))
+        except ValueError as exc:
+            console.print(f"[red]{profile}: {exc}[/red]")
+            exit_code = 2
+            continue
         out_dir = write_decay_artifacts(curve, panels, args.out)
         status_console.print(
             f"[dim]{profile}: {curve.ledger['trials_added']} trial(s) recorded in "
@@ -1784,7 +1823,7 @@ def cmd_check_cadence(args: argparse.Namespace) -> int:
         repo_root=args.repo_root,
         pre_run=args.pre_run,
         as_of=args.as_of,
-        frozen_root=args.frozen_root,
+        frozen_roots=args.frozen_roots,
         forward_dir=args.forward_dir,
     )
 
@@ -1821,8 +1860,18 @@ def cmd_ledger_retract(args: argparse.Namespace) -> int:
     CLI-test panels (score=index, forward_return=index/1000) whose identical
     Sharpe of 2.83 would otherwise set the dispersion that every future real
     result is deflated against.
+
+    Scoped to trial accounting, and refused outside it. A `ledger:promotion`
+    record carries trials=0 and no metrics, so retracting one has zero
+    trial-accounting effect and only a lifecycle side effect: `promotion_stage`
+    is computed from the SURVIVING transitions, so retracting a retirement
+    rewinds a terminal subject back onto the ladder under the same subject
+    hash, with none of the reason/evidence a downward transition requires.
+    docs/PROMOTION.md's answer to a wrong record is a NEW forward record, never
+    erasure — version, never rewind.
     """
     from .research_manifest import (
+        PROMOTION_EXPERIMENT,
         RETRACTION_EXPERIMENT,
         ResearchRecord,
         append_record,
@@ -1851,6 +1900,20 @@ def cmd_ledger_retract(args: argparse.Namespace) -> int:
     if already:
         console.print(
             f"[red]refusing to retract a retraction record: {', '.join(already)}[/red]"
+        )
+        return 2
+    lifecycle = [h for h in requested if known[h].get("experiment") == PROMOTION_EXPERIMENT]
+    if lifecycle:
+        console.print(
+            f"[red]refusing to retract a {PROMOTION_EXPERIMENT} record: "
+            f"{', '.join(lifecycle)}. Retraction is a trial-accounting act, and a "
+            f"promotion record carries trials=0 and no metrics — it can never enter "
+            f"the denominator. What retracting one WOULD do is rewind the stage "
+            f"ladder (promotion_stage reads only surviving transitions), un-retiring "
+            f"a terminal subject or undoing a demotion with none of the reason and "
+            f"evidence a downward transition requires. Record a new explicit "
+            f"stage-transition instead; superseded declarations stay in the "
+            f"chain.[/red]"
         )
         return 2
     record = ResearchRecord(
@@ -1899,7 +1962,13 @@ def cmd_ledger_declare(args: argparse.Namespace) -> int:
         verify_chain,
     )
 
-    panel = _load_panel_frame(Path(args.panel))
+    try:
+        panel = _load_panel_frame(
+            Path(args.panel), strict=not getattr(args, "allow_unmanifested_panel", False)
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
     spec = _backtest_spec(panel, args)
     spec_hash = spec_sha256(spec)
     ledger_path = Path(args.ledger)
@@ -1944,6 +2013,7 @@ def cmd_promotion_declare(args: argparse.Namespace) -> int:
     """
     from .research_manifest import (
         append_record,
+        declared_policies,
         find_promotion_policy,
         load_manifest,
         promotion_policy_declaration,
@@ -1975,6 +2045,42 @@ def cmd_promotion_declare(args: argparse.Namespace) -> int:
         return 2
 
     if not any(transition_flags):
+        # The version<->document binding must hold in BOTH directions. Checking
+        # only "this version, changed doc" left the mirror image open: a NEW
+        # version name bound to the UNCHANGED document. That is how the
+        # live-money rung — a bare CLI flag stored verbatim into the
+        # declaration — gets opened while the very bytes it cites say the rung
+        # is unreachable and that opening it requires a version "superseding —
+        # not editing — this one". A policy version is a claim about a
+        # document; a document that does not name the version is not that
+        # document.
+        doc_text = policy_doc.read_text(encoding="utf-8", errors="replace")
+        if args.policy_version not in doc_text:
+            console.print(
+                f"[red]{policy_doc} does not contain the string "
+                f"{args.policy_version!r}: a policy version must be declared BY the "
+                f"document whose bytes it binds, or the ledger records a version no "
+                f"text describes. Write the new version into the document (a NEW "
+                f"version superseding the old, never an in-place amendment of a "
+                f"declared one) before declaring it.[/red]"
+            )
+            return 2
+        bound_elsewhere = sorted(
+            {
+                str(declaration.get("policy_version", ""))
+                for declaration in declared_policies(records)
+                if str(declaration.get("policy_sha256", "")) == doc_sha
+                and str(declaration.get("policy_version", "")) != args.policy_version
+            }
+        )
+        if bound_elsewhere:
+            console.print(
+                f"[red]{policy_doc} (sha256 {doc_sha[:12]}) is already declared as "
+                f"{', '.join(bound_elsewhere)}; one document's bytes cannot also be "
+                f"{args.policy_version}. A new policy version is a new document — "
+                f"superseding, not renaming.[/red]"
+            )
+            return 2
         declared = find_promotion_policy(records, args.policy_version)
         if declared is not None:
             if str(declared.get("policy_sha256", "")) == doc_sha:
@@ -1997,11 +2103,15 @@ def cmd_promotion_declare(args: argparse.Namespace) -> int:
             live_money_reachable=args.live_money_reachable,
         )
         record = promotion_policy_record(declaration)
-        append_record(ledger_path, record)
+        # The hash of the WRITTEN line, not of the pre-append object: chaining
+        # sets prev_sha256 inside the hashed payload, so the two always differ,
+        # and an operator citing the printed value as --evidence would record a
+        # pointer that resolves to nothing.
+        written = append_record(ledger_path, record)
         console.print(
             f"declared {args.policy_version} in {ledger_path} "
             f"(doc {policy_doc} sha256 {doc_sha[:12]}, "
-            f"record {record.integrity_sha256()[:12]})"
+            f"record {written.integrity_sha256()[:12]})"
         )
         return 0
 
@@ -2023,11 +2133,11 @@ def cmd_promotion_declare(args: argparse.Namespace) -> int:
         console.print(f"[red]refused: {error}[/red]")
         return 2
     record = promotion_transition_record(transition)
-    append_record(ledger_path, record)
+    written = append_record(ledger_path, record)  # see the policy branch above
     console.print(
         f"recorded {args.from_stage} -> {args.to_stage} for "
         f"{args.subject[:12]} under {args.policy_version} in {ledger_path} "
-        f"(record {record.integrity_sha256()[:12]}, "
+        f"(record {written.integrity_sha256()[:12]}, "
         f"transition sha256 {spec_sha256(transition)[:12]})"
     )
     return 0
@@ -2346,6 +2456,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_backtest.add_argument(
+        "--allow-unmanifested-panel",
+        action="store_true",
+        help=(
+            "read a panel with no sibling manifest.json. Off by default: every "
+            "producer in this repo catalogs what it writes, so an absent catalog "
+            "is a DELETED one, and this verb appends a permanent ledger line. Use "
+            "only for scratch panels written outside the cataloged trees (e.g. the "
+            "synthetic calibration grids in scripts/power_table.py); the ledger "
+            "records the input as UNATTESTED."
+        ),
+    )
+    p_backtest.add_argument(
         "--allow-mixed-universes",
         action="store_true",
         help="explicitly allow panels containing more than one universe_id",
@@ -2496,6 +2618,18 @@ def build_parser() -> argparse.ArgumentParser:
         help='declared evaluation schedule, recorded verbatim in the declaration, e.g. '
         '"monthly (cron 41 2 6 * *)" — sequential looks are disclosed, not corrected',
     )
+    p_declare.add_argument(
+        "--allow-unmanifested-panel",
+        action="store_true",
+        help=(
+            "read a panel with no sibling manifest.json. Off by default: every "
+            "producer in this repo catalogs what it writes, so an absent catalog "
+            "is a DELETED one, and this verb appends a permanent ledger line. Use "
+            "only for scratch panels written outside the cataloged trees (e.g. the "
+            "synthetic calibration grids in scripts/power_table.py); the ledger "
+            "records the input as UNATTESTED."
+        ),
+    )
     p_declare.set_defaults(func=cmd_ledger_declare)
 
     p_retract = sub.add_parser(
@@ -2595,7 +2729,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_cadence.add_argument(
         "--as-of", default=None, help="ISO date to evaluate at (default: today UTC)"
     )
-    p_cadence.add_argument("--frozen-root", default="frozen_scores")
+    from .cadence import FROZEN_ROOTS
+
+    p_cadence.add_argument(
+        "--frozen-root",
+        action="append",
+        dest="frozen_roots",
+        default=None,
+        help="committed freeze evidence root to clock; repeatable "
+        f"(default: {', '.join(FROZEN_ROOTS)})",
+    )
     p_cadence.add_argument("--forward-dir", default="docs/forward")
     p_cadence.set_defaults(func=cmd_check_cadence)
 
