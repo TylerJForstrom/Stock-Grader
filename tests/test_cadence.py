@@ -362,8 +362,14 @@ def test_workflow_self_gates_on_the_previous_month() -> None:
 
 def test_workflow_keeps_its_action_sha_pins_and_commit_paths() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    checkout_pin = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
-    python_pin = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+    # These two constants are a tripwire, not bookkeeping: a dependabot bump
+    # MUST turn this test red so that a human re-verifies the new SHA really is
+    # the commit its tag comment claims before the pin moves. Both were checked
+    # on 2026-08-04 against the upstream tag refs:
+    #   actions/checkout      v7.0.1 -> 3d3c42e5aac5ba805825da76410c181273ba90b1
+    #   actions/setup-python  v7.0.0 -> 5fda3b95a4ea91299a34e894583c3862153e4b97
+    checkout_pin = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    python_pin = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
     assert workflow.count(checkout_pin) == 3  # self + vault + foundry
     assert workflow.count(python_pin) == 1
     assert "uses: actions/checkout@v" not in workflow  # no pin regressions
