@@ -22,15 +22,42 @@ import pytest
 
 from stock_grader import costs
 
-#: The golden-vector file's sha256, as a literal. Stock-Vault asserts the same
-#: constant against its own copy. Changing the file without changing this line
-#: fails here; changing both without landing the same bytes in the vault fails
-#: there. That is the whole mechanism.
-GOLDEN_SHA256 = "6e0cfafacb00a0027aaa579249df2a0b1fd452667d64fe062c7a6828b5ae0db0"
+#: sha256 of the golden-vector file's CANONICAL content, as a literal.
+#: Stock-Vault asserts the same constant against its own copy. Changing the
+#: file without changing this line fails here; changing both without landing
+#: the same content in the vault fails there. That is the whole mechanism.
+#:
+#: Canonical content, not raw bytes: git rewrites line endings on checkout, so
+#: a byte hash of a text file makes the pin fail on a Windows runner for a
+#: reason that has nothing to do with the cost model. See
+#: :func:`stock_grader.costs.golden_vector_sha256`.
+GOLDEN_SHA256 = "58d7105dfee491fd5ea9ff05e8cdd31df698ff28f0e7d1d810b7e6499c94852d"
 
 
-def test_golden_vector_file_is_byte_pinned():
+def test_golden_vector_content_is_pinned():
     assert costs.golden_vector_sha256() == GOLDEN_SHA256
+
+
+def test_the_pin_survives_a_line_ending_rewrite(tmp_path, monkeypatch):
+    """The regression for the pin itself.
+
+    A Windows checkout with core.autocrlf hands this module a CRLF copy of the
+    same file. The pin must not care: it agrees about what the file says, not
+    about how a platform stored it.
+    """
+    crlf = tmp_path / "cost_golden_vectors.json"
+    crlf.write_bytes(costs._GOLDEN_PATH.read_bytes().replace(b"\n", b"\r\n"))
+    assert crlf.read_bytes() != costs._GOLDEN_PATH.read_bytes()
+
+    for cached in (costs._golden_payload, costs.golden_vector_sha256):
+        cached.cache_clear()
+    monkeypatch.setattr(costs, "_GOLDEN_PATH", crlf)
+    try:
+        assert costs.golden_vector_sha256() == GOLDEN_SHA256
+    finally:
+        monkeypatch.undo()
+        for cached in (costs._golden_payload, costs.golden_vector_sha256):
+            cached.cache_clear()
 
 
 def test_golden_vector_file_declares_the_constants_this_module_uses():

@@ -507,28 +507,44 @@ def estimate_cost(
 
 
 @lru_cache(maxsize=1)
-def _golden_bytes() -> bytes:
-    return _GOLDEN_PATH.read_bytes()
+def _golden_payload() -> dict:
+    return json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)
 def golden_vector_sha256() -> str:
-    """sha256 of the golden-vector file's bytes.
+    """sha256 of the golden-vector file's CANONICAL CONTENT.
 
     Stock-Vault carries the same file. One hash comparison decides whether the
     two independent implementations are still pinned to the same arithmetic;
-    without it, a divergence would surface as an unexplained difference between
-    simulated and evaluated cost months later, at which point neither number
-    could be trusted.
+    without it a divergence would surface months later as an unexplained gap
+    between simulated and evaluated cost, at which point neither number could
+    be trusted.
+
+    The hash is taken over ``json.dumps(payload, sort_keys=True,
+    separators=(",", ":"))`` rather than over the file's raw bytes, and that is
+    the load-bearing detail. A raw-byte hash of a *text* file is not a portable
+    pin: git rewrites line endings on checkout (a Windows runner with
+    ``core.autocrlf`` turns every ``\\n`` into ``\\r\\n``), so the same commit
+    hashes differently on two machines and the pin fails for a reason that has
+    nothing to do with the cost model. A cross-repository agreement that breaks
+    on a checkout setting is not an agreement. Canonicalising first pins what
+    the file *says*, which is the thing the two repositories actually have to
+    agree about — and it lets either side reformat its copy without a
+    false alarm. ``.gitattributes`` separately keeps the stored bytes at LF, so
+    the two copies stay byte-identical as well; that is a convenience, this is
+    the guarantee.
     """
 
-    return hashlib.sha256(_golden_bytes()).hexdigest()
+    canonical = json.dumps(
+        _golden_payload(), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @lru_cache(maxsize=1)
 def _load_golden() -> tuple[dict, ...]:
-    payload = json.loads(_golden_bytes().decode("utf-8"))
-    return tuple(payload["vectors"])
+    return tuple(_golden_payload()["vectors"])
 
 
 #: Synthetic worked examples every implementation of this model must reproduce.

@@ -25,7 +25,9 @@ All notable changes to this project are documented here. The format follows
   trip), and that is `GOLDEN_VECTORS[0]` in `config/cost_golden_vectors.json` rather than a
   remark. Stock-Vault implements the same model independently — the two repositories may not
   import each other — so that file is the pin: both carry byte-identical copies and both assert
-  its sha256.
+  the sha256 of its canonical JSON content. Canonical rather than raw bytes because git rewrites
+  line endings on checkout, and a cross-repository agreement that fails on a Windows runner's
+  `core.autocrlf` is not an agreement; `tests/test_costs.py` pins that with a CRLF rewrite.
 
   The v6 return join writes `round_trip_cost_bps` and its components onto the evaluable panel,
   priced at the entry close and at a declared per-position notional, and carries the raw inputs

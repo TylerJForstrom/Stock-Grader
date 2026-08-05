@@ -25,7 +25,14 @@ value from any private archive appears here, and none may be added
 
 Stock-Vault implements the same model independently — the two repositories may
 not import each other — and the golden-vector file is what keeps them from
-drifting. Both carry byte-identical copies and both assert its sha256.
+drifting. Both carry byte-identical copies and both assert the sha256 of its
+**canonical content** (`json.dumps(payload, sort_keys=True,
+separators=(",", ":"))`), not of its raw bytes: git rewrites line endings on
+checkout, so a byte hash of a text file fails on a Windows runner for a reason
+that has nothing to do with the cost model, and a cross-repository agreement
+that breaks on a checkout setting is not an agreement. `.gitattributes`
+separately keeps the stored bytes at LF; that is tidiness, the canonical hash
+is the guarantee.
 
 ## Composition
 
