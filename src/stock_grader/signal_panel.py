@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -39,6 +40,7 @@ from typing import Any
 
 import pandas as pd
 
+from .costs import COST_MODEL_ID, CostInputs, estimate_cost, golden_vector_sha256
 from .panel import (
     TOTAL_RETURN_COVERAGE_BAR,
     load_bars,
@@ -51,6 +53,8 @@ from .panel import (
 )
 
 __all__ = [
+    "COST_INPUT_COLUMNS",
+    "DEFAULT_POSITION_NOTIONAL_USD",
     "SIGNAL_PANEL_SCHEMA_VERSION",
     "SIGNAL_PANEL_VERSION",
     "SignalPanelConfig",
@@ -84,6 +88,42 @@ REQUIRED_OBSERVATION_COLUMNS = frozenset(
     }
 )
 
+#: Liquidity state the vault's observation part must carry for this join to
+#: price a row's trading cost. All five or none: a cost assembled from four of
+#: them and one fabricated default is worse than no cost at all, because it
+#: reads exactly like a measured one. A panel whose observations omit these
+#: carries NO cost column, attests ``per_row_costs_present: False``, and
+#: evaluates on the flat charge exactly as it always did.
+#:
+#: * ``adv20_dollar`` — median ``close x volume`` over the trailing 20 archived
+#:   sessions as of the signal date. Median, and dollars, and a window, so a
+#:   one-day volume spike cannot reprice a name.
+#: * ``cs21_spread_bps`` — Corwin-Schultz full spread in bps over the same
+#:   21-session window, window mean floored at zero ONCE, tick floor NOT yet
+#:   applied (:func:`stock_grader.costs.spread_bps` owns that).
+#: * ``sigma21`` — sd of daily log close-to-close returns over that window,
+#:   split-cleaned.
+#: * ``amihud_lambda_bps_per_musd`` — median daily ``|r| / $volume`` over that
+#:   window, in bps of price per $1M traded.
+#: * ``cost_usable_pairs`` — consecutive-session pairs that survived the split
+#:   exclusion, so this side can apply the short-window refusal rather than
+#:   trusting that the producer did.
+COST_INPUT_COLUMNS = (
+    "adv20_dollar",
+    "cs21_spread_bps",
+    "sigma21",
+    "amihud_lambda_bps_per_musd",
+    "cost_usable_pairs",
+)
+
+#: Per-position notional the emitted ``round_trip_cost_bps`` is priced at.
+#: Cost is a function of size, so a cost column without a declared size is
+#: meaningless; $100k is one position of a $1M book spread across ten names,
+#: the size at which the participation cap starts to bind in thin names rather
+#: than a frictionless toy. The panel carries the raw inputs alongside, so any
+#: other rung of the capacity ladder is a recomputation, not a rebuild.
+DEFAULT_POSITION_NOTIONAL_USD = 100_000.0
+
 
 class SignalPanelError(RuntimeError):
     """The join cannot proceed honestly (bad artifact, escaped path)."""
@@ -93,6 +133,7 @@ class SignalPanelError(RuntimeError):
 class SignalPanelConfig:
     split_tolerance: float = 0.01
     rebuild: bool = False
+    cost_position_notional_usd: float = DEFAULT_POSITION_NOTIONAL_USD
 
 
 @dataclass(slots=True)
@@ -119,6 +160,26 @@ class SignalPeriodAccounting:
     dividend_uncovered: int = 0
     dividend_cash_rows: int = 0
     pit_membership_rows: int = 0
+    # Cost accounting, all three counted rather than inferred. ``cost_priced``
+    # plus ``no_cost_estimate`` equals ``kept`` whenever the observation part
+    # carried the inputs at all; when it did not, both are 0 and the panel-level
+    # attestation says so, which is a different fact from "every row refused".
+    cost_priced: int = 0
+    no_cost_estimate: int = 0
+    capacity_truncated_rows: int = 0
+    # Notional the participation cap refused, as a fraction of notional
+    # requested, over this signal date. The headline capacity number: a band
+    # whose orders are mostly refused has no edge to measure at that size,
+    # whatever its cost column says about the fraction that did fit.
+    capacity_truncated_notional_fraction: float = 0.0
+    # WHAT priced this date, persisted with the counts. An incremental run
+    # re-prices nothing, so without these the whole-panel block would report a
+    # null cost model for a panel whose every row carries one — the same
+    # last-run-only failure the unresolved-ticker field was fixed for. They also
+    # make a mixed-size panel detectable: two signal dates priced at two
+    # notionals are two measurements sharing one column name.
+    cost_model_id: str | None = None
+    cost_position_notional_usd: float | None = None
     kept: int = 0
     # The tickers behind ``unresolved_dropped``, persisted per signal date.
     # Without this field the identities lived only in the run that priced them:
@@ -157,6 +218,20 @@ class SignalPanelResult:
     panel_observations: int = 0
     no_start_price_rows: int = 0
     survival_rate: float = 0.0
+    # Whole-panel cost accounting, from the same persisted per-date blocks as
+    # everything else here.
+    cost_priced_rows: int = 0
+    no_cost_estimate_rows: int = 0
+    cost_coverage: float = 0.0
+    capacity_truncated_rows: int = 0
+    capacity_truncated_notional_fraction: float = 0.0
+    cost_position_notional_usd: float | None = None
+    cost_model_id: str | None = None
+    # Signal dates whose closed accounting names a different cost model or a
+    # different position size from the rest of the panel. Non-empty means the
+    # cost column mixes two measurements and the panel refuses rather than
+    # publishing a mean over both.
+    cost_inconsistent_dates: list[str] = field(default_factory=list)
     periods_accounted: int = 0
     periods_in_panel: int = 0
     dividend_coverage: float = 0.0
@@ -185,6 +260,47 @@ def _check_observation_columns(signal: str, day: dt.date, frame: pd.DataFrame) -
             "vault must export observations, not returns, or the single-owner "
             "guarantee is void."
         )
+
+
+def _finite(value: Any) -> float | None:
+    """A float, or None for anything that is not one. Never a substituted zero."""
+
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _cost_inputs(observation: Any, price: float) -> CostInputs | None:
+    """Read one row's liquidity state off the observation, or refuse.
+
+    ``price`` is the ENTRY close, not the signal-date close: it is the price the
+    fill happens at, so the tick floor is measured against the price actually
+    paid. The estimation window still ends at the signal date — the producer
+    owns it, and it must, because only the producer can see the trailing bars.
+    That one-session offset is the price of the v6 split and is disclosed rather
+    than papered over.
+    """
+
+    adv = _finite(getattr(observation, "adv20_dollar", None))
+    spread = _finite(getattr(observation, "cs21_spread_bps", None))
+    sigma = _finite(getattr(observation, "sigma21", None))
+    lam = _finite(getattr(observation, "amihud_lambda_bps_per_musd", None))
+    pairs = _finite(getattr(observation, "cost_usable_pairs", None))
+    if adv is None or spread is None or sigma is None or lam is None or pairs is None:
+        return None
+    inputs = CostInputs(
+        price=price,
+        adv20_dollar=adv,
+        sigma=sigma,
+        cs_spread_bps=spread,
+        amihud_lambda_bps_per_musd=lam,
+        usable_pairs=int(pairs),
+    )
+    return inputs if inputs.is_estimable() else None
 
 
 def _panel_dir(vault: Any, signal: str, version: int) -> Path:
@@ -372,6 +488,30 @@ def build_signal_panel(
     # tree, and two parts priced by two different return implementations would
     # be indistinguishable after the fact.
     builder_commit = package_commit()
+    # All five inputs on every pending part, or none of them anywhere. A panel
+    # whose early parts carry costs and whose later parts do not would evaluate
+    # half its periods net and half gross under one heading, and the mean would
+    # be a number describing nothing.
+    costs_available = all(
+        set(COST_INPUT_COLUMNS) <= set(observations[day].columns) for day in pending
+    )
+    if costs_available:
+        log(
+            f"{signal}: pricing per-row costs at "
+            f"${config.cost_position_notional_usd:,.0f} per position ({COST_MODEL_ID})"
+        )
+    else:
+        missing_inputs = sorted(
+            set(COST_INPUT_COLUMNS) - set.intersection(
+                *(set(observations[day].columns) for day in pending)
+            )
+        )
+        log(
+            f"{signal}: no per-row cost column — the observation parts do not carry "
+            + ", ".join(missing_inputs)
+            + ". The panel will evaluate on the evaluator's flat charge and attest "
+            "per_row_costs_present: false."
+        )
     new_parts: dict[dt.date, pd.DataFrame] = {}
 
     for signal_date in pending:
@@ -382,6 +522,10 @@ def build_signal_panel(
             return_start=entry.isoformat(),
             return_end=exit_.isoformat(),
             observations=len(frame),
+            cost_model_id=COST_MODEL_ID if costs_available else None,
+            cost_position_notional_usd=(
+                float(config.cost_position_notional_usd) if costs_available else None
+            ),
         )
         # One slice per signal date, then group: every ticker in this
         # cross-section shares the window, so the per-row work is a dict lookup
@@ -474,6 +618,64 @@ def build_signal_panel(
             if membership_is_pit:
                 accounting.pit_membership_rows += 1
 
+            # Cost is a property of the row, priced at the entry close the fill
+            # uses. A row whose inputs cannot support an estimate gets NaN and
+            # is counted — never a band average, never a back-filled constant,
+            # because a fabricated cost is indistinguishable from a measured one
+            # by the time anybody reads the panel.
+            cost_columns: dict[str, Any] = {}
+            if costs_available:
+                inputs = _cost_inputs(observation, start_close)
+                estimate = (
+                    None
+                    if inputs is None
+                    else estimate_cost(inputs, config.cost_position_notional_usd)
+                )
+                if estimate is None:
+                    accounting.no_cost_estimate += 1
+                    cost_columns = {
+                        "round_trip_cost_bps": float("nan"),
+                        "one_way_cost_bps": float("nan"),
+                        "half_spread_bps": float("nan"),
+                        "impact_bps": float("nan"),
+                        "cost_participation": float("nan"),
+                        "cost_capacity_truncated": False,
+                        "cost_notional_target_usd": float(
+                            config.cost_position_notional_usd
+                        ),
+                        "cost_notional_allowed_usd": float("nan"),
+                        "cost_adv20_dollar": float("nan"),
+                        "cost_sigma": float("nan"),
+                        "cost_cs_spread_bps": float("nan"),
+                        "cost_amihud_lambda_bps_per_musd": float("nan"),
+                        "cost_model_id": COST_MODEL_ID,
+                    }
+                else:
+                    accounting.cost_priced += 1
+                    if estimate.capacity_truncated:
+                        accounting.capacity_truncated_rows += 1
+                    cost_columns = {
+                        "round_trip_cost_bps": estimate.round_trip_bps,
+                        "one_way_cost_bps": estimate.one_way_bps,
+                        "half_spread_bps": estimate.half_spread_bps,
+                        "impact_bps": estimate.impact_bps,
+                        "cost_participation": estimate.participation,
+                        "cost_capacity_truncated": estimate.capacity_truncated,
+                        "cost_notional_target_usd": estimate.notional_target_usd,
+                        "cost_notional_allowed_usd": estimate.notional_allowed_usd,
+                        # The raw inputs ride along so the capacity ladder is a
+                        # recomputation over this panel rather than a rebuild of
+                        # it: parts are immutable, and re-pricing four rungs by
+                        # rebuilding would need four namespaces.
+                        "cost_adv20_dollar": inputs.adv20_dollar,
+                        "cost_sigma": inputs.sigma,
+                        "cost_cs_spread_bps": inputs.cs_spread_bps,
+                        "cost_amihud_lambda_bps_per_musd": (
+                            inputs.amihud_lambda_bps_per_musd
+                        ),
+                        "cost_model_id": COST_MODEL_ID,
+                    }
+
             rows.append(
                 {
                     "signal_date": signal_date.isoformat(),
@@ -517,11 +719,26 @@ def build_signal_panel(
                     "panel_version": version,
                     "panel_schema_version": SIGNAL_PANEL_SCHEMA_VERSION,
                     "builder_commit": builder_commit,
+                    **cost_columns,
                 }
             )
             accounting.kept += 1
 
         accounting.unresolved_tickers = sorted(set(accounting.unresolved_tickers))
+        if costs_available and rows:
+            target = sum(
+                float(row["cost_notional_target_usd"])
+                for row in rows
+                if math.isfinite(float(row["cost_notional_allowed_usd"]))
+            )
+            allowed = sum(
+                float(row["cost_notional_allowed_usd"])
+                for row in rows
+                if math.isfinite(float(row["cost_notional_allowed_usd"]))
+            )
+            accounting.capacity_truncated_notional_fraction = (
+                0.0 if target <= 0.0 else max(0.0, 1.0 - allowed / target)
+            )
         result.periods.append(accounting)
         if rows:
             part = pd.DataFrame(rows).sort_values("ticker").reset_index(drop=True)
@@ -570,6 +787,61 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     result.panel_observations = observed
     result.no_start_price_rows = no_start
     result.survival_rate = kept / observed if observed else 0.0
+    priced = sum(int(entry.get("cost_priced", 0)) for entry in counts_by_date.values())
+    refused = sum(
+        int(entry.get("no_cost_estimate", 0)) for entry in counts_by_date.values()
+    )
+    result.cost_priced_rows = priced
+    result.no_cost_estimate_rows = refused
+    # Denominator is the rows that WERE offered to the cost model, not every
+    # kept row: on a panel with no cost inputs at all both counters are zero,
+    # and a coverage of 0/0 reported as 0.0 beside a False attestation says
+    # "not attempted", where 0/kept would say "attempted and failed".
+    costed = priced + refused
+    result.cost_coverage = priced / costed if costed else 0.0
+    result.capacity_truncated_rows = sum(
+        int(entry.get("capacity_truncated_rows", 0)) for entry in counts_by_date.values()
+    )
+    truncation_weights = [
+        (
+            int(entry.get("cost_priced", 0)),
+            float(entry.get("capacity_truncated_notional_fraction", 0.0)),
+        )
+        for entry in counts_by_date.values()
+    ]
+    weight = sum(rows for rows, _fraction in truncation_weights)
+    result.capacity_truncated_notional_fraction = (
+        sum(rows * fraction for rows, fraction in truncation_weights) / weight
+        if weight
+        else 0.0
+    )
+    # Restored from the persisted accounting, not from this run: an incremental
+    # run re-prices nothing and must still name the cost model the closed parts
+    # were priced under.
+    models = {
+        str(entry["cost_model_id"])
+        for entry in counts_by_date.values()
+        if entry.get("cost_model_id")
+    }
+    notionals = {
+        float(entry["cost_position_notional_usd"])
+        for entry in counts_by_date.values()
+        if entry.get("cost_position_notional_usd") is not None
+    }
+    result.cost_model_id = models.pop() if len(models) == 1 else None
+    result.cost_position_notional_usd = notionals.pop() if len(notionals) == 1 else None
+    result.cost_inconsistent_dates = sorted(
+        signal_date
+        for signal_date, entry in counts_by_date.items()
+        if int(entry.get("cost_priced", 0)) > 0
+        and (
+            result.cost_model_id is None
+            or str(entry.get("cost_model_id") or "") != result.cost_model_id
+            or result.cost_position_notional_usd is None
+            or float(entry.get("cost_position_notional_usd") or 0.0)
+            != result.cost_position_notional_usd
+        )
+    )
     result.periods_accounted = len(counts_by_date)
     result.periods_in_panel = sum(
         1 for entry in counts_by_date.values() if int(entry.get("kept", 0)) > 0
@@ -598,6 +870,12 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
             and result.dividend_coverage >= TOTAL_RETURN_COVERAGE_BAR
         ),
         "delisting_return_included": bool(kept > 0 and unresolved == 0),
+        # Computed, like the other three. True only when every kept row of
+        # every accounted period carries a real cost estimate. One refused row
+        # anywhere makes it False and leaves ``no_cost_estimate_rows`` to say
+        # how many — the evaluator then knows the net numbers are missing names,
+        # rather than believing a panel that quietly dropped its thinnest ones.
+        "per_row_costs_present": bool(kept > 0 and costed == kept and refused == 0),
     }
 
 
@@ -669,6 +947,17 @@ def write_signal_panel(
         result.rows_written += len(part)
 
     _aggregate(counts_by_date, result)
+    if result.cost_inconsistent_dates:
+        raise SignalPanelError(
+            f"{signal} mixes cost models or position sizes across signal dates: "
+            f"{', '.join(result.cost_inconsistent_dates)} disagree with the rest of "
+            f"the panel (model {result.cost_model_id!r}, notional "
+            f"{result.cost_position_notional_usd!r}). round_trip_cost_bps is a "
+            "function of size, so a panel priced at two sizes carries two different "
+            "measurements under one column name and its mean net spread describes "
+            "neither. Parts are immutable: build a new panel version at one size "
+            "instead of extending this one at another."
+        )
 
     parts = sorted(
         path
@@ -761,6 +1050,15 @@ def write_signal_panel(
             "dividend_coverage": round(result.dividend_coverage, 6),
             "dividend_archive_months": result.dividend_archive_months,
             "pit_membership_coverage": round(result.pit_membership_coverage, 6),
+            "cost_model_id": result.cost_model_id,
+            "cost_position_notional_usd": result.cost_position_notional_usd,
+            "cost_priced_rows": result.cost_priced_rows,
+            "no_cost_estimate_rows": result.no_cost_estimate_rows,
+            "cost_coverage": round(result.cost_coverage, 6),
+            "capacity_truncated_rows": result.capacity_truncated_rows,
+            "capacity_truncated_notional_fraction": round(
+                result.capacity_truncated_notional_fraction, 6
+            ),
             "attestations": result.attestations,
         },
     )
@@ -817,6 +1115,22 @@ def build_payload(result: SignalPanelResult) -> dict:
         "dividend_coverage": result.dividend_coverage,
         "dividend_archive_months": result.dividend_archive_months,
         "pit_membership_coverage": result.pit_membership_coverage,
+        # What priced this panel's trading costs, and at what size. A net
+        # number whose cost model and position size are not on the artifact is
+        # not reproducible: the same panel priced at $100k and at $10M are
+        # different measurements with the same column name.
+        "cost_model": {
+            "cost_model_id": result.cost_model_id,
+            "position_notional_usd": result.cost_position_notional_usd,
+            "cost_priced_rows": result.cost_priced_rows,
+            "no_cost_estimate_rows": result.no_cost_estimate_rows,
+            "cost_coverage": result.cost_coverage,
+            "capacity_truncated_rows": result.capacity_truncated_rows,
+            "capacity_truncated_notional_fraction": (
+                result.capacity_truncated_notional_fraction
+            ),
+            "golden_vector_sha256": golden_vector_sha256(),
+        },
         "attestations": result.attestations,
         # Two provenances, never mixed in one namespace: everything above is
         # whole-panel (aggregated from the persisted counts.json), everything

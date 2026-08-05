@@ -38,6 +38,13 @@ __all__ = [
 ]
 
 
+#: Per-row round-trip cost, in basis points, written by the v6 return join
+#: (:mod:`stock_grader.signal_panel`). A panel that carries it is charged name
+#: by name; a panel that does not is charged ``transaction_cost_bps`` flat,
+#: exactly as every panel was before this column existed.
+COST_COLUMN = "round_trip_cost_bps"
+
+
 @dataclass(frozen=True, slots=True)
 class BacktestConfig:
     quantiles: int = 5
@@ -47,6 +54,11 @@ class BacktestConfig:
     bootstrap_samples: int = 1_000
     bootstrap_block_periods: int = 3
     seed: int = 0
+    #: Set to a column name to charge per-row costs when the panel carries it.
+    #: Set to ``None`` to force the flat charge even on a panel that does — the
+    #: A/B that shows how much of a result the cost model is responsible for,
+    #: which is a question worth being able to ask directly.
+    cost_column: str | None = COST_COLUMN
 
     def __post_init__(self) -> None:
         if self.quantiles < 2:
@@ -77,6 +89,22 @@ class PeriodResult:
     top_turnover: float
     bottom_turnover: float
     quantile_returns: list[float]
+    #: Equal-weight mean round-trip cost, in bps, of the names actually held in
+    #: each leg this period. Under the flat charge both equal
+    #: ``transaction_cost_bps``, so the field reads the same for an old panel as
+    #: the constant it was always charged.
+    top_cost_bps: float = 0.0
+    bottom_cost_bps: float = 0.0
+    #: Spearman IC of score against the COST-NET forward return. ``None`` under
+    #: the flat charge, and deliberately so: subtracting one constant from every
+    #: name is a monotone transform, so a flat-cost "net IC" is the gross IC
+    #: wearing a different label, and printing it would suggest costs had been
+    #: accounted for in a rank statistic when nothing had been.
+    rank_ic_net: float | None = None
+    #: Rows dropped this period for carrying no cost estimate. A name whose
+    #: liquidity cannot be measured is a name you cannot honestly claim to have
+    #: traded, so it leaves the cross-section — counted, never back-filled.
+    no_cost_estimate_dropped: int = 0
 
 
 @dataclass(slots=True)
@@ -100,6 +128,18 @@ class BacktestReport:
     rank_ic_interval: tuple[float, float] | None
     net_spread_interval: tuple[float, float] | None
     limitations: list[str] = field(default_factory=list)
+    #: Whether the per-row cost column priced this run. False means the flat
+    #: ``transaction_cost_bps`` charge — the historical behaviour, unchanged.
+    per_row_costs_used: bool = False
+    #: Mean per-row round-trip cost across both legs and all periods, in bps.
+    #: The one number that says how far the panel's own costs sit from the flat
+    #: assumption it would otherwise have been charged.
+    mean_round_trip_cost_bps: float | None = None
+    #: Mean cost-net rank IC. ``None`` under the flat charge (see
+    #: :attr:`PeriodResult.rank_ic_net`).
+    mean_rank_ic_net: float | None = None
+    #: Rows refused across the run for want of a cost estimate.
+    no_cost_estimate_rows: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -289,6 +329,29 @@ def evaluate_walk_forward(
     previous_top: set[str] | None = None
     previous_bottom: set[str] | None = None
     cost_rate = config.transaction_cost_bps / 10_000.0
+    # Per-row costs are used only when the panel actually carries them. Every
+    # panel built before the cost column existed takes the branch below with
+    # `per_row_costs` False and reaches byte-identical numbers through the same
+    # arithmetic it always did — the flat path is not a fallback bolted on, it
+    # is this path with one constant instead of a column.
+    cost_column = config.cost_column
+    per_row_costs = bool(cost_column) and cost_column in frame.columns
+    refused_by_date: dict[pd.Timestamp, int] = {}
+    if per_row_costs and cost_column is not None:
+        values = pd.to_numeric(frame[cost_column], errors="coerce").to_numpy(dtype="float64")
+        if np.any(values[np.isfinite(values)] < 0.0):
+            raise ValueError(f"{cost_column} cannot be negative")
+        estimable = np.isfinite(values)
+        refused_by_date = frame.loc[~estimable].groupby("signal_date", sort=True).size().to_dict()
+        frame = frame.loc[estimable].copy()
+        if frame.empty:
+            raise ValueError(
+                f"every row carries a null {cost_column}: the panel says it prices "
+                "costs per row and can price none of them, so there is nothing to "
+                "evaluate net. Rebuild with the cost inputs present, or evaluate it "
+                "explicitly gross by passing cost_column=None."
+            )
+        frame["_cost_rate"] = values[estimable] / 10_000.0
 
     for signal_date, group in frame.groupby("signal_date", sort=True):
         if len(group) < config.min_cross_section or group["score"].nunique() < 2:
@@ -321,7 +384,30 @@ def evaluate_walk_forward(
         top_return = float(group.loc[top_mask, "forward_return"].mean())
         bottom_return = float(group.loc[bottom_mask, "forward_return"].mean())
         gross_spread = top_return - bottom_return
-        net_spread = gross_spread - cost_rate * (top_turnover + bottom_turnover)
+        # The charge is the same shape it has always been — a rate applied to
+        # the fraction of each leg that actually turned over — with one change:
+        # the rate is the equal-weight mean cost of the names in THAT leg
+        # instead of one number for the whole market. A leg of thin names is
+        # charged what thin names cost; the flat charge is the special case
+        # where every name costs the same, and it reduces to it exactly.
+        if per_row_costs:
+            top_rate = float(group.loc[top_mask, "_cost_rate"].mean())
+            bottom_rate = float(group.loc[bottom_mask, "_cost_rate"].mean())
+            net_return = group["forward_return"] - group["_cost_rate"]
+            rank_ic_net: float | None = float(
+                group["score"].corr(net_return, method="spearman")
+            )
+            net_spread = gross_spread - (
+                top_rate * top_turnover + bottom_rate * bottom_turnover
+            )
+        else:
+            top_rate = bottom_rate = cost_rate
+            rank_ic_net = None
+            # Deliberately the ORIGINAL expression, not the two-rate form with
+            # both rates equal. Those differ in the last bit of a float, and a
+            # published number that moves in its last bit is a number that has
+            # moved. Panels with no cost column reproduce exactly.
+            net_spread = gross_spread - cost_rate * (top_turnover + bottom_turnover)
         periods.append(
             PeriodResult(
                 signal_date=pd.Timestamp(signal_date).date().isoformat(),
@@ -336,6 +422,10 @@ def evaluate_walk_forward(
                 top_turnover=top_turnover,
                 bottom_turnover=bottom_turnover,
                 quantile_returns=quantile_returns,
+                top_cost_bps=top_rate * 10_000.0,
+                bottom_cost_bps=bottom_rate * 10_000.0,
+                rank_ic_net=rank_ic_net,
+                no_cost_estimate_dropped=int(refused_by_date.get(signal_date, 0)),
             )
         )
 
@@ -363,16 +453,49 @@ def evaluate_walk_forward(
         if ic_std > 0
         else None
     )
+    refused_rows = int(sum(refused_by_date.values()))
     spread_std = float(np.std(net, ddof=1)) if len(net) > 1 else 0.0
     spread_sharpe = (
         float(np.mean(net) / spread_std * math.sqrt(config.periods_per_year))
         if spread_std > 0
         else None
     )
-    limitations = [
-        "Transaction costs are a fixed turnover charge and do not model market impact or borrow.",
-        "Bootstrap intervals describe historical period variability, not future-return certainty.",
-    ]
+    bootstrap_note = (
+        "Bootstrap intervals describe historical period variability, not "
+        "future-return certainty."
+    )
+    if per_row_costs:
+        limitations = [
+            (
+                "Transaction costs are per-name, per-date estimates (spread plus "
+                "modelled impact at a declared position size). They still exclude "
+                "borrow, commissions, exchange and regulatory fees, halts, timing "
+                "risk within the session, and any adverse selection conditional on "
+                "the signal."
+            ),
+            bootstrap_note,
+        ]
+    else:
+        limitations = [
+            (
+                "Transaction costs are a fixed turnover charge and do not model "
+                "market impact or borrow."
+            ),
+            bootstrap_note,
+        ]
+        if config.cost_column:
+            limitations.append(
+                "The panel carries no per-row cost column, so one flat rate priced "
+                "every name. A flat rate undercharges thinly traded names and "
+                "overcharges liquid ones, which biases any cross-liquidity comparison "
+                "in favour of the thin side."
+            )
+    if refused_rows:
+        limitations.append(
+            f"{refused_rows} row(s) carried no cost estimate and were dropped from "
+            "the evaluated cross-section rather than charged a substituted cost. The "
+            "names that cannot be priced are not a random sample of the panel."
+        )
     if not contract["point_in_time_universe_attested"]:
         limitations.append(
             "The panel does not attest to a survivorship-free point-in-time universe."
@@ -428,6 +551,25 @@ def evaluate_walk_forward(
             seed=config.seed + 1,
         ),
         limitations=limitations,
+        per_row_costs_used=per_row_costs,
+        mean_round_trip_cost_bps=(
+            float(
+                np.mean(
+                    [
+                        (item.top_cost_bps + item.bottom_cost_bps) / 2.0
+                        for item in periods
+                    ]
+                )
+            )
+            if per_row_costs
+            else None
+        ),
+        mean_rank_ic_net=(
+            float(np.mean([item.rank_ic_net for item in periods]))
+            if per_row_costs
+            else None
+        ),
+        no_cost_estimate_rows=refused_rows,
     )
 
 
@@ -517,6 +659,21 @@ def backtest_to_markdown(report: BacktestReport) -> str:
         f"| Net-spread maximum drawdown | {number(report.max_drawdown, percent=True)} |",
         f"| Mean one-way portfolio turnover | {number(report.mean_turnover, percent=True)} |",
         f"| Mean quantile monotonicity | {number(report.quantile_monotonicity)} |",
+        # Only on a panel that carries per-row costs. Printing "flat 10 bps" as
+        # a diagnostic on every old report would restate the config as though
+        # it were a measurement.
+        *(
+            [
+                (
+                    "| Cost model | per-row (mean round trip "
+                    f"{number(report.mean_round_trip_cost_bps)} bps) |"
+                ),
+                f"| Mean cost-net rank IC | {number(report.mean_rank_ic_net)} |",
+                f"| Rows without a cost estimate | {report.no_cost_estimate_rows} |",
+            ]
+            if report.per_row_costs_used
+            else []
+        ),
         "",
         "## Assumptions and limitations",
         "",
