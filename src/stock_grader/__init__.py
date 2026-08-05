@@ -14,6 +14,7 @@ __version__ = "0.1.0"
 # Order matters only in that every module must be imported; each registers by decorator.
 from . import aggregate, normalize, weighting  # noqa: F401
 from .backtest import BacktestConfig, BacktestReport, backtest_to_markdown, evaluate_walk_forward
+from .costs import CostEstimate, CostInputs, estimate_cost
 from .metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from .peers import PeerSelection, explicit_peers, select_peers
 from .pipeline import GradeConfig, grade_universe
@@ -35,6 +36,8 @@ __all__ = [
     "WEIGHTINGS",
     "BacktestConfig",
     "BacktestReport",
+    "CostEstimate",
+    "CostInputs",
     "Coverage",
     "DCFScenario",
     "GradeConfig",
@@ -49,6 +52,7 @@ __all__ = [
     "build_research_report",
     "build_valuation_analysis",
     "consensus_grade",
+    "estimate_cost",
     "evaluate_walk_forward",
     "explicit_peers",
     "get_profile",

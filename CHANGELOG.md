@@ -5,6 +5,48 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Per-row trading costs** (`stock_grader/costs.py`, `docs/COST-MODEL.md`). The evaluator
+  charged one flat rate in basis points to every name in every period. That rate undercharges
+  thinly traded names and overcharges liquid ones, so any comparison of a signal across
+  liquidity tiers had a thumb on the scale in favour of the thin tier — the exact comparison a
+  "small caps are less efficient" claim rests on. The replacement prices each name-date from its
+  own liquidity state: a Corwin & Schultz (2012) high-low spread over a 21-session window
+  (negative two-day estimates floored ONCE on the window mean, never per pair, and floored again
+  at the one-cent tick), plus Almgren, Thum, Hauptmann & Li (2005) impact at their published
+  calibration for a full-session order, floored by the archive's own Amihud (2002) coefficient —
+  the larger of two documented estimators, a conservatism rule declared in advance rather than a
+  fitted blend. No simulated order exceeds 1% of 20-session dollar ADV, and truncation is counted
+  and reported rather than applied silently.
+
+  The old flat charge is recovered exactly as a degenerate case of the new one (`CS = 0`, tick
+  floor 10 bps, zero volatility, zero lambda, no cap gives 5 bps one way and a 10 bps round
+  trip), and that is `GOLDEN_VECTORS[0]` in `config/cost_golden_vectors.json` rather than a
+  remark. Stock-Vault implements the same model independently — the two repositories may not
+  import each other — so that file is the pin: both carry byte-identical copies and both assert
+  the sha256 of its canonical JSON content. Canonical rather than raw bytes because git rewrites
+  line endings on checkout, and a cross-repository agreement that fails on a Windows runner's
+  `core.autocrlf` is not an agreement; `tests/test_costs.py` pins that with a CRLF rewrite.
+
+  The v6 return join writes `round_trip_cost_bps` and its components onto the evaluable panel,
+  priced at the entry close and at a declared per-position notional, and carries the raw inputs
+  alongside so a capacity ladder is a recomputation over the existing panel rather than a rebuild
+  of it. A row whose window is too short to measure, or whose observations lack any of the five
+  liquidity inputs, gets no cost at all — counted in `no_cost_estimate_rows`, never back-filled
+  from a tier average. `build.json` records the model id, the notional, the coverage, the
+  truncation counts and the golden-vector hash; a net number whose cost model and position size
+  are not on the artifact is not reproducible.
+
+  `evaluate_walk_forward` charges each quantile leg the equal-weight mean cost of the names
+  actually in that leg, applied to that leg's turnover — the same shape the flat charge always
+  had, with a per-leg rate instead of a global constant. **A panel that carries no cost column
+  evaluates bit-for-bit as before**: the original single-constant expression is kept deliberately
+  (`rate * (a + b)` differs from `rate * a + rate * b` in the last bit of a float, and a
+  published number that moves in its last bit is a number that has moved), and
+  `tests/test_backtest.py` pins the whole flat report against literals transcribed from the
+  pre-change implementation.
+
 ### Fixed
 
 - **2026-08-04 audit**: nineteen confirmed defects, all of the same shape — something

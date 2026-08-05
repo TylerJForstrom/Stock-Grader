@@ -20,9 +20,16 @@ import pytest
 from tests.test_vault import _gz_jsonl, _manifest
 
 from stock_grader.backtest import BacktestConfig, evaluate_walk_forward
+from stock_grader.costs import (
+    COST_MODEL_ID,
+    CostInputs,
+    estimate_cost,
+    golden_vector_sha256,
+)
 from stock_grader.data.vault import VaultDataSource, VaultError
 from stock_grader.panel import PLAUSIBLE_SPLIT_RATIOS
 from stock_grader.signal_panel import (
+    DEFAULT_POSITION_NOTIONAL_USD,
     SIGNAL_PANEL_VERSION,
     SignalPanelConfig,
     SignalPanelError,
@@ -575,6 +582,282 @@ def test_a_zero_row_signal_still_publishes_its_catalog(vault_root):
         "universe_is_pit": False,
         "return_is_total": False,
         "delisting_return_included": False,
+        "per_row_costs_present": False,
     }
     assert not panel_path.is_file()
     assert (panel_path.parent / "manifest.json").is_file()
+
+
+# -- per-row trading costs -----------------------------------------------------
+#
+# The join owns forward returns; it now also owns the cost of realising them.
+# A panel whose observations carry no liquidity state gets NO cost column and
+# says so, because a fabricated cost is indistinguishable from a measured one
+# by the time anybody reads the panel.
+
+COST_INPUTS = {
+    "adv20_dollar": 5.0e6,
+    "cs21_spread_bps": 8.0,
+    "sigma21": 0.02,
+    "amihud_lambda_bps_per_musd": 10.0,
+    "cost_usable_pairs": 21,
+}
+
+
+def _costed_rows(overrides: dict[str, dict] | None = None) -> list[dict]:
+    """The healthy cross-section, each row carrying liquidity state."""
+    overrides = overrides or {}
+    rows = []
+    for index, name in enumerate(HEALTHY, start=1):
+        row = _observation(name, float(index), float(index) / 10.0)
+        row.update(COST_INPUTS)
+        row.update(overrides.get(name, {}))
+        rows.append(row)
+    return rows
+
+
+def test_costs_are_priced_per_row_when_the_observations_carry_the_inputs(vault_root):
+    _write_observations(vault_root, "costed", {SIGNAL: _costed_rows()})
+    result, panel_path = _build(vault_root, "costed")
+
+    assert result.attestations["per_row_costs_present"] is True
+    assert result.cost_model_id == COST_MODEL_ID
+    assert result.cost_position_notional_usd == DEFAULT_POSITION_NOTIONAL_USD
+    assert result.cost_priced_rows == len(HEALTHY)
+    assert result.no_cost_estimate_rows == 0
+    assert result.cost_coverage == 1.0
+
+    panel = pd.read_parquet(panel_path)
+    assert "round_trip_cost_bps" in panel.columns
+    assert panel["round_trip_cost_bps"].notna().all()
+    assert (panel["round_trip_cost_bps"] > 0).all()
+    assert (panel["cost_model_id"] == COST_MODEL_ID).all()
+
+    # Priced against the ENTRY close, term by term, with no re-derivation of
+    # the model here: this asserts the join wired the right price and the right
+    # notional into the shared estimator, not that the estimator is correct.
+    for row in panel.itertuples(index=False):
+        expected = estimate_cost(
+            CostInputs(
+                price=float(row.start_close),
+                adv20_dollar=COST_INPUTS["adv20_dollar"],
+                sigma=COST_INPUTS["sigma21"],
+                cs_spread_bps=COST_INPUTS["cs21_spread_bps"],
+                amihud_lambda_bps_per_musd=COST_INPUTS["amihud_lambda_bps_per_musd"],
+                usable_pairs=COST_INPUTS["cost_usable_pairs"],
+            ),
+            DEFAULT_POSITION_NOTIONAL_USD,
+        )
+        assert expected is not None
+        assert row.round_trip_cost_bps == pytest.approx(expected.round_trip_bps)
+        assert row.half_spread_bps == pytest.approx(expected.half_spread_bps)
+        assert row.impact_bps == pytest.approx(expected.impact_bps)
+
+    payload = json.loads((panel_path.parent / "build.json").read_text())
+    assert payload["cost_model"]["cost_model_id"] == COST_MODEL_ID
+    assert payload["cost_model"]["position_notional_usd"] == DEFAULT_POSITION_NOTIONAL_USD
+    assert payload["cost_model"]["golden_vector_sha256"] == golden_vector_sha256()
+
+
+def test_observations_without_liquidity_inputs_get_no_cost_and_attest_false(vault_root):
+    """The honest refusal: no column, no attestation, no invented number."""
+    rows = [
+        _observation(name, float(index), float(index) / 10.0)
+        for index, name in enumerate(HEALTHY, start=1)
+    ]
+    _write_observations(vault_root, "uncosted", {SIGNAL: rows})
+    result, panel_path = _build(vault_root, "uncosted")
+
+    assert result.attestations["per_row_costs_present"] is False
+    assert result.cost_model_id is None
+    assert result.cost_position_notional_usd is None
+    assert result.cost_priced_rows == 0
+    assert result.no_cost_estimate_rows == 0
+    # Zero of zero, not zero of kept: "not attempted" is a different fact from
+    # "attempted and failed", and the panel must not report one as the other.
+    assert result.cost_coverage == 0.0
+
+    panel = pd.read_parquet(panel_path)
+    assert "round_trip_cost_bps" not in panel.columns
+    assert len(panel) == len(HEALTHY)
+
+    # And such a panel still evaluates, on the evaluator's flat charge.
+    report = evaluate_walk_forward(
+        panel.assign(universe_is_pit=True, return_is_total=True),
+        BacktestConfig(min_cross_section=4, quantiles=2),
+    )
+    assert report.per_row_costs_used is False
+
+
+def test_a_partial_input_set_is_treated_as_no_inputs_at_all(vault_root):
+    """Four of five columns is not four-fifths of a cost model."""
+    rows = _costed_rows()
+    for row in rows:
+        del row["sigma21"]
+    _write_observations(vault_root, "partial", {SIGNAL: rows})
+    result, panel_path = _build(vault_root, "partial")
+
+    assert result.attestations["per_row_costs_present"] is False
+    assert "round_trip_cost_bps" not in pd.read_parquet(panel_path).columns
+
+
+def test_an_unmeasurable_row_is_refused_and_counted_never_back_filled(vault_root):
+    """A window too short to measure yields NaN, and the panel says how many."""
+    rows = _costed_rows(
+        overrides={
+            "ALPHA": {"cost_usable_pairs": 4},
+            "BETA": {"adv20_dollar": float("nan")},
+        }
+    )
+    _write_observations(vault_root, "refusing", {SIGNAL: rows})
+    result, panel_path = _build(vault_root, "refusing")
+
+    assert result.no_cost_estimate_rows == 2
+    assert result.cost_priced_rows == len(HEALTHY) - 2
+    assert result.attestations["per_row_costs_present"] is False
+    assert result.cost_coverage == pytest.approx((len(HEALTHY) - 2) / len(HEALTHY))
+
+    panel = pd.read_parquet(panel_path)
+    refused = panel[panel["ticker"].isin({"ALPHA", "BETA"})]
+    assert len(refused) == 2
+    assert refused["round_trip_cost_bps"].isna().all()
+    # The rows are still in the panel with their returns intact: the refusal is
+    # about the COST, and dropping the return too would hide a name from the
+    # gross statistic as well as the net one.
+    assert refused["forward_return"].notna().all()
+
+
+def test_the_participation_cap_truncation_is_counted_not_silent(vault_root):
+    """A $100k position against a $2M ADV20$ cannot be filled; the panel must
+    report the refused notional rather than pricing a trade that cannot happen."""
+    rows = _costed_rows(
+        overrides={name: {"adv20_dollar": 2.0e6} for name in HEALTHY}
+    )
+    _write_observations(vault_root, "capped", {SIGNAL: rows})
+    result, panel_path = _build(vault_root, "capped")
+
+    assert result.capacity_truncated_rows == len(HEALTHY)
+    assert result.capacity_truncated_notional_fraction == pytest.approx(0.8)
+
+    panel = pd.read_parquet(panel_path)
+    assert panel["cost_capacity_truncated"].all()
+    assert panel["cost_notional_allowed_usd"].tolist() == pytest.approx([20_000.0] * len(HEALTHY))
+    assert panel["cost_participation"].tolist() == pytest.approx([0.01] * len(HEALTHY))
+
+
+def test_the_capacity_ladder_can_be_recomputed_from_the_panel_without_a_rebuild(
+    vault_root,
+):
+    """Parts are immutable, so re-pricing four rungs must not mean four builds.
+    The raw inputs ride along on every row for exactly this."""
+    # Deep enough that neither rung is truncated by the participation cap, so
+    # the comparison is about SIZE rather than about the cap.
+    rows = _costed_rows(overrides={name: {"adv20_dollar": 1.0e10} for name in HEALTHY})
+    _write_observations(vault_root, "ladder", {SIGNAL: rows})
+    _result, panel_path = _build(vault_root, "ladder")
+    panel = pd.read_parquet(panel_path)
+
+    for column in (
+        "cost_adv20_dollar",
+        "cost_sigma",
+        "cost_cs_spread_bps",
+        "cost_amihud_lambda_bps_per_musd",
+    ):
+        assert column in panel.columns
+
+    row = panel.iloc[0]
+    reprice = estimate_cost(
+        CostInputs(
+            price=float(row["start_close"]),
+            adv20_dollar=float(row["cost_adv20_dollar"]),
+            sigma=float(row["cost_sigma"]),
+            cs_spread_bps=float(row["cost_cs_spread_bps"]),
+            amihud_lambda_bps_per_musd=float(row["cost_amihud_lambda_bps_per_musd"]),
+            usable_pairs=21,
+        ),
+        1_000_000.0,
+    )
+    assert reprice is not None
+    # A larger position is more expensive; the ladder is a real curve, not a
+    # relabelling of one number.
+    assert reprice.round_trip_bps > float(row["round_trip_cost_bps"])
+
+
+def test_a_costed_panel_evaluates_net_of_its_own_per_row_costs(vault_root):
+    """End to end: the join writes the column and the evaluator charges it."""
+    _write_observations(vault_root, "endtoend", {SIGNAL: _costed_rows()})
+    _result, panel_path = _build(vault_root, "endtoend")
+    panel = pd.read_parquet(panel_path).assign(
+        universe_is_pit=True, return_is_total=True
+    )
+
+    report = evaluate_walk_forward(
+        panel, BacktestConfig(min_cross_section=4, quantiles=2, bootstrap_samples=0)
+    )
+    assert report.per_row_costs_used is True
+    assert report.mean_round_trip_cost_bps is not None
+    assert report.mean_round_trip_cost_bps > 0
+    assert report.no_cost_estimate_rows == 0
+
+
+def test_an_incremental_run_still_names_the_cost_model_the_closed_parts_used(
+    vault_root,
+):
+    """The whole-panel block is restored from counts.json, not from this run.
+
+    An incremental run re-prices nothing. Without persisting the model id and
+    the notional per signal date, the panel would report a null cost model for
+    a panel whose every row carries one — a last-run-only field wearing a
+    whole-panel label, the exact failure the unresolved-ticker accounting was
+    fixed for.
+    """
+    _write_observations(vault_root, "incremental", {SIGNAL: _costed_rows()})
+    first, _ = _build(vault_root, "incremental")
+    assert first.cost_model_id == COST_MODEL_ID
+    assert first.parts_written == 1
+
+    second, panel_path = _build(vault_root, "incremental")
+    assert second.parts_written == 0  # nothing re-priced
+    assert second.cost_model_id == COST_MODEL_ID
+    assert second.cost_position_notional_usd == DEFAULT_POSITION_NOTIONAL_USD
+    assert second.cost_priced_rows == first.cost_priced_rows
+    payload = json.loads((panel_path.parent / "build.json").read_text())
+    assert payload["cost_model"]["cost_model_id"] == COST_MODEL_ID
+
+
+def test_a_panel_priced_at_two_position_sizes_refuses_rather_than_averaging(
+    vault_root,
+):
+    """round_trip_cost_bps is a function of size. Two sizes in one column are
+    two measurements sharing a name, and their mean describes neither."""
+    later = dt.date(2026, 8, 5)
+    _write_observations(
+        vault_root,
+        "twosizes",
+        {SIGNAL: _costed_rows()},
+    )
+    _build(vault_root, "twosizes", cost_position_notional_usd=100_000.0)
+
+    # A second signal date arrives and is priced at a different size.
+    second = [
+        {
+            **_observation(
+                name,
+                float(index),
+                float(index) / 10.0,
+                signal=later,
+                entry=dt.date(2026, 8, 6),
+                exit_=dt.date(2026, 8, 11),
+            ),
+            **COST_INPUTS,
+        }
+        for index, name in enumerate(HEALTHY, start=1)
+    ]
+    _write_observations(
+        vault_root, "twosizes", {SIGNAL: _costed_rows(), later: second}
+    )
+    with pytest.raises(
+        SignalPanelError, match="mixes cost models or position sizes"
+    ) as raised:
+        _build(vault_root, "twosizes", cost_position_notional_usd=25_000.0)
+    assert "build a new panel version at one size" in str(raised.value)

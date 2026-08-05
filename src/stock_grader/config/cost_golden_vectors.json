@@ -1,0 +1,207 @@
+{
+  "constants": {
+    "ADV_PARTICIPATION_CAP": 0.01,
+    "ATHL_ALPHA": 0.891,
+    "ATHL_BETA": 0.6,
+    "ATHL_ETA": 0.142,
+    "ATHL_GAMMA": 0.314,
+    "CS_WINDOW_SESSIONS": 21,
+    "FLAT_ONE_WAY_BPS": 5.0,
+    "MIN_USABLE_PAIRS": 11,
+    "TICK_SIZE_USD": 0.01
+  },
+  "cost_model_id": "cost-v1-cs2012-athl2005-amihud2002",
+  "note": "Cross-repository pin for the per-row trading-cost model. Stock-Grader (src/stock_grader/costs.py) and Stock-Vault (src/stock_vault/costs.py) implement this model independently because neither repository may import the other; this file is what keeps the two implementations from drifting apart in silence. Both repositories carry a byte-identical copy and both assert its sha256. Every input below is a synthetic round number chosen for arithmetic convenience: nothing here is measured from any archive, so the file is safe in a public repository. Tolerance: relative 1e-9. A change to this file is a change to the cost model and must land in both repositories in the same breath.",
+  "schema_version": "1.0",
+  "vectors": [
+    {
+      "expected": {
+        "amihud_impact_bps": 0.0,
+        "athl_impact_bps": 0.0,
+        "capacity_truncated": false,
+        "half_spread_bps": 5.0,
+        "impact_bps": 0.0,
+        "notional_allowed_usd": 1000.0,
+        "notional_target_usd": 1000.0,
+        "one_way_bps": 5.0,
+        "participation": 1e-06,
+        "round_trip_bps": 10.0,
+        "spread_bps": 10.0,
+        "tick_floor_bps": 10.0,
+        "truncated_notional_fraction": 0.0
+      },
+      "inputs": {
+        "adv20_dollar": 1000000000.0,
+        "amihud_lambda_bps_per_musd": 0.0,
+        "cs_spread_bps": 0.0,
+        "price": 10.0,
+        "sigma": 0.0,
+        "usable_pairs": 21
+      },
+      "name": "degenerate-flat-5bps",
+      "notional_usd": 1000.0,
+      "participation_cap": null,
+      "why": "CS=0, tick floor exactly 10 bps, sigma=0, lambda=0, cap disabled: the historical flat charge, exactly. A change that breaks this vector changes every sim-v1 number ever recorded."
+    },
+    {
+      "expected": {
+        "amihud_impact_bps": 0.025,
+        "athl_impact_bps": 1.4619380848,
+        "capacity_truncated": false,
+        "half_spread_bps": 5.0,
+        "impact_bps": 1.4619380848,
+        "notional_allowed_usd": 25000.0,
+        "notional_target_usd": 25000.0,
+        "one_way_bps": 6.4619380848,
+        "participation": 0.005,
+        "round_trip_bps": 12.9238761696,
+        "spread_bps": 10.0,
+        "tick_floor_bps": 10.0,
+        "truncated_notional_fraction": 0.0
+      },
+      "inputs": {
+        "adv20_dollar": 5000000.0,
+        "amihud_lambda_bps_per_musd": 1.0,
+        "cs_spread_bps": 3.0,
+        "price": 10.0,
+        "sigma": 0.02,
+        "usable_pairs": 21
+      },
+      "name": "tick-floor-binds",
+      "notional_usd": 25000.0,
+      "participation_cap": 0.01,
+      "why": "A cheap name whose Corwin-Schultz estimate is narrower than one tick: the tick floor wins."
+    },
+    {
+      "expected": {
+        "amihud_impact_bps": 0.025,
+        "athl_impact_bps": 1.4619380848,
+        "capacity_truncated": false,
+        "half_spread_bps": 12.5,
+        "impact_bps": 1.4619380848,
+        "notional_allowed_usd": 25000.0,
+        "notional_target_usd": 25000.0,
+        "one_way_bps": 13.9619380848,
+        "participation": 0.005,
+        "round_trip_bps": 27.9238761696,
+        "spread_bps": 25.0,
+        "tick_floor_bps": 2.0,
+        "truncated_notional_fraction": 0.0
+      },
+      "inputs": {
+        "adv20_dollar": 5000000.0,
+        "amihud_lambda_bps_per_musd": 1.0,
+        "cs_spread_bps": 25.0,
+        "price": 50.0,
+        "sigma": 0.02,
+        "usable_pairs": 21
+      },
+      "name": "cs-estimate-binds",
+      "notional_usd": 25000.0,
+      "participation_cap": 0.01,
+      "why": "A higher-priced name whose Corwin-Schultz estimate is wider than the tick: the estimate wins."
+    },
+    {
+      "expected": {
+        "amihud_impact_bps": 0.25,
+        "athl_impact_bps": 1.4619380848,
+        "capacity_truncated": false,
+        "half_spread_bps": 4.0,
+        "impact_bps": 1.4619380848,
+        "notional_allowed_usd": 25000.0,
+        "notional_target_usd": 25000.0,
+        "one_way_bps": 5.4619380848,
+        "participation": 0.005,
+        "round_trip_bps": 10.9238761696,
+        "spread_bps": 8.0,
+        "tick_floor_bps": 5.0,
+        "truncated_notional_fraction": 0.0
+      },
+      "inputs": {
+        "adv20_dollar": 5000000.0,
+        "amihud_lambda_bps_per_musd": 10.0,
+        "cs_spread_bps": 8.0,
+        "price": 20.0,
+        "sigma": 0.02,
+        "usable_pairs": 21
+      },
+      "name": "athl-dominates-amihud",
+      "notional_usd": 25000.0,
+      "participation_cap": 0.01,
+      "why": "Model impact above the measured floor: impact is the ATHL term."
+    },
+    {
+      "expected": {
+        "amihud_impact_bps": 5.0,
+        "athl_impact_bps": 1.4619380848,
+        "capacity_truncated": false,
+        "half_spread_bps": 4.0,
+        "impact_bps": 5.0,
+        "notional_allowed_usd": 25000.0,
+        "notional_target_usd": 25000.0,
+        "one_way_bps": 9.0,
+        "participation": 0.005,
+        "round_trip_bps": 18.0,
+        "spread_bps": 8.0,
+        "tick_floor_bps": 5.0,
+        "truncated_notional_fraction": 0.0
+      },
+      "inputs": {
+        "adv20_dollar": 5000000.0,
+        "amihud_lambda_bps_per_musd": 200.0,
+        "cs_spread_bps": 8.0,
+        "price": 20.0,
+        "sigma": 0.02,
+        "usable_pairs": 21
+      },
+      "name": "amihud-floor-binds",
+      "notional_usd": 25000.0,
+      "participation_cap": 0.01,
+      "why": "Measured floor above the model: the conservatism rule takes the larger of the two."
+    },
+    {
+      "expected": {
+        "amihud_impact_bps": 0.8,
+        "athl_impact_bps": 1.7329761472,
+        "capacity_truncated": true,
+        "half_spread_bps": 4.0,
+        "impact_bps": 1.7329761472,
+        "notional_allowed_usd": 20000.0,
+        "notional_target_usd": 100000.0,
+        "one_way_bps": 5.7329761472,
+        "participation": 0.01,
+        "round_trip_bps": 11.4659522945,
+        "spread_bps": 8.0,
+        "tick_floor_bps": 5.0,
+        "truncated_notional_fraction": 0.8
+      },
+      "inputs": {
+        "adv20_dollar": 2000000.0,
+        "amihud_lambda_bps_per_musd": 40.0,
+        "cs_spread_bps": 8.0,
+        "price": 20.0,
+        "sigma": 0.015,
+        "usable_pairs": 21
+      },
+      "name": "capacity-cap-truncates",
+      "notional_usd": 100000.0,
+      "participation_cap": 0.01,
+      "why": "A target of 5 percent of ADV is truncated to the 1 percent cap; participation is the cap and the truncation is reported, never applied silently."
+    },
+    {
+      "expected": null,
+      "inputs": {
+        "adv20_dollar": 5000000.0,
+        "amihud_lambda_bps_per_musd": 10.0,
+        "cs_spread_bps": 8.0,
+        "price": 20.0,
+        "sigma": 0.02,
+        "usable_pairs": 10
+      },
+      "name": "short-window-refusal",
+      "notional_usd": 25000.0,
+      "participation_cap": 0.01,
+      "why": "Ten usable pairs is below MIN_USABLE_PAIRS: no estimate at all, rather than a thinly supported one that reads like a well supported one."
+    }
+  ]
+}

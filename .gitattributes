@@ -7,3 +7,9 @@ config/universe_liq*.txt -text
 # recorded in sibling manifest.json catalogs. Parquet is binary; make that
 # explicit so no platform ever line-ending-translates a hash-pinned part.
 *.parquet -text
+
+# The cross-repository cost-model pin. Stock-Vault carries a byte-identical
+# copy; keep both at LF so the two files compare equal on any platform. The
+# hash in costs.py is taken over canonical JSON, not raw bytes, so a stray CRLF
+# cannot fail the pin — this keeps the bytes tidy, it is not the guarantee.
+src/stock_grader/config/cost_golden_vectors.json text eol=lf
