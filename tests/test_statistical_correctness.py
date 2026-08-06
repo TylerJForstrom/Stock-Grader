@@ -172,9 +172,7 @@ class TestFactorAlignment:
         snapshot, expected_beta, daily_alpha = self._factor_snapshot()
         # Removing benchmark dates used to pair the next two-day market return with a one-day
         # security return. The corrected implementation discards those non-comparable intervals.
-        snapshot.benchmark = snapshot.benchmark.drop(
-            snapshot.benchmark.index[[100, 300]]
-        )
+        snapshot.benchmark = snapshot.benchmark.drop(snapshot.benchmark.index[[100, 300]])
 
         assert beta.fn(snapshot) == pytest.approx(expected_beta, abs=1e-10)
         assert capm_alpha.fn(snapshot) == pytest.approx(
@@ -242,8 +240,7 @@ class TestMomentumWindowIntegrity:
         expected_momentum = float(np.expm1(formation.sum()))
         expected_volatility = float(formation.std(ddof=1) * np.sqrt(TRADING_DAYS))
         expected_discreteness = float(
-            np.sign(expected_momentum)
-            * ((formation < 0).mean() - (formation > 0).mean())
+            np.sign(expected_momentum) * ((formation < 0).mean() - (formation > 0).mean())
         )
 
         assert momentum_12_1.fn(snapshot) == pytest.approx(expected_momentum)

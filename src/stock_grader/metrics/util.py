@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import TypeGuard
 
 import numpy as np
 import pandas as pd
@@ -44,8 +45,13 @@ __all__ = [
 ]
 
 
-def is_finite_number(value: object) -> bool:
-    """True for a real, finite number. NaN, inf and None are all rejected."""
+def is_finite_number(value: object) -> TypeGuard[int | float | np.integer | np.floating]:
+    """True for a real, finite number. NaN, inf and None are all rejected.
+
+    Declared as a TypeGuard so every ``float(value)`` guarded by this function
+    type-checks on the narrowed type instead of on bare ``object`` — the check
+    below is exactly the isinstance test the guard reports.
+    """
     if value is None or isinstance(value, bool):
         return False
     if not isinstance(value, (int, float, np.integer, np.floating)):

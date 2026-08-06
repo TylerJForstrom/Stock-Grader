@@ -75,7 +75,9 @@ def _validate_market_eod_panel(frame: pd.DataFrame) -> pd.DataFrame:
     missing = sorted(set(_MARKET_EOD_COLUMNS) - set(frame.columns))
     if missing:
         raise VaultError("market_eod rows are missing required fields: " + ", ".join(missing))
-    table = frame.loc[:, _MARKET_EOD_COLUMNS].copy()
+    # list(), not the bare tuple: pandas reads a tuple indexer as a single
+    # MultiIndex key rather than a column selection, and it types as a Series.
+    table = frame.loc[:, list(_MARKET_EOD_COLUMNS)].copy()
     table["date"] = pd.to_datetime(table["date"], errors="raise").dt.normalize()
     table["symbol"] = table["symbol"].astype(str).str.upper().str.strip()
     if table["symbol"].eq("").any():
@@ -259,9 +261,7 @@ class VaultDataSource:
                 months.append(month_dir.name)
         return months
 
-    def dividends(
-        self, start: dt.date | None = None, end: dt.date | None = None
-    ) -> pd.DataFrame:
+    def dividends(self, start: dt.date | None = None, end: dt.date | None = None) -> pd.DataFrame:
         """Cash dividend records for ex-date months overlapping ``[start, end]``.
 
         Hash-verified via each month's manifest, like every vault dataset.
@@ -284,9 +284,7 @@ class VaultDataSource:
                     ex_date = dt.date.fromisoformat(str(row["ex_dividend_date"]))
                     cash = float(row["cash_amount"])
                 except (KeyError, TypeError, ValueError) as exc:
-                    raise VaultError(
-                        f"malformed dividend record in {dataset}: {row!r}"
-                    ) from exc
+                    raise VaultError(f"malformed dividend record in {dataset}: {row!r}") from exc
                 ticker = str(row.get("ticker", "")).upper().strip()
                 if not ticker or not (cash >= 0.0):
                     raise VaultError(f"malformed dividend record in {dataset}: {row!r}")
@@ -332,9 +330,7 @@ class VaultDataSource:
         """The observation dataset's manifest (spec, accounting, license note)."""
         return self._manifest(self.signal_panel_dataset(signal, version))
 
-    def signal_panel_observations(
-        self, signal: str, version: int
-    ) -> dict[dt.date, pd.DataFrame]:
+    def signal_panel_observations(self, signal: str, version: int) -> dict[dt.date, pd.DataFrame]:
         """Raw observation parts keyed by signal date, sha256-verified.
 
         Only ``YYYY-MM-DD.parquet`` names listed in the dataset manifest are

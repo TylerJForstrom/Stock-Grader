@@ -18,7 +18,6 @@ import math
 import numpy as np
 import pandas as pd
 import pytest
-
 from scripts.power_table import (
     PRODUCTION_BACKTEST_FLAGS,
     REPO_ROOT,
@@ -32,15 +31,14 @@ from scripts.power_table import (
     summarize_cell,
     write_artifacts,
 )
+
 from stock_grader.data.synthetic import generate_prices
 from stock_grader.significance import norm_ppf
 
 GATE_ALPHA = 0.05
 
 
-def _planted_panel(
-    *, n_names: int, n_months: int, rho: float, seed: int
-) -> pd.DataFrame:
+def _planted_panel(*, n_names: int, n_months: int, rho: float, seed: int) -> pd.DataFrame:
     """A frozen-score panel whose score/forward-return rank correlation is planted.
 
     Prices come from ``generate_prices`` (the repo's own synthetic generator);
@@ -53,9 +51,7 @@ def _planted_panel(
     closes = {}
     for index in range(n_names):
         ticker = f"SYN{index:03d}"
-        prices = generate_prices(
-            ticker, n_days=n_days, seed=seed * 100_003 + index, synthetic=True
-        )
+        prices = generate_prices(ticker, n_days=n_days, seed=seed * 100_003 + index, synthetic=True)
         closes[ticker] = prices["close"]
     close = pd.DataFrame(closes)
     month_end = close.groupby([close.index.year, close.index.month]).tail(1)
@@ -67,13 +63,9 @@ def _planted_panel(
     for position in range(n_months):
         signal_date = month_end.index[position]
         window_end = month_end.index[position + 1]
-        forward = (
-            month_end.iloc[position + 1] / month_end.iloc[position] - 1.0
-        )
+        forward = month_end.iloc[position + 1] / month_end.iloc[position] - 1.0
         ranks = forward.rank(method="average")
-        blom = np.asarray(
-            [norm_ppf((r - 0.375) / (n_names + 0.25)) for r in ranks]
-        )
+        blom = np.asarray([norm_ppf((r - 0.375) / (n_names + 0.25)) for r in ranks])
         noise = rng.standard_normal(n_names)
         scores = rho * blom + math.sqrt(1.0 - rho * rho) * noise
         for index, ticker in enumerate(month_end.columns):
@@ -95,14 +87,10 @@ def _planted_panel(
     return pd.DataFrame(rows)
 
 
-def _stacked_replications(
-    *, n_seeds: int, n_names: int, n_months: int, rho: float
-) -> pd.DataFrame:
+def _stacked_replications(*, n_seeds: int, n_names: int, n_months: int, rho: float) -> pd.DataFrame:
     frames = []
     for replication in range(n_seeds):
-        frame = _planted_panel(
-            n_names=n_names, n_months=n_months, rho=rho, seed=replication + 1
-        )
+        frame = _planted_panel(n_names=n_names, n_months=n_months, rho=rho, seed=replication + 1)
         frame.insert(0, "seed", replication)
         frames.append(frame)
     return pd.concat(frames, ignore_index=True)
@@ -327,16 +315,11 @@ class TestHowReturnScaleReachesTheGate:
         for factor in self.FACTORS:
             scaled = panel.copy()
             scaled["forward_return"] = scaled["forward_return"] * factor
-            other = evaluate_seed_panel(
-                scaled, tmp_path / "free", f"x{factor}", flags=free
-            )
+            other = evaluate_seed_panel(scaled, tmp_path / "free", f"x{factor}", flags=free)
             assert other["significance"]["deflated_sharpe"] == pytest.approx(
                 base["significance"]["deflated_sharpe"], abs=1e-9
             )
-            assert (
-                other["significance"]["significant"]
-                is base["significance"]["significant"]
-            )
+            assert other["significance"]["significant"] is base["significance"]["significant"]
             # The CI bound itself scales; only its SIGN is what the gate reads.
             assert (other["significance"]["sharpe_ci_low"] > 0) is (
                 base["significance"]["sharpe_ci_low"] > 0
@@ -353,16 +336,9 @@ class TestBacktestFlags:
 
     def test_periods_per_year_cannot_change_a_verdict(self, tmp_path):
         panel = _planted_panel(n_names=80, n_months=14, rho=0.6, seed=11)
-        monthly = evaluate_seed_panel(
-            panel, tmp_path / "ppy", "m12", flags=backtest_flags(12)
-        )
-        twice = evaluate_seed_panel(
-            panel, tmp_path / "ppy", "m24", flags=backtest_flags(24)
-        )
-        assert (
-            twice["significance"]["significant"]
-            is monthly["significance"]["significant"]
-        )
+        monthly = evaluate_seed_panel(panel, tmp_path / "ppy", "m12", flags=backtest_flags(12))
+        twice = evaluate_seed_panel(panel, tmp_path / "ppy", "m24", flags=backtest_flags(24))
+        assert twice["significance"]["significant"] is monthly["significance"]["significant"]
         assert twice["significance"]["deflated_sharpe"] == pytest.approx(
             monthly["significance"]["deflated_sharpe"], abs=1e-9
         )
@@ -406,8 +382,12 @@ class TestBandReport:
             ("D", 0.05): 1.00,
         }
         results = [
-            _fake_result(0.0, 47, 650, label="A", regime="smallcap", gate_pass_rate=0.02, n_seeds=40),
-            _fake_result(0.0, 47, 1000, label="D", regime="smallcap", gate_pass_rate=0.00, n_seeds=40),
+            _fake_result(
+                0.0, 47, 650, label="A", regime="smallcap", gate_pass_rate=0.02, n_seeds=40
+            ),
+            _fake_result(
+                0.0, 47, 1000, label="D", regime="smallcap", gate_pass_rate=0.00, n_seeds=40
+            ),
         ]
         for (band, ic), rate in rates.items():
             results.append(
@@ -541,9 +521,7 @@ class TestBandArtifacts:
             "power_table_bands_2026-08-05.md",
             "power_table_bands_2026-08-05.sha256",
         ]
-        payload = json.loads(
-            (tmp_path / "out" / "power_table_bands_2026-08-05.json").read_text()
-        )
+        payload = json.loads((tmp_path / "out" / "power_table_bands_2026-08-05.json").read_text())
         assert payload["schema_version"] == "stock_grader.power_table/2"
         assert payload["evaluator"]["flags"][:2] == ["--periods-per-year", "24"]
         assert payload["reading"]["smallest_detectable_ic"] == {"A": 0.05, "D": 0.03}
@@ -551,17 +529,12 @@ class TestBandArtifacts:
         assert payload["reading"]["primary_periods"] == 47
         # The sha256 manifest must cover both emitted documents.
         sha_lines = (
-            (tmp_path / "out" / "power_table_bands_2026-08-05.sha256")
-            .read_text()
-            .splitlines()
+            (tmp_path / "out" / "power_table_bands_2026-08-05.sha256").read_text().splitlines()
         )
         assert len(sha_lines) == 2
         for line in sha_lines:
             digest, name = line.split("  ")
-            assert (
-                hashlib.sha256((tmp_path / "out" / name).read_bytes()).hexdigest()
-                == digest
-            )
+            assert hashlib.sha256((tmp_path / "out" / name).read_bytes()).hexdigest() == digest
 
     def test_a_different_stem_does_not_collide_with_the_existing_table(self, tmp_path):
         out_dir = tmp_path / "out"
@@ -576,9 +549,7 @@ class TestBandArtifacts:
             stem="power_table_bands",
             periods_per_year=24,
         )
-        assert (out_dir / "power_table_2026-08-05.md").read_text() == (
-            "the earlier artifact"
-        )
+        assert (out_dir / "power_table_2026-08-05.md").read_text() == ("the earlier artifact")
         assert (out_dir / "power_table_bands_2026-08-05.md").exists()
 
     def test_an_unlabelled_grid_still_renders_the_original_report(self, tmp_path):
@@ -608,9 +579,7 @@ class TestBandArtifacts:
         body = (tmp_path / "out" / "power_table_1999-01-01.md").read_text()
         assert body.startswith("# Planted-IC power table")
         assert "How to read the September 2026 verdicts" in body
-        payload = json.loads(
-            (tmp_path / "out" / "power_table_1999-01-01.json").read_text()
-        )
+        payload = json.loads((tmp_path / "out" / "power_table_1999-01-01.json").read_text())
         assert payload["schema_version"] == "stock_grader.power_table/1"
         assert "reading" not in payload
 
@@ -633,9 +602,7 @@ class TestExistingArtifactIsUntouched:
         manifest = (directory / "power_table_2026-08-03.sha256").read_bytes()
         for line in manifest.decode().splitlines():
             digest, name = line.split("  ")
-            assert (
-                hashlib.sha256((directory / name).read_bytes()).hexdigest() == digest
-            ), name
+            assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == digest, name
 
     def test_calibration_artifacts_are_protected_from_eol_translation(self):
         """The .gitattributes rule the hash pin depends on, asserted."""

@@ -155,8 +155,9 @@ def decay_world(tmp_path_factory) -> tuple[Path, Path, list[dt.date]]:
 
     _build_vault(root, sessions, closes)
     frozen = root / "frozen"
-    for signal_date, scores in zip(signal_dates[: len(scores_by_month)], scores_by_month,
-                                   strict=False):
+    for signal_date, scores in zip(
+        signal_dates[: len(scores_by_month)], scores_by_month, strict=False
+    ):
         _write_frozen(frozen, "all_weather", signal_date, scores)
     return frozen / "all_weather", root, sessions
 
@@ -285,14 +286,10 @@ def test_split_suspect_screen_drops_unadjusted_split_jumps(tmp_path):
 # -- ledger charging -----------------------------------------------------------
 
 
-def test_each_horizon_is_a_separate_ledger_trial_with_one_shared_denominator(
-    decay_world, tmp_path
-):
+def test_each_horizon_is_a_separate_ledger_trial_with_one_shared_denominator(decay_world, tmp_path):
     frozen_dir, vault_root, _ = decay_world
     ledger = tmp_path / "ledger.jsonl"
-    curve, _ = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve, _ = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     record_sweep_trials(curve, ledger_path=ledger)
     records = load_manifest(ledger)
     assert [r["horizons"] for r in records] == [[5], [21], [63]]
@@ -300,9 +297,7 @@ def test_each_horizon_is_a_separate_ledger_trial_with_one_shared_denominator(
     assert verify_chain(records) and all(verify_line(r) for r in records)
 
     # Re-run: three more records, all charged for every look ever recorded.
-    curve2, _ = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve2, _ = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     record_sweep_trials(curve2, ledger_path=ledger)
     records = load_manifest(ledger)
     assert len(records) == 6
@@ -316,9 +311,7 @@ def test_non_primary_horizons_are_marked_exploratory_and_cannot_pass_the_gate(
 ):
     frozen_dir, vault_root, _ = decay_world
     ledger = tmp_path / "ledger.jsonl"
-    curve, _ = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve, _ = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     record_sweep_trials(curve, ledger_path=ledger)
     for record in load_manifest(ledger):
         horizon = record["horizons"][0]
@@ -336,14 +329,10 @@ def test_ledger_sharpe_is_offset_averaged_and_significance_is_most_conservative(
 
     frozen_dir, vault_root, _ = decay_world
     ledger = tmp_path / "ledger.jsonl"
-    curve, _ = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve, _ = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     record_sweep_trials(curve, ledger_path=ledger)
     long = next(r for r in curve.horizons if r.horizon_days == 63)
-    per_offset = [
-        [p.net_spread for p in report.periods] for report in long.inference_by_offset
-    ]
+    per_offset = [[p.net_spread for p in report.periods] for report in long.inference_by_offset]
     offset_sharpes = [per_period_sharpe(spreads) for spreads in per_offset]
 
     record = next(r for r in load_manifest(ledger) if r["horizons"] == [63])
@@ -379,9 +368,7 @@ def test_ledger_sharpe_is_offset_averaged_and_significance_is_most_conservative(
 
 def test_planted_decay_curve_shows_higher_ic_per_day_at_short_horizons(decay_world):
     frozen_dir, vault_root, _ = decay_world
-    curve, _ = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve, _ = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     by_horizon = {r.horizon_days: r for r in curve.horizons if r.unusable_reason is None}
     assert 5 in by_horizon and 21 in by_horizon
     assert by_horizon[5].mean_rank_ic > 0, "the planted signal must be detected"
@@ -395,9 +382,7 @@ def test_inference_averages_every_offset_subsample_not_an_arbitrary_phase(decay_
     subsample, and the inference numbers are the equal-weight average over ALL
     offsets — no statistic may depend on the old arbitrary fixed offset 0."""
     frozen_dir, vault_root, _ = decay_world
-    curve, panels = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve, panels = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     by_horizon = {r.horizon_days: r for r in curve.horizons if r.unusable_reason is None}
 
     long = by_horizon[63]
@@ -416,13 +401,9 @@ def test_inference_averages_every_offset_subsample_not_an_arbitrary_phase(decay_
         assert (gaps.astype(int) >= 63).all(), "each subsample stays non-overlapping"
 
     per_offset_ir = [r.rank_ic_information_ratio for r in long.inference_by_offset]
-    assert long.rank_ic_information_ratio == pytest.approx(
-        sum(per_offset_ir) / len(per_offset_ir)
-    )
+    assert long.rank_ic_information_ratio == pytest.approx(sum(per_offset_ir) / len(per_offset_ir))
     per_offset_spread = [r.mean_net_spread for r in long.inference_by_offset]
-    assert long.mean_net_spread == pytest.approx(
-        sum(per_offset_spread) / len(per_offset_spread)
-    )
+    assert long.mean_net_spread == pytest.approx(sum(per_offset_spread) / len(per_offset_spread))
     per_offset_sharpe = [r.annualized_spread_sharpe for r in long.inference_by_offset]
     assert long.annualized_spread_sharpe == pytest.approx(
         sum(per_offset_sharpe) / len(per_offset_sharpe)
@@ -434,9 +415,7 @@ def test_inference_averages_every_offset_subsample_not_an_arbitrary_phase(decay_
     short = by_horizon[5]
     assert short.overlap_periods == 1 and len(short.inference_by_offset) == 1
     only = short.inference_by_offset[0]
-    assert short.rank_ic_information_ratio == pytest.approx(
-        only.rank_ic_information_ratio
-    )
+    assert short.rank_ic_information_ratio == pytest.approx(only.rank_ic_information_ratio)
     assert short.mean_net_spread == pytest.approx(only.mean_net_spread)
     assert short.effective_periods == len(only.periods) == short.periods
 
@@ -450,9 +429,7 @@ def test_non_overlapping_only_reports_offset_averaged_headline_stats(decay_world
         quantiles=2,
         non_overlapping_only=True,
     )
-    curve, _ = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=config
-    )
+    curve, _ = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=config)
     long = next(r for r in curve.horizons if r.horizon_days == 63)
     per_offset_ic = [r.mean_rank_ic for r in long.inference_by_offset]
     assert long.mean_rank_ic == pytest.approx(sum(per_offset_ic) / len(per_offset_ic))
@@ -463,9 +440,7 @@ def test_non_overlapping_only_reports_offset_averaged_headline_stats(decay_world
     ), "the interval must be the ENVELOPE across offsets, never a tighter claim"
 
 
-def _horizon_point(
-    horizon: int, mean_ic: float, interval_width: float | None = None
-):
+def _horizon_point(horizon: int, mean_ic: float, interval_width: float | None = None):
     from stock_grader.decay import HorizonResult
 
     result = HorizonResult(horizon_days=horizon, mean_rank_ic=mean_ic)
@@ -486,10 +461,7 @@ def test_half_life_refuses_when_ic_does_not_decay():
     half_life, interval, r2, note = fit_half_life(too_few)
     assert half_life is None and interval is None and r2 is None and "too few" in note
 
-    zigzag = [
-        _horizon_point(h, ic)
-        for h, ic in ((5, 0.10), (21, 0.01), (63, 0.09), (126, 0.008))
-    ]
+    zigzag = [_horizon_point(h, ic) for h, ic in ((5, 0.10), (21, 0.01), (63, 0.09), (126, 0.008))]
     half_life, interval, r2, note = fit_half_life(zigzag)
     assert half_life is None and interval is None and "fits poorly" in note
     assert r2 is not None and r2 < 0.5
@@ -512,9 +484,9 @@ def test_half_life_weighted_fit_downweights_a_noisy_point_and_reports_an_interva
 
     # The same points WITHOUT intervals fall back to unweighted: the outlier
     # steers the fit far from the planted 20d and no interval is invented.
-    unweighted_points = [
-        _horizon_point(h, planted(h)) for h in (5, 21, 63)
-    ] + [_horizon_point(126, outlier_ic)]
+    unweighted_points = [_horizon_point(h, planted(h)) for h in (5, 21, 63)] + [
+        _horizon_point(126, outlier_ic)
+    ]
     half_life_u, interval_u, _, note_u = fit_half_life(unweighted_points)
     assert half_life_u is not None and interval_u is None
     assert "unweighted" in note_u
@@ -524,9 +496,7 @@ def test_half_life_weighted_fit_downweights_a_noisy_point_and_reports_an_interva
 def test_half_life_interval_is_withheld_when_decay_rate_is_indistinguishable_from_zero():
     """Perfect but glacial decay with wide IC intervals: the point estimate is
     reported, the 95% interval is unbounded above and therefore NOT reported."""
-    points = [
-        _horizon_point(h, 0.10 * math.exp(-0.0005 * h), 0.08) for h in (5, 21, 63)
-    ]
+    points = [_horizon_point(h, 0.10 * math.exp(-0.0005 * h), 0.08) for h in (5, 21, 63)]
     half_life, interval, r2, note = fit_half_life(points)
     assert half_life is not None and half_life > 504, "glacial decay, huge half-life"
     assert interval is None and "unbounded above" in note
@@ -585,8 +555,18 @@ def test_decay_ignores_the_legacy_flat_frozen_panel(tmp_path):
 
 def test_decay_cli_args_are_registered_on_the_subparser():
     args = build_parser().parse_args(
-        ["decay", "--vault", "v", "--horizons", "5", "21", "--primary-horizon", "21",
-         "--ledger", "l.jsonl"]
+        [
+            "decay",
+            "--vault",
+            "v",
+            "--horizons",
+            "5",
+            "21",
+            "--primary-horizon",
+            "21",
+            "--ledger",
+            "l.jsonl",
+        ]
     )
     assert args.primary_horizon == 21 and args.vault == "v"
     with pytest.raises(SystemExit):
@@ -596,9 +576,7 @@ def test_decay_cli_args_are_registered_on_the_subparser():
 
 def test_decay_artifact_manifest_hashes_every_emitted_file(decay_world, tmp_path):
     frozen_dir, vault_root, _ = decay_world
-    curve, panels = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve, panels = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     curve.ledger = record_sweep_trials(curve, ledger_path=tmp_path / "ledger.jsonl")
     out_dir = write_decay_artifacts(curve, panels, tmp_path / "signal_decay")
     manifest = json.loads((out_dir / "manifest.json").read_text())
@@ -621,9 +599,7 @@ def test_decay_artifact_manifest_hashes_every_emitted_file(decay_world, tmp_path
 
 def test_decay_markdown_reports_curve_half_life_power_and_trial_charge(decay_world, tmp_path):
     frozen_dir, vault_root, _ = decay_world
-    curve, _ = evaluate_decay(
-        frozen_dir, vault_root, profile="all_weather", config=CONFIG
-    )
+    curve, _ = evaluate_decay(frozen_dir, vault_root, profile="all_weather", config=CONFIG)
     curve.ledger = record_sweep_trials(curve, ledger_path=tmp_path / "ledger.jsonl")
     markdown = decay_to_markdown(curve)
     assert "# Signal decay — all_weather" in markdown

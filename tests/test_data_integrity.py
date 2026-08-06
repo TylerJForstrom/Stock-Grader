@@ -154,9 +154,7 @@ class TestInsiderTickerCanonicalization:
         )
         asof = date(2026, 8, 4)
         quarter = provider._recent_quarters(asof, 1)[0]
-        cached = pd.DataFrame(
-            {"ticker": ["BRK.B"], "date": ["2026-05-04"], "price": [471.0]}
-        )
+        cached = pd.DataFrame({"ticker": ["BRK.B"], "date": ["2026-05-04"], "price": [471.0]})
         cached.to_parquet(_quarter_cache_path(tmp_path, quarter), index=False)
         for spelling in ("BRK-B", "BRK.B", "BRK B", "brk.b"):
             series = provider.price_series(spelling, asof=asof)

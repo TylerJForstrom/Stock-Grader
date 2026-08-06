@@ -136,13 +136,10 @@ def explicit_peers(
     business_models = sorted({candidate.sector.value for candidate in peers})
     if any(candidate.sector is not target.sector for candidate in peers):
         manifest.warnings.append(
-            "explicit peer set crosses business-model classes: "
-            + ", ".join(business_models)
+            "explicit peer set crosses business-model classes: " + ", ".join(business_models)
         )
     mismatched_dates = sorted(
-        candidate.ticker.upper()
-        for candidate in peers
-        if candidate.asof != target.asof
+        candidate.ticker.upper() for candidate in peers if candidate.asof != target.asof
     )
     if mismatched_dates:
         manifest.warnings.append(
@@ -181,10 +178,7 @@ def select_peers(
         raise ValueError("size_band_multiple must be finite and greater than 1")
 
     target_sic = _sic_digits(target.sic)
-    rule = (
-        "same business model; SIC4→SIC3→SIC2; "
-        f"prefer market cap within {size_band_multiple:g}x"
-    )
+    rule = f"same business model; SIC4→SIC3→SIC2; prefer market cap within {size_band_multiple:g}x"
     manifest = PeerSelection(
         target=target.ticker.upper(),
         asof=target.asof.isoformat(),
@@ -206,8 +200,7 @@ def select_peers(
             continue
         if candidate.asof != target.asof:
             manifest.excluded[ticker] = (
-                f"as-of date {candidate.asof.isoformat()} differs from "
-                f"{target.asof.isoformat()}"
+                f"as-of date {candidate.asof.isoformat()} differs from {target.asof.isoformat()}"
             )
             continue
         if candidate.fundamentals is None:
@@ -293,8 +286,6 @@ def select_peers(
             "target market capitalisation unavailable; peer size could not be matched"
         )
     if not target_sic:
-        manifest.warnings.append(
-            "target SIC unavailable; selection used business-model class only"
-        )
+        manifest.warnings.append("target SIC unavailable; selection used business-model class only")
     manifest.fingerprint = _fingerprint(manifest)
     return selected, manifest

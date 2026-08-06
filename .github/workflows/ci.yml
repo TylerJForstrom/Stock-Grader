@@ -42,43 +42,28 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Lint (hardened surface)
-        run: >-
-          ruff check
-          src/stock_grader/data/prices.py
-          src/stock_grader/data/sec_prices.py
-          src/stock_grader/weighting.py
-          tests/test_production_hardening.py
-
-      - name: Lint (repository debt, advisory)
-        continue-on-error: true
+      # The repository-wide pass landed, so these three are real gates. There is no longer a
+      # "hardened surface" subset: the narrow lint/format/type steps that used to run first
+      # were strict subsets of these commands, kept blocking only because the wide versions
+      # could not be. Keeping them would re-run the same tools over the same files.
+      #
+      # Nothing below is allowed to go continue-on-error again. A step that fails on every
+      # run reports nothing, and the whole point of this workflow is that a red check means
+      # a real regression.
+      - name: Lint
         run: ruff check src tests scripts
 
-      - name: Format check (hardened surface)
-        run: >-
-          ruff format --check
-          src/stock_grader/data/prices.py
-          src/stock_grader/data/sec_prices.py
-          src/stock_grader/weighting.py
-          tests/test_production_hardening.py
-
-      # Existing files predate the formatter baseline. Keep the debt visible without knowingly
-      # making every branch red; remove continue-on-error once the repository-wide pass lands.
-      - name: Format check (repository debt, advisory)
-        continue-on-error: true
+      - name: Format check
         run: ruff format --check src tests scripts
 
-      - name: Type check (hardened surface)
-        run: >-
-          mypy --no-incremental --follow-imports=skip
-          src/stock_grader/data/prices.py
-          src/stock_grader/data/sec_prices.py
-          src/stock_grader/weighting.py
-
-      # The global annotation baseline still contains known debt. This remains explicit and
-      # visible while new production-hardening code is blocked on its clean subset above.
-      - name: Type check (repository debt, advisory)
-        continue-on-error: true
+      # Runs on every matrix entry on purpose, not once. pyproject deliberately leaves
+      # python_version unset, so mypy resolves numpy's and pandas' stubs against whichever
+      # interpreter is running — and those stubs genuinely disagree between versions. With
+      # warn_unused_ignores on, a `# type: ignore` that 3.12 needs is an ERROR on 3.11 for
+      # being unused, which is how this step first went red. Verified clean on 3.11, 3.12
+      # and 3.13. Prefer typing.cast over `# type: ignore` for a stub gap: a cast cannot go
+      # stale on one version while staying necessary on another.
+      - name: Type check
         run: mypy --no-incremental
 
       # The suite is deliberately offline: tests build fixtures, so CI never depends on SEC, FRED,
@@ -144,7 +129,15 @@ jobs:
       - name: Scan Python source (medium/high severity)
         run: bandit -q -r -ll src scripts
 
-      # Low-severity findings remain visible without equating them to exploitable release blockers.
-      - name: Scan Python source (low severity, advisory)
-        continue-on-error: true
-        run: bandit -q -r src scripts
+      # Low severity is the one category this pass did NOT drive to zero, and the reason is
+      # deliberate: the 19 findings are 12 asserts, a subprocess call for the git commit, a
+      # non-crypto RNG for the bootstrap, and a string literal misread as a password. Each
+      # needs its own security judgement — in particular whether any assert is load-bearing
+      # under `python -O` — and blanket '# nosec'-ing the file would be exactly the kind of
+      # suppression the rest of this pass removed.
+      #
+      # So it stays advisory, but it is no longer unfalsifiable: the ratchet records the
+      # count per rule and FAILS if any rule grows. It also fails if a count drops without
+      # the baseline being tightened, so the number can only move down. This step blocks.
+      - name: Scan Python source (low severity, ratcheted)
+        run: python scripts/bandit_ratchet.py

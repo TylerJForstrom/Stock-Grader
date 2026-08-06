@@ -17,6 +17,8 @@ information in the comparison.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -30,91 +32,165 @@ __all__ = ["PROFILE_SPECS", "ConsensusResult", "consensus_grade", "get_profile",
 # pillar weights, aggregator rho, thesis
 PROFILE_SPECS: dict[str, dict] = {
     "all_weather": {
-        "weights": {"valuation": 0.17, "profitability": 0.17, "health": 0.15, "growth": 0.13,
-                    "quality": 0.13, "momentum": 0.07, "risk": 0.07, "shareholder": 0.06,
-                    "efficiency": 0.04, "liquidity": 0.01},
+        "weights": {
+            "valuation": 0.17,
+            "profitability": 0.17,
+            "health": 0.15,
+            "growth": 0.13,
+            "quality": 0.13,
+            "momentum": 0.07,
+            "risk": 0.07,
+            "shareholder": 0.06,
+            "efficiency": 0.04,
+            "liquidity": 0.01,
+        },
         "rho": 0.5,
         "thesis": "Balanced default. No single lens dominates, and partial compensation (rho=0.5) "
-                  "means a company must be broadly sound rather than spectacular in one dimension.",
+        "means a company must be broadly sound rather than spectacular in one dimension.",
     },
     "value": {
-        "weights": {"valuation": 0.38, "health": 0.17, "quality": 0.13, "profitability": 0.11,
-                    "shareholder": 0.07, "risk": 0.06, "growth": 0.04, "efficiency": 0.04},
+        "weights": {
+            "valuation": 0.38,
+            "health": 0.17,
+            "quality": 0.13,
+            "profitability": 0.11,
+            "shareholder": 0.07,
+            "risk": 0.06,
+            "growth": 0.04,
+            "efficiency": 0.04,
+        },
         "rho": 0.0,
         "thesis": "Price paid dominates, but solvency and earnings quality carry real weight "
-                  "because the failure mode of value investing is the value trap. rho=0 "
-                  "(geometric) means a cheap company with a broken balance sheet cannot score well.",
+        "because the failure mode of value investing is the value trap. rho=0 "
+        "(geometric) means a cheap company with a broken balance sheet cannot score well.",
     },
     "deep_value": {
-        "weights": {"valuation": 0.52, "health": 0.24, "quality": 0.14, "risk": 0.05,
-                    "profitability": 0.05},
+        "weights": {
+            "valuation": 0.52,
+            "health": 0.24,
+            "quality": 0.14,
+            "risk": 0.05,
+            "profitability": 0.05,
+        },
         "rho": -0.5,
         "thesis": "Net-net and asset-based bargains. Valuation is most of the grade, but rho=-0.5 "
-                  "makes solvency close to a veto: the whole strategy depends on surviving to "
-                  "realise the discount.",
+        "makes solvency close to a veto: the whole strategy depends on surviving to "
+        "realise the discount.",
     },
     "growth": {
-        "weights": {"growth": 0.36, "profitability": 0.19, "momentum": 0.15, "quality": 0.11,
-                    "efficiency": 0.07, "health": 0.06, "risk": 0.06},
+        "weights": {
+            "growth": 0.36,
+            "profitability": 0.19,
+            "momentum": 0.15,
+            "quality": 0.11,
+            "efficiency": 0.07,
+            "health": 0.06,
+            "risk": 0.06,
+        },
         "rho": 0.8,
         "thesis": "Compounding revenue and earnings, with quality as a check on growth bought "
-                  "through dilution or leverage. High rho — a genuine grower is allowed to look "
-                  "expensive.",
+        "through dilution or leverage. High rho — a genuine grower is allowed to look "
+        "expensive.",
     },
     "garp": {
-        "weights": {"growth": 0.25, "valuation": 0.25, "profitability": 0.17, "quality": 0.13,
-                    "health": 0.10, "momentum": 0.05, "risk": 0.05},
+        "weights": {
+            "growth": 0.25,
+            "valuation": 0.25,
+            "profitability": 0.17,
+            "quality": 0.13,
+            "health": 0.10,
+            "momentum": 0.05,
+            "risk": 0.05,
+        },
         "rho": 0.3,
         "thesis": "Growth at a reasonable price. Valuation and growth weighted equally, with low "
-                  "rho so a company cannot buy an A on one by failing the other.",
+        "rho so a company cannot buy an A on one by failing the other.",
     },
     "quality": {
-        "weights": {"profitability": 0.28, "quality": 0.22, "health": 0.17, "growth": 0.11,
-                    "efficiency": 0.09, "risk": 0.07, "valuation": 0.06},
+        "weights": {
+            "profitability": 0.28,
+            "quality": 0.22,
+            "health": 0.17,
+            "growth": 0.11,
+            "efficiency": 0.09,
+            "risk": 0.07,
+            "valuation": 0.06,
+        },
         "rho": 0.6,
         "thesis": "Durable economic moats: high and stable returns on capital, clean accruals, "
-                  "modest leverage. Valuation is deliberately a minor term — this profile answers "
-                  "'is this a great business', not 'is it cheap'.",
+        "modest leverage. Valuation is deliberately a minor term — this profile answers "
+        "'is this a great business', not 'is it cheap'.",
     },
     "momentum": {
-        "weights": {"momentum": 0.50, "risk": 0.10, "risk_adjusted_return": 0.10, "growth": 0.14,
-                    "profitability": 0.10, "liquidity": 0.06},
+        "weights": {
+            "momentum": 0.50,
+            "risk": 0.10,
+            "risk_adjusted_return": 0.10,
+            "growth": 0.14,
+            "profitability": 0.10,
+            "liquidity": 0.06,
+        },
         "rho": 0.9,
         "thesis": "Price and earnings trend, risk-adjusted. Liquidity matters because a momentum "
-                  "signal you cannot trade is not a signal.",
+        "signal you cannot trade is not a signal.",
     },
     "low_volatility": {
         # 0.30 pure risk + 0.10 risk-adjusted return: the old single 0.40 "risk"
         # pillar mixed volatility with Sharpe, so a hot momentum stock with a
         # great Sharpe scored well on a profile named low_volatility.
-        "weights": {"risk": 0.30, "risk_adjusted_return": 0.10, "quality": 0.19, "health": 0.17,
-                    "profitability": 0.11, "shareholder": 0.08, "liquidity": 0.05},
+        "weights": {
+            "risk": 0.30,
+            "risk_adjusted_return": 0.10,
+            "quality": 0.19,
+            "health": 0.17,
+            "profitability": 0.11,
+            "shareholder": 0.08,
+            "liquidity": 0.05,
+        },
         "rho": 0.2,
         "thesis": "The low-volatility anomaly: stable, boring, well-capitalised businesses. Low "
-                  "rho because the entire premise is the absence of weak spots.",
+        "rho because the entire premise is the absence of weak spots.",
     },
     "dividend_income": {
-        "weights": {"shareholder": 0.34, "health": 0.21, "quality": 0.15, "profitability": 0.13,
-                    "valuation": 0.11, "risk": 0.06},
+        "weights": {
+            "shareholder": 0.34,
+            "health": 0.21,
+            "quality": 0.15,
+            "profitability": 0.13,
+            "valuation": 0.11,
+            "risk": 0.06,
+        },
         "rho": 0.1,
         "thesis": "Current income that survives. Payout ratios are scored through an ideal band, "
-                  "not maximised — the highest yield in a universe is usually the one about to be "
-                  "cut. Very low rho: a stretched balance sheet vetoes the income case.",
+        "not maximised — the highest yield in a universe is usually the one about to be "
+        "cut. Very low rho: a stretched balance sheet vetoes the income case.",
     },
     "dividend_growth": {
-        "weights": {"shareholder": 0.25, "growth": 0.21, "quality": 0.19, "health": 0.17,
-                    "profitability": 0.13, "risk": 0.05},
+        "weights": {
+            "shareholder": 0.25,
+            "growth": 0.21,
+            "quality": 0.19,
+            "health": 0.17,
+            "profitability": 0.13,
+            "risk": 0.05,
+        },
         "rho": 0.3,
         "thesis": "Rising payouts rather than high ones: moderate current yield, strong coverage, "
-                  "and the earnings growth to fund future increases.",
+        "and the earnings growth to fund future increases.",
     },
     "turnaround": {
-        "weights": {"valuation": 0.30, "momentum": 0.21, "health": 0.19, "growth": 0.15,
-                    "quality": 0.09, "risk": 0.06},
+        "weights": {
+            "valuation": 0.30,
+            "momentum": 0.21,
+            "health": 0.19,
+            "growth": 0.15,
+            "quality": 0.09,
+            "risk": 0.06,
+        },
         "rho": 0.7,
         "thesis": "Distressed situations where improvement is the thesis. Momentum matters as "
-                  "confirmation that the market is starting to agree; high rho tolerates the weak "
-                  "trailing fundamentals that define the category.",
+        "confirmation that the market is starting to agree; high rho tolerates the weak "
+        "trailing fundamentals that define the category.",
     },
 }
 
@@ -123,7 +199,7 @@ def profile_names() -> list[str]:
     return sorted(PROFILE_SPECS)
 
 
-def get_profile(name: str, **overrides) -> GradeConfig:
+def get_profile(name: str, **overrides: Any) -> GradeConfig:
     """Build a :class:`GradeConfig` from a named profile.
 
     Any pipeline setting can be overridden, which is how a user asks for "the value profile, but
@@ -132,7 +208,9 @@ def get_profile(name: str, **overrides) -> GradeConfig:
     if name not in PROFILE_SPECS:
         raise KeyError(f"unknown profile {name!r}; available: {', '.join(profile_names())}")
     spec = PROFILE_SPECS[name]
-    settings = {
+    # Heterogeneous settings bag, merged with arbitrary caller overrides and unpacked
+    # into GradeConfig, which validates every field it accepts in its own __init__.
+    settings: dict[str, Any] = {
         "name": name,
         "pillar_weights": dict(spec["weights"]),
         "pillar_aggregator": "ces",
@@ -219,7 +297,7 @@ class ConsensusResult:
             f"{self.ticker}: {self.letter} ({self.score:.1f}) — "
             f"best as {self.best_profile} ({self.scores.max():.0f}), "
             f"worst as {self.worst_profile} ({self.scores.min():.0f}), "
-            f"clarity {self.clarity:.0f}/100"
+            f"spread {self.spread:.0f} points"
         )
 
     def to_dict(self) -> dict:
@@ -249,7 +327,7 @@ def consensus_grade(
     """Grade a universe under every profile and combine.
 
     The disagreement between profiles is retained rather than averaged away — see
-    :class:`ConsensusResult.clarity`.
+    :attr:`ConsensusResult.letter_distribution` and :attr:`ConsensusResult.spread`.
     """
     names = profiles or profile_names()
     configs: list[GradeConfig] = []

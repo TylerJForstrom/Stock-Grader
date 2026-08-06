@@ -20,14 +20,31 @@ from stock_grader.data.sec import (
 from stock_grader.types import Fundamentals, PitMode
 
 
-def _duration(start: str, end: str, val: float, *, form="10-Q", filed="2025-01-01", fy=2025, fp="Q1"):
-    return {"start": start, "end": end, "val": val, "form": form, "filed": filed,
-            "fy": fy, "fp": fp, "accn": f"acc-{start}-{end}"}
+def _duration(
+    start: str, end: str, val: float, *, form="10-Q", filed="2025-01-01", fy=2025, fp="Q1"
+):
+    return {
+        "start": start,
+        "end": end,
+        "val": val,
+        "form": form,
+        "filed": filed,
+        "fy": fy,
+        "fp": fp,
+        "accn": f"acc-{start}-{end}",
+    }
 
 
 def _instant(end: str, val: float, *, filed="2025-01-01", form="10-Q"):
-    return {"end": end, "val": val, "form": form, "filed": filed, "fy": 2025, "fp": "Q1",
-            "accn": f"acc-{end}"}
+    return {
+        "end": end,
+        "val": val,
+        "form": form,
+        "filed": filed,
+        "fy": 2025,
+        "fp": "Q1",
+        "accn": f"acc-{end}",
+    }
 
 
 def _fact(records: list[dict], unit: str = "USD") -> dict:
@@ -288,27 +305,41 @@ class TestDerived:
     def test_gross_profit_is_derived_when_untagged(self):
         """5 of 8 sampled filers had no GrossProfit tag, but revenue minus COGS is available."""
         quarters = [
-            ("2024-01-01", "2024-03-31"), ("2024-04-01", "2024-06-30"),
-            ("2024-07-01", "2024-09-30"), ("2024-10-01", "2024-12-31"),
+            ("2024-01-01", "2024-03-31"),
+            ("2024-04-01", "2024-06-30"),
+            ("2024-07-01", "2024-09-30"),
+            ("2024-10-01", "2024-12-31"),
         ]
-        facts = {"facts": {"us-gaap": {
-            "Revenues": _fact([_duration(s, e, 100.0) for s, e in quarters]),
-            "CostOfRevenue": _fact([_duration(s, e, 60.0) for s, e in quarters]),
-        }}}
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": _fact([_duration(s, e, 100.0) for s, e in quarters]),
+                    "CostOfRevenue": _fact([_duration(s, e, 60.0) for s, e in quarters]),
+                }
+            }
+        }
         fundamentals = build_fundamentals(facts)
         assert fundamentals.ttm("gross_profit") == pytest.approx(160.0)
 
     def test_free_cash_flow_subtracts_capex_magnitude(self):
         quarters = [
-            ("2024-01-01", "2024-03-31"), ("2024-04-01", "2024-06-30"),
-            ("2024-07-01", "2024-09-30"), ("2024-10-01", "2024-12-31"),
+            ("2024-01-01", "2024-03-31"),
+            ("2024-04-01", "2024-06-30"),
+            ("2024-07-01", "2024-09-30"),
+            ("2024-10-01", "2024-12-31"),
         ]
-        facts = {"facts": {"us-gaap": {
-            "NetCashProvidedByUsedInOperatingActivities": _fact(
-                [_duration(s, e, 100.0) for s, e in quarters]),
-            "PaymentsToAcquirePropertyPlantAndEquipment": _fact(
-                [_duration(s, e, 30.0) for s, e in quarters]),
-        }}}
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "NetCashProvidedByUsedInOperatingActivities": _fact(
+                        [_duration(s, e, 100.0) for s, e in quarters]
+                    ),
+                    "PaymentsToAcquirePropertyPlantAndEquipment": _fact(
+                        [_duration(s, e, 30.0) for s, e in quarters]
+                    ),
+                }
+            }
+        }
         fundamentals = build_fundamentals(facts)
         assert fundamentals.ttm("fcf") == pytest.approx(280.0)
         assert fundamentals.ttm("fcf") <= fundamentals.ttm("cfo")
@@ -339,7 +370,10 @@ class TestStaleTagRejection:
             "LongTermDebtNoncurrent": _fact([_instant("2026-01-30", 10e9)]),
             "LongTermDebt": _fact([_instant("2026-04-30", 11e9)]),
         }
-        assert _select_tag(("LongTermDebtNoncurrent", "LongTermDebt"), gaap) == "LongTermDebtNoncurrent"
+        assert (
+            _select_tag(("LongTermDebtNoncurrent", "LongTermDebt"), gaap)
+            == "LongTermDebtNoncurrent"
+        )
 
     def test_annual_only_filer_is_not_treated_as_stale(self):
         """A 10-K-only filer's balance sheet is legitimately up to 15 months old."""
@@ -349,7 +383,10 @@ class TestStaleTagRejection:
             "LongTermDebtNoncurrent": _fact([_instant("2025-06-30", 10e9)]),
             "LongTermDebt": _fact([_instant("2025-09-30", 11e9)]),
         }
-        assert _select_tag(("LongTermDebtNoncurrent", "LongTermDebt"), gaap) == "LongTermDebtNoncurrent"
+        assert (
+            _select_tag(("LongTermDebtNoncurrent", "LongTermDebt"), gaap)
+            == "LongTermDebtNoncurrent"
+        )
 
 
 class TestAnnualFrame:
@@ -383,7 +420,10 @@ class TestAnnualFrame:
 
     def test_history_refuses_a_window_of_the_wrong_span(self):
         """Six rows spanning 15 years must not be served as a 5-year history."""
-        records = [_instant(f"{year}-12-31", 100.0 + i) for i, year in enumerate([2010, 2021, 2022, 2023, 2024, 2025])]
+        records = [
+            _instant(f"{year}-12-31", 100.0 + i)
+            for i, year in enumerate([2010, 2021, 2022, 2023, 2024, 2025])
+        ]
         facts = {"facts": {"us-gaap": {"StockholdersEquity": _fact(records)}}}
         fundamentals = build_fundamentals(facts)
         assert fundamentals.history("equity", 6, annual=True) is None
@@ -441,12 +481,14 @@ class TestCurrency:
     def test_usd_is_preferred_when_both_exist(self):
         from stock_grader.data.sec import _usd_records
 
-        records = _usd_records({
-            "units": {
-                "JPY": [{"end": "2025-12-31", "val": 48e12}],
-                "USD": [{"end": "2025-12-31", "val": 320e9}],
+        records = _usd_records(
+            {
+                "units": {
+                    "JPY": [{"end": "2025-12-31", "val": 48e12}],
+                    "USD": [{"end": "2025-12-31", "val": 320e9}],
+                }
             }
-        })
+        )
         assert len(records) == 1 and records[0]["val"] == 320e9
 
     def test_dimensionless_units_still_pass(self):
@@ -458,11 +500,15 @@ class TestCurrency:
     def test_currency_detection(self):
         from stock_grader.data.sec import detect_currencies
 
-        facts = {"facts": {"us-gaap": {
-            "Revenues": {"units": {"JPY": []}},
-            "Assets": {"units": {"USD": []}},
-            "EarningsPerShareDiluted": {"units": {"JPY/shares": []}},
-        }}}
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {"units": {"JPY": []}},
+                    "Assets": {"units": {"USD": []}},
+                    "EarningsPerShareDiluted": {"units": {"JPY/shares": []}},
+                }
+            }
+        }
         assert detect_currencies(facts) == {"JPY", "USD"}
 
 
@@ -508,15 +554,26 @@ class TestPretaxChain:
         $3.28B against $8.22B of net income — pretax below net income, impossible for a taxpayer."""
         from stock_grader.data.concepts import CONCEPTS
 
-        assert "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic" not in CONCEPTS["pretax_income"]
+        assert (
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
+            not in CONCEPTS["pretax_income"]
+        )
 
     def test_pretax_derived_from_the_identity_when_untagged(self):
-        quarters = [("2025-01-01", "2025-03-31"), ("2025-04-01", "2025-06-30"),
-                    ("2025-07-01", "2025-09-30"), ("2025-10-01", "2025-12-31")]
-        facts = {"facts": {"us-gaap": {
-            "NetIncomeLoss": _fact([_duration(s, e, 100.0) for s, e in quarters]),
-            "IncomeTaxExpenseBenefit": _fact([_duration(s, e, 30.0) for s, e in quarters]),
-        }}}
+        quarters = [
+            ("2025-01-01", "2025-03-31"),
+            ("2025-04-01", "2025-06-30"),
+            ("2025-07-01", "2025-09-30"),
+            ("2025-10-01", "2025-12-31"),
+        ]
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "NetIncomeLoss": _fact([_duration(s, e, 100.0) for s, e in quarters]),
+                    "IncomeTaxExpenseBenefit": _fact([_duration(s, e, 30.0) for s, e in quarters]),
+                }
+            }
+        }
         fundamentals = build_fundamentals(facts)
         assert fundamentals.ttm("pretax_income") == pytest.approx(520.0)
 
@@ -548,7 +605,9 @@ class TestTotalDebtComposition:
         """A filer that never tags short-term borrowings must not lose total debt entirely."""
         facts = self._facts([("2026-05-01", 20e9, None)])
         fundamentals = build_fundamentals(facts)
-        assert fundamentals.latest("total_debt", asof=date(2026, 7, 24), max_age_days=400) == pytest.approx(20e9)
+        assert fundamentals.latest(
+            "total_debt", asof=date(2026, 7, 24), max_age_days=400
+        ) == pytest.approx(20e9)
 
     def test_stale_values_are_refused(self):
         facts = self._facts([("2015-01-31", 10e9, 1e9)])
@@ -574,9 +633,11 @@ def test_unknown_debt_is_not_zero_debt():
     index = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
     frame = pd.DataFrame({"cash": [10.0] * 4}, index=index)
     snapshot = SecuritySnapshot(
-        ticker="X", asof=date(2026, 1, 31),
+        ticker="X",
+        asof=date(2026, 1, 31),
         fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
-        price=10.0, shares_outstanding=100.0,
+        price=10.0,
+        shares_outstanding=100.0,
     )
     assert _enterprise_value(snapshot) is None
 
@@ -597,7 +658,9 @@ class TestQ4Plausibility:
             _duration("2024-07-01", "2024-09-30", q3),
             _duration("2024-01-01", "2024-12-31", fy, form="10-K", fp="FY"),
         ]
-        return {"facts": {"us-gaap": {"PaymentsToAcquirePropertyPlantAndEquipment": _fact(records)}}}
+        return {
+            "facts": {"us-gaap": {"PaymentsToAcquirePropertyPlantAndEquipment": _fact(records)}}
+        }
 
     def test_negative_derived_q4_is_rejected(self):
         fundamentals = build_fundamentals(self._facts(1000.0, 1000.0, 839.0, 1886.0))
@@ -619,9 +682,14 @@ class TestQ4Plausibility:
     def test_filed_negative_outflow_is_dropped(self):
         """Chevron filed capex of -$4.452B for 2008-Q1; no derivation gate can catch that."""
         records = [_duration("2008-01-01", "2008-03-31", -4.452e9)]
-        facts = {"facts": {"us-gaap": {"PaymentsToAcquirePropertyPlantAndEquipment": _fact(records)}}}
+        facts = {
+            "facts": {"us-gaap": {"PaymentsToAcquirePropertyPlantAndEquipment": _fact(records)}}
+        }
         fundamentals = build_fundamentals(facts)
-        assert "capex" not in fundamentals.quarterly.columns or fundamentals.quarterly["capex"].dropna().empty
+        assert (
+            "capex" not in fundamentals.quarterly.columns
+            or fundamentals.quarterly["capex"].dropna().empty
+        )
 
     def test_losses_are_not_sign_constrained(self):
         """Constraining net income would delete real losses — the companies solvency most needs."""
@@ -723,29 +791,46 @@ class TestStalenessEverywhere:
     """The age contract was added to latest() and missed everywhere else."""
 
     def _facts(self, concept_tag: str, values: list[tuple[str, str, float]]) -> dict:
-        return {"facts": {"us-gaap": {concept_tag: _fact(
-            [_duration(s, e, v) for s, e, v in values])}}}
+        return {
+            "facts": {"us-gaap": {concept_tag: _fact([_duration(s, e, v) for s, e, v in values])}}
+        }
 
     def test_ttm_refuses_a_stale_window(self):
         """Mastercard's net income came from a window ending 2014-03-31 — twelve years stale —
         and was divided by 2026 revenue to report a 9.5% net margin against a true 45%."""
-        quarters = [("2014-01-01", "2014-03-31"), ("2014-04-01", "2014-06-30"),
-                    ("2014-07-01", "2014-09-30"), ("2014-10-01", "2014-12-31")]
-        fundamentals = build_fundamentals(self._facts("Revenues", [(s, e, 100.0) for s, e in quarters]))
+        quarters = [
+            ("2014-01-01", "2014-03-31"),
+            ("2014-04-01", "2014-06-30"),
+            ("2014-07-01", "2014-09-30"),
+            ("2014-10-01", "2014-12-31"),
+        ]
+        fundamentals = build_fundamentals(
+            self._facts("Revenues", [(s, e, 100.0) for s, e in quarters])
+        )
         assert fundamentals.ttm("revenue") == pytest.approx(400.0)  # unbounded: unchanged
         assert fundamentals.ttm("revenue", asof=date(2026, 7, 25), max_age_days=400) is None
 
     def test_staleness_recurses_into_composites(self):
         """ebitda resolves ebit and depreciation separately, so checking only the composite
         would let a stale component through."""
-        quarters = [("2014-01-01", "2014-03-31"), ("2014-04-01", "2014-06-30"),
-                    ("2014-07-01", "2014-09-30"), ("2014-10-01", "2014-12-31")]
-        facts = {"facts": {"us-gaap": {
-            "NetCashProvidedByUsedInOperatingActivities": _fact(
-                [_duration(s, e, 100.0) for s, e in quarters]),
-            "PaymentsToAcquirePropertyPlantAndEquipment": _fact(
-                [_duration(s, e, 20.0) for s, e in quarters]),
-        }}}
+        quarters = [
+            ("2014-01-01", "2014-03-31"),
+            ("2014-04-01", "2014-06-30"),
+            ("2014-07-01", "2014-09-30"),
+            ("2014-10-01", "2014-12-31"),
+        ]
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "NetCashProvidedByUsedInOperatingActivities": _fact(
+                        [_duration(s, e, 100.0) for s, e in quarters]
+                    ),
+                    "PaymentsToAcquirePropertyPlantAndEquipment": _fact(
+                        [_duration(s, e, 20.0) for s, e in quarters]
+                    ),
+                }
+            }
+        }
         fundamentals = build_fundamentals(facts)
         assert fundamentals.ttm("fcf", asof=date(2026, 7, 25), max_age_days=400) is None
 
@@ -820,14 +905,22 @@ class TestStalenessEverywhere:
     def test_derivation_fills_gaps_not_only_absent_columns(self):
         """Costco, Amazon and Target all still carry a GrossProfit column whose last value is
         thousands of days old, so a `not in df` guard never ran the derivation."""
-        quarters = [("2025-01-01", "2025-03-31"), ("2025-04-01", "2025-06-30"),
-                    ("2025-07-01", "2025-09-30"), ("2025-10-01", "2025-12-31")]
-        facts = {"facts": {"us-gaap": {
-            "Revenues": _fact([_duration(s, e, 100.0) for s, e in quarters]),
-            "CostOfRevenue": _fact([_duration(s, e, 60.0) for s, e in quarters]),
-            # An abandoned gross-profit tag from a decade earlier.
-            "GrossProfit": _fact([_duration("2014-01-01", "2014-03-31", 5.0)]),
-        }}}
+        quarters = [
+            ("2025-01-01", "2025-03-31"),
+            ("2025-04-01", "2025-06-30"),
+            ("2025-07-01", "2025-09-30"),
+            ("2025-10-01", "2025-12-31"),
+        ]
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": _fact([_duration(s, e, 100.0) for s, e in quarters]),
+                    "CostOfRevenue": _fact([_duration(s, e, 60.0) for s, e in quarters]),
+                    # An abandoned gross-profit tag from a decade earlier.
+                    "GrossProfit": _fact([_duration("2014-01-01", "2014-03-31", 5.0)]),
+                }
+            }
+        }
         fundamentals = build_fundamentals(facts)
         assert fundamentals.ttm("gross_profit") == pytest.approx(160.0)
 

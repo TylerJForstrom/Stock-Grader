@@ -515,11 +515,7 @@ def test_real_archive_pit_lookup_equals_replay_at_every_event_date():
     boundary = source.manifest("data/symbols/pit")["reconstructable_from"]
     dates = sorted(
         {boundary}
-        | {
-            str(e["date"])
-            for e in events
-            if e.get("source") == "sec_company_tickers_exchange"
-        }
+        | {str(e["date"]) for e in events if e.get("source") == "sec_company_tickers_exchange"}
     )
     assert dates, "real archive unexpectedly empty"
     for asof in dates:
@@ -550,9 +546,7 @@ def test_explicitly_requested_foundry_fails_closed_on_contract_violation(tmp_pat
         json.dumps(
             {
                 "schema_version": "1.0",
-                "files": [
-                    {"name": "dividends.parquet", "sha256": "0" * 64, "bytes": 18}
-                ],
+                "files": [{"name": "dividends.parquet", "sha256": "0" * 64, "bytes": 18}],
             }
         )
     )

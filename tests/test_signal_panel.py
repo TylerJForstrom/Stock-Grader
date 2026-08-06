@@ -404,9 +404,7 @@ def test_the_observed_score_is_carried_through_untouched(vault_root):
         assert joined["score"] == pytest.approx(observed[joined["ticker"]])
     # And dropping LOSTCO/NOENTRY did NOT re-rank anyone: the vault ranked the
     # observation cross-section before any return existed.
-    assert sorted(panel["score"]) == sorted(
-        observed[t] for t in panel["ticker"]
-    )
+    assert sorted(panel["score"]) == sorted(observed[t] for t in panel["ticker"])
 
 
 # -- artifact contract --------------------------------------------------------
@@ -415,8 +413,12 @@ def test_the_observed_score_is_carried_through_untouched(vault_root):
 def test_observation_parts_are_sha256_verified(vault_root):
     _write_observations(vault_root, "unit_signal", {SIGNAL: _hazard_rows()}, corrupt=None)
     directory = (
-        vault_root / "data" / "signal_panels" / "unit_signal"
-        / f"v{SIGNAL_PANEL_VERSION}" / "observations"
+        vault_root
+        / "data"
+        / "signal_panels"
+        / "unit_signal"
+        / f"v{SIGNAL_PANEL_VERSION}"
+        / "observations"
     )
     manifest = json.loads((directory / "manifest.json").read_text())
     for entry in manifest["files"]:
@@ -538,9 +540,7 @@ def test_a_second_signal_date_appends_without_touching_the_first(vault_root):
     first_part = panel_path.parent / f"{SIGNAL.isoformat()}.parquet"
     stamp = first_part.stat().st_mtime_ns
 
-    _write_observations(
-        vault_root, "unit_signal", {SIGNAL: _hazard_rows(), later_signal: later}
-    )
+    _write_observations(vault_root, "unit_signal", {SIGNAL: _hazard_rows(), later_signal: later})
     second, panel_path = _build(vault_root)
     assert first_part.stat().st_mtime_ns == stamp
     assert second.parts_written == 1
@@ -556,9 +556,7 @@ def test_the_joined_panel_satisfies_the_evaluator_contract(vault_root):
     }
     parts = {
         signal: [
-            _observation(
-                name, float(i), float(i) / 10.0, signal=signal, entry=entry, exit_=exit_
-            )
+            _observation(name, float(i), float(i) / 10.0, signal=signal, entry=entry, exit_=exit_)
             for i, name in enumerate(HEALTHY, start=1)
         ]
         for signal, (entry, exit_) in windows.items()
@@ -735,9 +733,7 @@ def test_an_unmeasurable_row_is_refused_and_counted_never_back_filled(vault_root
 def test_the_participation_cap_truncation_is_counted_not_silent(vault_root):
     """A $100k position against a $2M ADV20$ cannot be filled; the panel must
     report the refused notional rather than pricing a trade that cannot happen."""
-    rows = _costed_rows(
-        overrides={name: {"adv20_dollar": 2.0e6} for name in HEALTHY}
-    )
+    rows = _costed_rows(overrides={name: {"adv20_dollar": 2.0e6} for name in HEALTHY})
     _write_observations(vault_root, "capped", {SIGNAL: rows})
     result, panel_path = _build(vault_root, "capped")
 
@@ -792,9 +788,7 @@ def test_a_costed_panel_evaluates_net_of_its_own_per_row_costs(vault_root):
     """End to end: the join writes the column and the evaluator charges it."""
     _write_observations(vault_root, "endtoend", {SIGNAL: _costed_rows()})
     _result, panel_path = _build(vault_root, "endtoend")
-    panel = pd.read_parquet(panel_path).assign(
-        universe_is_pit=True, return_is_total=True
-    )
+    panel = pd.read_parquet(panel_path).assign(universe_is_pit=True, return_is_total=True)
 
     report = evaluate_walk_forward(
         panel, BacktestConfig(min_cross_section=4, quantiles=2, bootstrap_samples=0)
@@ -858,11 +852,7 @@ def test_a_panel_priced_at_two_position_sizes_refuses_rather_than_averaging(
         }
         for index, name in enumerate(HEALTHY, start=1)
     ]
-    _write_observations(
-        vault_root, "twosizes", {SIGNAL: _costed_rows(), later: second}
-    )
-    with pytest.raises(
-        SignalPanelError, match="mixes cost models or position sizes"
-    ) as raised:
+    _write_observations(vault_root, "twosizes", {SIGNAL: _costed_rows(), later: second})
+    with pytest.raises(SignalPanelError, match="mixes cost models or position sizes") as raised:
         _build(vault_root, "twosizes", cost_position_notional_usd=25_000.0)
     assert "build a new panel version at one size" in str(raised.value)

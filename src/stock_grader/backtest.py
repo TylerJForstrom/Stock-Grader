@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -255,9 +256,7 @@ def _validate_panel(panel: pd.DataFrame, *, allow_mixed_universes: bool = False)
         raise ValueError("every return_end must be strictly after return_start")
     permanent_id = _permanent_id_column(frame)
     frame["_security_key"] = (
-        frame[permanent_id].astype(str)
-        if permanent_id is not None
-        else frame["ticker"].astype(str)
+        frame[permanent_id].astype(str) if permanent_id is not None else frame["ticker"].astype(str)
     )
     duplicate_ticker = frame.duplicated(["signal_date", "ticker"])
     duplicate_security = frame.duplicated(["signal_date", "_security_key"])
@@ -299,7 +298,11 @@ def _permanent_id_column(panel: pd.DataFrame) -> str | None:
 def _input_contract(panel: pd.DataFrame) -> dict[str, bool]:
     permanent_id = _permanent_id_column(panel)
     return {
-        "filing_cutoff_provided": "filed_through" in panel and panel["filed_through"].notna().all(),
+        # .all() hands back a numpy bool_, so without bool() this dict's values are a
+        # mix of Python and numpy booleans depending on which branch short-circuits.
+        "filing_cutoff_provided": bool(
+            "filed_through" in panel and panel["filed_through"].notna().all()
+        ),
         "point_in_time_universe_attested": _attested(panel, "universe_is_pit"),
         "total_returns_attested": _attested(panel, "return_is_total"),
         "delistings_included_attested": _attested(panel, "delisting_return_included"),
@@ -338,7 +341,9 @@ def _quantile_buckets(scores: pd.Series, quantiles: int) -> pd.Series:
     # Average ranks keep tied scores in the same percentile rather than assigning arbitrary
     # winners based on input order.  The floor produces integer buckets 0..quantiles-1.
     percentiles = scores.rank(method="average", pct=True)
-    buckets = np.minimum((percentiles * quantiles).apply(np.ceil) - 1, quantiles - 1)
+    # .clip(upper=) is the Series-native spelling of the elementwise np.minimum this
+    # used to call, and keeps the return a Series rather than degrading to an ndarray.
+    buckets = ((percentiles * quantiles).apply(np.ceil) - 1).clip(upper=quantiles - 1)
     return buckets.astype("int64")
 
 
@@ -423,7 +428,12 @@ def evaluate_walk_forward(
         if np.any(values[np.isfinite(values)] < 0.0):
             raise ValueError(f"{cost_column} cannot be negative")
         estimable = np.isfinite(values)
-        refused_by_date = frame.loc[~estimable].groupby("signal_date", sort=True).size().to_dict()
+        refused_by_date = {
+            # Same widening as the main loop below: a datetime64 column's group keys
+            # are Timestamps at runtime but typed as bare Hashable.
+            pd.Timestamp(cast(Any, key)): int(count)
+            for key, count in frame.loc[~estimable].groupby("signal_date", sort=True).size().items()
+        }
         frame = frame.loc[estimable].copy()
         if frame.empty:
             raise ValueError(
@@ -468,7 +478,10 @@ def evaluate_walk_forward(
         frame["_fill_fraction"] = np.clip(allowed / target, 0.0, 1.0)
         capacity_weighted = bool(config.capacity_weighted)
 
-    for signal_date, group in frame.groupby("signal_date", sort=True):
+    for group_key, group in frame.groupby("signal_date", sort=True):
+        # The stubs widen groupby keys to a bare Scalar; this column is datetime64,
+        # so normalise once here rather than re-wrapping at each downstream use.
+        signal_date = pd.Timestamp(cast(Any, group_key))
         if len(group) < config.min_cross_section or group["score"].nunique() < 2:
             rejected += 1
             continue
@@ -493,8 +506,7 @@ def evaluate_walk_forward(
             rejected += 1
             continue
         quantile_returns = [
-            float(bucket_returns.get(index, np.nan))
-            for index in range(config.quantiles)
+            float(bucket_returns.get(index, np.nan)) for index in range(config.quantiles)
         ]
         top_mask = buckets == config.quantiles - 1
         bottom_mask = buckets == 0
@@ -553,15 +565,11 @@ def evaluate_walk_forward(
             # the correlation, so the report would say that charging honest
             # costs improved the signal.
             side = np.sign(buckets.to_numpy(dtype="float64") - (config.quantiles - 1) / 2.0)
-            net_return = group["forward_return"] - pd.Series(
-                side, index=group.index
-            ) * group["_cost_rate"]
-            rank_ic_net: float | None = float(
-                group["score"].corr(net_return, method="spearman")
+            net_return = (
+                group["forward_return"] - pd.Series(side, index=group.index) * group["_cost_rate"]
             )
-            net_spread = gross_spread - (
-                top_rate * top_turnover + bottom_rate * bottom_turnover
-            )
+            rank_ic_net: float | None = float(group["score"].corr(net_return, method="spearman"))
+            net_spread = gross_spread - (top_rate * top_turnover + bottom_rate * bottom_turnover)
         else:
             top_rate = bottom_rate = cost_rate
             rank_ic_net = None
@@ -572,7 +580,7 @@ def evaluate_walk_forward(
             net_spread = gross_spread - cost_rate * (top_turnover + bottom_turnover)
         periods.append(
             PeriodResult(
-                signal_date=pd.Timestamp(signal_date).date().isoformat(),
+                signal_date=signal_date.date().isoformat(),
                 return_start=starts.iloc[0].date().isoformat(),
                 return_end=ends.iloc[0].date().isoformat(),
                 n_securities=len(group),
@@ -620,9 +628,7 @@ def evaluate_walk_forward(
     quantile_matrix = np.asarray([item.quantile_returns for item in periods], dtype="float64")
     mean_quantiles = np.nanmean(quantile_matrix, axis=0)
     monotonicity = float(
-        pd.Series(np.arange(config.quantiles)).corr(
-            pd.Series(mean_quantiles), method="spearman"
-        )
+        pd.Series(np.arange(config.quantiles)).corr(pd.Series(mean_quantiles), method="spearman")
     )
     ic_std = float(np.std(rank_ics, ddof=1)) if len(rank_ics) > 1 else 0.0
     ic_ir = (
@@ -650,8 +656,7 @@ def evaluate_walk_forward(
         else None
     )
     bootstrap_note = (
-        "Bootstrap intervals describe historical period variability, not "
-        "future-return certainty."
+        "Bootstrap intervals describe historical period variability, not future-return certainty."
     )
     if per_row_costs:
         limitations = [
@@ -735,9 +740,7 @@ def evaluate_walk_forward(
             "The panel does not attest to a survivorship-free point-in-time universe."
         )
     if not contract["total_returns_attested"]:
-        limitations.append(
-            "The panel does not attest that forward_return includes distributions."
-        )
+        limitations.append("The panel does not attest that forward_return includes distributions.")
     if not contract["delistings_included_attested"]:
         limitations.append(
             "The panel does not attest that delisting proceeds or total losses are retained."
@@ -787,14 +790,7 @@ def evaluate_walk_forward(
         limitations=limitations,
         per_row_costs_used=per_row_costs,
         mean_round_trip_cost_bps=(
-            float(
-                np.mean(
-                    [
-                        (item.top_cost_bps + item.bottom_cost_bps) / 2.0
-                        for item in periods
-                    ]
-                )
-            )
+            float(np.mean([(item.top_cost_bps + item.bottom_cost_bps) / 2.0 for item in periods]))
             if per_row_costs
             else None
         ),
@@ -822,7 +818,7 @@ def purged_walk_forward_splits(
 
     if train_periods < 2 or test_periods < 1 or embargo_periods < 0:
         raise ValueError("train_periods>=2, test_periods>=1, and embargo_periods>=0 are required")
-    unique = tuple(sorted(pd.Timestamp(item) for item in pd.unique(dates)))
+    unique = tuple(sorted(pd.Timestamp(item) for item in pd.Index(dates).unique()))
     step = step_periods or test_periods
     if step < 1:
         raise ValueError("step_periods must be positive")
@@ -933,10 +929,7 @@ def backtest_to_markdown(report: BacktestReport) -> str:
         "| diagnostic | result |",
         "|---|---:|",
         f"| Mean cross-sectional rank IC | {number(report.mean_rank_ic)} |",
-        (
-            "| Moving-block 95% interval for mean rank IC | "
-            f"{interval(report.rank_ic_interval)} |"
-        ),
+        (f"| Moving-block 95% interval for mean rank IC | {interval(report.rank_ic_interval)} |"),
         f"| Rank IC information ratio | {number(report.rank_ic_information_ratio)} |",
         f"| Positive rank-IC periods | {number(report.rank_ic_positive_rate, percent=True)} |",
         f"| Mean gross top-minus-bottom spread | {number(report.mean_gross_spread, percent=True)} |",
@@ -964,10 +957,7 @@ def backtest_to_markdown(report: BacktestReport) -> str:
                     f"{number(report.mean_rank_ic_net_side_aware)} |"
                 ),
                 f"| Rows without a cost estimate | {report.no_cost_estimate_rows} |",
-                (
-                    "| Capacity-weighted exposure | "
-                    f"{'yes' if report.capacity_weighted else 'NO'} |"
-                ),
+                (f"| Capacity-weighted exposure | {'yes' if report.capacity_weighted else 'NO'} |"),
                 (
                     "| Mean deployable fraction of intended position | "
                     f"{number(report.mean_deployable_fraction, percent=True)} |"

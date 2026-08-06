@@ -19,7 +19,7 @@ from stock_grader.data.synthetic import generate_panel, generate_prices
 from stock_grader.metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from stock_grader.metrics.engine import evaluate_metrics
 from stock_grader.pipeline import GradeConfig, grade_universe, grade_universe_multi
-from stock_grader.profiles import consensus_grade, get_profile, profile_names
+from stock_grader.profiles import ConsensusResult, consensus_grade, get_profile, profile_names
 from stock_grader.registry import METRICS, WEIGHTINGS
 from stock_grader.types import Coverage, Fundamentals, PitMode, SectorClass, SecuritySnapshot
 
@@ -69,10 +69,23 @@ def _fundamentals(scale: float = 1.0, *, quality: float = 1.0) -> Fundamentals:
     growth = np.linspace(0.7, 1.0, len(years))
     annual = pd.DataFrame(
         {
-            col: (quarterly[col].iloc[0] * 4 * growth if col not in
-                  ("assets", "equity", "shares_diluted", "current_assets", "current_liabilities",
-                   "long_term_debt", "cash", "inventory", "receivables", "total_debt")
-                  else quarterly[col].iloc[0] * growth)
+            col: (
+                quarterly[col].iloc[0] * 4 * growth
+                if col
+                not in (
+                    "assets",
+                    "equity",
+                    "shares_diluted",
+                    "current_assets",
+                    "current_liabilities",
+                    "long_term_debt",
+                    "cash",
+                    "inventory",
+                    "receivables",
+                    "total_debt",
+                )
+                else quarterly[col].iloc[0] * growth
+            )
             for col in quarterly.columns
         },
         index=years,
@@ -93,7 +106,9 @@ def _universe(n: int = 16, *, with_prices: bool = True) -> list[SecuritySnapshot
     # actually-graded path; the letter floor has its own dedicated tests.
     tickers = [f"T{i:02d}" for i in range(n)]
     prices, benchmark, _ = (
-        generate_panel(tickers, n_days=800, seed=5, synthetic=True) if with_prices else ({}, None, None)
+        generate_panel(tickers, n_days=800, seed=5, synthetic=True)
+        if with_prices
+        else ({}, None, None)
     )
     snapshots = []
     for i, ticker in enumerate(tickers):
@@ -202,7 +217,6 @@ def test_grade_universe_multi_unions_then_restores_metric_whitelists(
     for config in configs:
         for ticker, expected_report in expected[config.name].items():
             _assert_matching_report_fields(combined[config.name][ticker], expected_report)
-
 
 
 def test_clean_dated_frame_cache_matches_uncached() -> None:
@@ -379,9 +393,7 @@ class TestGradeUniverse:
     @pytest.mark.parametrize(
         "method",
         sorted(
-            name
-            for name, info in weighting.WEIGHT_METHOD_INFO.items()
-            if info.get("needs_returns")
+            name for name, info in weighting.WEIGHT_METHOD_INFO.items() if info.get("needs_returns")
         ),
     )
     def test_supervised_weighting_requires_explicit_research_authorization(self, method):
@@ -400,9 +412,7 @@ class TestGradeUniverse:
     @pytest.mark.parametrize(
         "method",
         sorted(
-            name
-            for name, info in weighting.WEIGHT_METHOD_INFO.items()
-            if info.get("needs_returns")
+            name for name, info in weighting.WEIGHT_METHOD_INFO.items() if info.get("needs_returns")
         ),
     )
     def test_supervised_weighting_without_returns_is_refused_not_degraded(self, method):
@@ -445,8 +455,9 @@ class TestGradeUniverse:
         assert any("SYNTHETIC" in w.upper() for w in report.warnings)
 
     def test_pillar_contributions_reconstruct_the_composite(self):
-        reports = grade_universe(_universe(), GradeConfig(pillar_aggregator="weighted_mean",
-                                                          curve="absolute"))
+        reports = grade_universe(
+            _universe(), GradeConfig(pillar_aggregator="weighted_mean", curve="absolute")
+        )
         for report in reports.values():
             total = 50.0 + sum(report.explain["pillar_contributions"].values())
             assert total == pytest.approx(report.score, abs=1e-6)
@@ -455,9 +466,7 @@ class TestGradeUniverse:
         reports = grade_universe(_universe(), GradeConfig(curve="hybrid"))
         for report in reports.values():
             standardized = 50.0 + sum(report.explain["pillar_contributions"].values())
-            assert standardized == pytest.approx(
-                report.explain["standardized_composite"], abs=1e-8
-            )
+            assert standardized == pytest.approx(report.explain["standardized_composite"], abs=1e-8)
             assert standardized + report.explain["peer_rank_curve_effect"] == pytest.approx(
                 report.score, abs=1e-8
             )
@@ -500,9 +509,15 @@ class TestSectorHandling:
 
     @pytest.mark.parametrize(
         "sic,expected",
-        [("6021", SectorClass.BANK), ("6798", SectorClass.REIT), ("4911", SectorClass.UTILITY),
-         ("2911", SectorClass.ENERGY), ("3571", SectorClass.GENERAL), (None, SectorClass.GENERAL),
-         ("garbage", SectorClass.GENERAL)],
+        [
+            ("6021", SectorClass.BANK),
+            ("6798", SectorClass.REIT),
+            ("4911", SectorClass.UTILITY),
+            ("2911", SectorClass.ENERGY),
+            ("3571", SectorClass.GENERAL),
+            (None, SectorClass.GENERAL),
+            ("garbage", SectorClass.GENERAL),
+        ],
     )
     def test_sic_classification(self, sic, expected):
         assert classify_sic(sic) is expected
@@ -559,6 +574,23 @@ class TestConsensus:
             valid = {"A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"}
             assert set(result.letter_distribution) <= valid
             assert "clarity" not in result.to_dict()
+
+    def test_summary_renders_for_a_graded_consensus(self):
+        # summary() outlived the clarity scalar's removal by one line and read
+        # self.clarity, which __init__ never assigns: every non-empty consensus
+        # raised AttributeError the moment anything asked for its one-line form.
+        results = consensus_grade(_universe())
+        graded = [r for r in results.values() if not r.scores.empty]
+        assert graded, "fixture universe produced no graded consensus to summarise"
+        for result in graded:
+            line = result.summary()
+            assert result.ticker in line
+            assert "clarity" not in line
+            assert f"{result.spread:.0f}" in line
+
+    def test_summary_renders_for_an_ungradeable_consensus(self):
+        result = ConsensusResult("NOPE", {})
+        assert result.summary() == "NOPE: not gradeable"
 
 
 class TestSyntheticData:
@@ -626,8 +658,9 @@ class TestEffectiveWeights:
                 frame[column] = np.nan
         target.fundamentals.annual = frame
 
-        config = GradeConfig(pillar_weights={"profitability": 0.5, "growth": 0.5},
-                             pillar_weighting="fixed")
+        config = GradeConfig(
+            pillar_weights={"profitability": 0.5, "growth": 0.5}, pillar_weighting="fixed"
+        )
         report = grade_universe(snapshots, config)[target.ticker]
         assert report.lost_weight > 0.0 or "growth" not in report.pillars
         assert sum(report.effective_pillar_weights.values()) == pytest.approx(1.0, abs=1e-9)
@@ -758,12 +791,17 @@ class TestSectorSpecificMetrics:
         quarters = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
         # Depreciation twenty times income: the components did not assemble sensibly.
         frame = pd.DataFrame(
-            {"net_income": [10.0] * 4, "income_to_common": [10.0] * 4,
-             "depreciation_amortization": [200.0] * 4, "assets": [5000.0] * 4},
+            {
+                "net_income": [10.0] * 4,
+                "income_to_common": [10.0] * 4,
+                "depreciation_amortization": [200.0] * 4,
+                "assets": [5000.0] * 4,
+            },
             index=quarters,
         )
         snapshot = SecuritySnapshot(
-            ticker="X", asof=_date(2026, 1, 31),
+            ticker="X",
+            asof=_date(2026, 1, 31),
             fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
         )
         assert ffo_to_assets.fn(snapshot) is None
@@ -786,7 +824,8 @@ class TestRobustness:
     def _empty(self, ticker: str) -> SecuritySnapshot:
         frame = pd.DataFrame()
         return SecuritySnapshot(
-            ticker=ticker, asof=date(2026, 7, 25),
+            ticker=ticker,
+            asof=date(2026, 7, 25),
             fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
         )
 
@@ -803,7 +842,9 @@ class TestRobustness:
         import logging
 
         with caplog.at_level(logging.WARNING):
-            reports = grade_universe([self._empty("A"), self._empty("A"), self._empty("B")], GradeConfig())
+            reports = grade_universe(
+                [self._empty("A"), self._empty("A"), self._empty("B")], GradeConfig()
+            )
         assert len(reports) == 2
         assert any("duplicate" in r.message.lower() for r in caplog.records)
 
@@ -837,7 +878,9 @@ class TestRobustness:
     def test_degenerate_price_frames(self):
         for frame in (
             pd.DataFrame(),
-            pd.DataFrame({"close": [1.0], "adj_close": [1.0]}, index=pd.to_datetime(["2026-01-01"])),
+            pd.DataFrame(
+                {"close": [1.0], "adj_close": [1.0]}, index=pd.to_datetime(["2026-01-01"])
+            ),
         ):
             snapshot = SecuritySnapshot(ticker="X", asof=date(2026, 7, 25), prices=frame)
             assert grade_universe([snapshot], GradeConfig())["X"] is not None
@@ -860,7 +903,8 @@ class TestPercentileBase:
         empty = pd.DataFrame()
         blanks = [
             SecuritySnapshot(
-                ticker=f"BLANK{i}", asof=date(2026, 1, 31),
+                ticker=f"BLANK{i}",
+                asof=date(2026, 1, 31),
                 fundamentals=Fundamentals(empty, empty, pd.Series(dtype="object")),
             )
             for i in range(6)
@@ -886,8 +930,8 @@ class TestBeneishPlausibility:
 
         low, high = _INDEX_PLAUSIBLE
         assert _index(1.0, 1.0) == pytest.approx(1.0)
-        assert _index(1.4, 1.0) == pytest.approx(1.4)     # Beneish's own manipulator mean
-        assert _index(11.63, 1.0) is None                 # the Lowe's artifact
+        assert _index(1.4, 1.0) == pytest.approx(1.4)  # Beneish's own manipulator mean
+        assert _index(11.63, 1.0) is None  # the Lowe's artifact
         assert _index(1.0, 100.0) is None
         assert low < 1.0 < high
 

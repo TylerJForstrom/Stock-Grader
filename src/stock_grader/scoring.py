@@ -19,11 +19,28 @@ so any grade can be argued with.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
 
 from .aggregate import aggregate, align_and_renormalize
 from .types import Coverage, MetricResult, PillarScore
+
+
+def _float_kwarg(kwargs: Mapping[str, object], name: str, default: float) -> float:
+    """Read a numeric aggregator kwarg out of an intentionally untyped kwargs bag.
+
+    The bag is heterogeneous by design — each aggregator reads its own keys — so
+    it is typed as ``object`` and the numeric keys are converted here. Anything
+    ``float()`` used to accept still converts; anything it did not still raises,
+    now naming the offending kwarg.
+    """
+    value = kwargs.get(name, default)
+    if isinstance(value, (str, int, float, np.integer, np.floating)):
+        return float(value)
+    raise TypeError(f"aggregator kwarg {name!r} must be a real number, got {type(value).__name__}")
+
 
 __all__ = [
     "GRADE_CUTOFFS",
@@ -77,7 +94,10 @@ PERCENTILE_CUTOFFS: list[tuple[float, str]] = [
     (0.0, "F"),
 ]
 
-def hazen_percentile(value: float | None, other_values: pd.Series | np.ndarray | list[float]) -> float | None:
+
+def hazen_percentile(
+    value: float | None, other_values: pd.Series | np.ndarray | list[float]
+) -> float | None:
     """Tie-aware Hazen percentile after inserting ``value`` among ``other_values``.
 
     The target observation is deliberately *not* expected in ``other_values``.  Point grading
@@ -380,10 +400,7 @@ def explain_aggregate_contributions(
     if scores.empty:
         return {}
     if aggregator == "weighted_mean":
-        return {
-            name: float(effective[name] * (scores[name] - neutral))
-            for name in scores.index
-        }
+        return {name: float(effective[name] * (scores[name] - neutral)) for name in scores.index}
 
     names = list(scores.index)
     n = len(names)
@@ -393,7 +410,7 @@ def explain_aggregate_contributions(
         elif aggregator == "harmonic_mean":
             rho = -1.0
         else:
-            rho = float(aggregator_kwargs.get("rho", 0.5))
+            rho = _float_kwarg(aggregator_kwargs, "rho", 0.5)
         actual = scores.to_numpy(dtype="float64")
         effective_array = effective.to_numpy(dtype="float64")
         deltas = actual - float(neutral)
@@ -404,22 +421,16 @@ def explain_aggregate_contributions(
         path_positions = (nodes + 1.0) / 2.0
         quadrature_weights = quadrature_weights / 2.0
         integrated_gradient = np.zeros(n, dtype="float64")
-        for position, quadrature_weight in zip(
-            path_positions, quadrature_weights, strict=True
-        ):
+        for position, quadrature_weight in zip(path_positions, quadrature_weights, strict=True):
             path = np.clip(float(neutral) + position * deltas, _EPS, None)
             if abs(rho) < 1e-8:
-                aggregate_value = float(
-                    np.exp(np.sum(effective_array * np.log(path)))
-                )
+                aggregate_value = float(np.exp(np.sum(effective_array * np.log(path))))
                 gradient = aggregate_value * effective_array / path
             else:
                 powered_sum = float(np.sum(effective_array * np.power(path, rho)))
                 aggregate_value = powered_sum ** (1.0 / rho)
                 gradient = (
-                    effective_array
-                    * np.power(path, rho - 1.0)
-                    * aggregate_value ** (1.0 - rho)
+                    effective_array * np.power(path, rho - 1.0) * aggregate_value ** (1.0 - rho)
                 )
             integrated_gradient += quadrature_weight * gradient
         values = deltas * integrated_gradient
@@ -464,7 +475,7 @@ def explain_aggregate_contributions(
     ces_baseline = 0.0
     ces_increments: np.ndarray | None = None
     if aggregator == "ces":
-        ces_rho = float(aggregator_kwargs.get("rho", 0.5))
+        ces_rho = _float_kwarg(aggregator_kwargs, "rho", 0.5)
         shifted_actual = np.clip(actual, 1e-12, None)
         shifted_neutral = np.clip(neutral_values, 1e-12, None)
         if abs(ces_rho) < 1e-6:
@@ -558,14 +569,18 @@ def build_pillar_score(
     return PillarScore(
         pillar=pillar,
         score=float(score) if score is not None else float("nan"),
-        weights={k: float(v) for k, v in effective.items()},
+        weights={str(k): float(v) for k, v in effective.items()},
         contributions=explain_aggregate_contributions(
             metric_scores,
             weights,
             aggregator=aggregator,
-            **aggregator_kwargs,
+            # An object-valued bag unpacked into typed keyword parameters: the callee
+            # declares neutral: float and max_exact_components: int, and no signature
+            # can prove a runtime dict supplies those types. The bag reaches here from
+            # GradeConfig.aggregator_kwargs, which GradeConfig validates on the way in.
+            **aggregator_kwargs,  # type: ignore[arg-type]
         ),
-        metric_scores={k: float(v) for k, v in scores.items()},
+        metric_scores={str(k): float(v) for k, v in scores.items()},
         coverage=(ok / applicable) if applicable else 0.0,
         n_metrics=ok,
         n_missing=missing,

@@ -74,7 +74,9 @@ class EdgarLabelSearch:
     keeps that within SEC's guidance.
     """
 
-    def __init__(self, *, contact: str | None = None, rate: float = 5.0, timeout: float = 30.0) -> None:
+    def __init__(
+        self, *, contact: str | None = None, rate: float = 5.0, timeout: float = 30.0
+    ) -> None:
         import os
 
         self.contact = contact or os.environ.get("STOCK_GRADER_CONTACT") or "stock-grader"
@@ -89,7 +91,8 @@ class EdgarLabelSearch:
         self._last = time.monotonic()
         try:
             response = requests.get(
-                _EFTS, params=params,
+                _EFTS,
+                params=params,
                 headers={"User-Agent": f"Stock-Grader/0.1 ({self.contact})"},
                 timeout=self.timeout,
             )
@@ -120,10 +123,16 @@ class EdgarLabelSearch:
         found: dict[str, OutcomeLabel] = {}
         offset = 0
         while len(found) < limit and offset < 1000:
-            payload = self._get({
-                "q": query, "forms": forms, "dateRange": "custom",
-                "startdt": start.isoformat(), "enddt": end.isoformat(), "from": offset,
-            })
+            payload = self._get(
+                {
+                    "q": query,
+                    "forms": forms,
+                    "dateRange": "custom",
+                    "startdt": start.isoformat(),
+                    "enddt": end.isoformat(),
+                    "from": offset,
+                }
+            )
             hits = ((payload or {}).get("hits") or {}).get("hits") or []
             if not hits:
                 break
@@ -142,7 +151,10 @@ class EdgarLabelSearch:
                 except ValueError:
                     filed_date = end
                 found[cik] = OutcomeLabel(
-                    cik=cik, name=display, filed=filed_date, label=label,
+                    cik=cik,
+                    name=display,
+                    filed=filed_date,
+                    label=label,
                     ticker=_ticker_from_display(display),
                 )
             offset += 10

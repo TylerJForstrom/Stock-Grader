@@ -129,9 +129,17 @@ def _synthetic(experiment, sharpe, **kw):
     from stock_grader.research_manifest import ResearchRecord
 
     return ResearchRecord(
-        experiment=experiment, market="us_equities", symbols=kw.get("symbols", []),
-        targets=[], horizons=[1], trials=1, metrics={"per_period_sharpe": sharpe},
-        costs={}, benchmark="none", leakage_controls="PASS", gate_passed=False,
+        experiment=experiment,
+        market="us_equities",
+        symbols=kw.get("symbols", []),
+        targets=[],
+        horizons=[1],
+        trials=1,
+        metrics={"per_period_sharpe": sharpe},
+        costs={},
+        benchmark="none",
+        leakage_controls="PASS",
+        gate_passed=False,
         verdict="NO EDGE",
     )
 
@@ -218,9 +226,7 @@ def test_preregistration_declaration_is_chained_and_never_a_trial(tmp_path):
 
     ledger = tmp_path / "ledger.jsonl"
     append_record(ledger, _synthetic("backtest:something_else", 0.31))
-    append_record(
-        ledger, preregistration_record(_SPEC, schedule="monthly (cron 41 2 6 * *)")
-    )
+    append_record(ledger, preregistration_record(_SPEC, schedule="monthly (cron 41 2 6 * *)"))
     records = load_manifest(ledger)
 
     assert verify_chain(records), "a declaration must extend the chain, never break it"
@@ -411,9 +417,7 @@ def test_promotion_stage_walks_the_ladder_and_tamper_neither_moves_nor_blesses(t
     )
     lying_move = _json.loads(doctored[1]["leakage_controls"])
     lying_move["to_stage"] = "paper_default"
-    doctored[1]["leakage_controls"] = _json.dumps(
-        lying_move, sort_keys=True, separators=(",", ":")
-    )
+    doctored[1]["leakage_controls"] = _json.dumps(lying_move, sort_keys=True, separators=(",", ":"))
     assert not verify_chain(doctored)
     assert find_promotion_policy(doctored, "promotion-policy-v1") is None
     assert promotion_stage(doctored, _SUBJECT) == "exploratory"
@@ -508,9 +512,7 @@ def test_live_money_opens_only_under_a_new_policy_version(tmp_path):
     ):
         append_record(
             ledger,
-            promotion_transition_record(
-                _transition(from_stage, to_stage), code_commit="test"
-            ),
+            promotion_transition_record(_transition(from_stage, to_stage), code_commit="test"),
         )
     # v2 declares the rung reachable — a NEW version, superseding, not editing.
     v2_sha = "e2" * 32

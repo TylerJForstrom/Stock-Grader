@@ -23,7 +23,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 import pandas as pd
@@ -325,7 +325,10 @@ def _select(records: list[dict], pit_mode: PitMode, asof: date | None) -> dict |
     if not records:
         return None
     if pit_mode is PitMode.PIT and asof is not None:
-        eligible = [r for r in records if _parse(r.get("filed")) and _parse(r["filed"]) <= asof]
+        # Bind the parsed date once instead of parsing every record twice.
+        eligible = [
+            r for r in records if (filed := _parse(r.get("filed"))) is not None and filed <= asof
+        ]
         if not eligible:
             return None
         return max(eligible, key=lambda r: r["filed"])
@@ -463,10 +466,11 @@ def normalize_duration_facts(
         if end in quarters:
             continue
         prior = ytd.get((start, n_q - 1))
+        # _prev_quarter_end can come back empty; the old spelling leaned on
+        # dict.get(None) quietly returning None for that case.
+        prior_end = _prev_quarter_end(start, quarters) if n_q == 2 else None
         prior_value = (
-            prior[1]
-            if prior
-            else (quarters.get(_prev_quarter_end(start, quarters)) if n_q == 2 else None)
+            prior[1] if prior else (quarters.get(prior_end) if prior_end is not None else None)
         )
         if n_q == 2 and prior is None:
             # YTD2 minus the single Q1 that shares this fiscal start.
@@ -671,8 +675,11 @@ def restate_for_splits(shares: pd.Series, scale_reference: pd.Series | None = No
             else:
                 reference = scale_reference.dropna()
                 try:
-                    now = float(reference.asof(clean.index[i]))
-                    before = float(reference.asof(clean.index[i - 1]))
+                    # asof() is typed as returning the full pandas Scalar union; this
+                    # reference series is numeric, and a non-numeric value would be
+                    # caught by the except clause below either way.
+                    now = float(cast(Any, reference.asof(clean.index[i])))
+                    before = float(cast(Any, reference.asof(clean.index[i - 1])))
                 except (KeyError, TypeError, ValueError):
                     before = now = 0.0
                 if not before or not np.isfinite(now / before):
@@ -740,8 +747,8 @@ def _latest_end(
             for record in records
             if (filed := _parse(record.get("filed"))) is not None and filed <= asof
         ]
-    ends = [_parse(record.get("end")) for record in records]
-    ends = [e for e in ends if e is not None]
+    parsed = [_parse(record.get("end")) for record in records]
+    ends = [e for e in parsed if e is not None]
     return max(ends) if ends else None
 
 
@@ -848,7 +855,8 @@ def build_fundamentals(
             if not a.empty:
                 annual[concept] = a
             for idx, val in f.items():
-                filings.setdefault(idx, val)
+                # f is a date-indexed Series; Series.items() types its keys as Hashable.
+                filings.setdefault(idx, val)  # type: ignore[arg-type]
 
     q_df = pd.DataFrame(quarterly).sort_index() if quarterly else pd.DataFrame()
     a_df = pd.DataFrame(annual).sort_index() if annual else pd.DataFrame()

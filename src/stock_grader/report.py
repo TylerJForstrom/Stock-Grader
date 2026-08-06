@@ -101,7 +101,9 @@ DISCLAIMER = (
 )
 
 
-def render_report(report: GradeReport, console: Console | None = None, *, explain: bool = False) -> None:
+def render_report(
+    report: GradeReport, console: Console | None = None, *, explain: bool = False
+) -> None:
     """Render one security's grade to the terminal."""
     console = console or Console()
 
@@ -171,8 +173,10 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
             b = best[i] if i < len(best) else ("", 0.0)
             w = worst[i] if i < len(worst) else ("", 0.0)
             drivers.add_row(
-                b[0], f"{b[1]:+.2f}" if b[0] else "",
-                w[0], f"{w[1]:+.2f}" if w[0] else "",
+                b[0],
+                f"{b[1]:+.2f}" if b[0] else "",
+                w[0],
+                f"{w[1]:+.2f}" if w[0] else "",
             )
         blocks.append(drivers)
 
@@ -182,12 +186,20 @@ def render_report(report: GradeReport, console: Console | None = None, *, explai
             warn.append(f"! {message}\n", style="yellow")
         blocks.append(warn)
 
-    console.print(Panel(Group(*blocks), border_style=_colour(report.letter), title="stock-grader",
-                        title_align="left"))
+    console.print(
+        Panel(
+            Group(*blocks),
+            border_style=_colour(report.letter),
+            title="stock-grader",
+            title_align="left",
+        )
+    )
     console.print(Text(DISCLAIMER, style="dim"))
 
 
-def render_ranking(reports: dict[str, GradeReport], console: Console | None = None, *, top: int | None = None) -> None:
+def render_ranking(
+    reports: dict[str, GradeReport], console: Console | None = None, *, top: int | None = None
+) -> None:
     """Render a ranked universe."""
     console = console or Console()
     table = Table(box=SIMPLE, header_style="bold", title="Ranked universe", title_justify="left")
@@ -225,22 +237,28 @@ def render_ranking(reports: dict[str, GradeReport], console: Console | None = No
 
 
 def _letter_distribution_text(result) -> str:
-    """"3xB+ 5xB 2xC" — the count of graded profiles at each letter."""
+    """ "3xB+ 5xB 2xC" — the count of graded profiles at each letter."""
     if not getattr(result, "letter_distribution", None):
         return "—"
-    order = {letter: index for index, letter in enumerate(
-        ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"])}
-    items = sorted(result.letter_distribution.items(),
-                   key=lambda kv: order.get(kv[0], 99))
+    order = {
+        letter: index
+        for index, letter in enumerate(
+            ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"]
+        )
+    }
+    items = sorted(result.letter_distribution.items(), key=lambda kv: order.get(kv[0], 99))
     return " ".join(f"{count}x{letter}" for letter, count in items)
 
 
 def render_consensus(results: dict, console: Console | None = None) -> None:
     """Render the multi-profile consensus, foregrounding disagreement."""
     console = console or Console()
-    table = Table(box=SIMPLE, header_style="bold",
-                  title="Consensus across profiles — a contested letter is information, not noise",
-                  title_justify="left")
+    table = Table(
+        box=SIMPLE,
+        header_style="bold",
+        title="Consensus across profiles — a contested letter is information, not noise",
+        title_justify="left",
+    )
     table.add_column("ticker", style="bold")
     table.add_column("consensus", justify="center")
     table.add_column("score", justify="right")
@@ -248,7 +266,9 @@ def render_consensus(results: dict, console: Console | None = None) -> None:
     table.add_column("best as", style="green")
     table.add_column("worst as", style="red")
 
-    for result in sorted(results.values(), key=lambda r: -r.score if not math.isnan(r.score) else 1e9):
+    for result in sorted(
+        results.values(), key=lambda r: -r.score if not math.isnan(r.score) else 1e9
+    ):
         if not len(result.scores):
             # Never drop a requested security silently. A ticker that vanishes from the output
             # reads as "not asked for"; the honest answer is that we could not grade it and why.
@@ -345,12 +365,16 @@ def to_markdown(report: GradeReport) -> str:
         "",
         f"- **Profile**: {report.profile}",
         _provenance_line(report),
-        (f"- **Weighting**: {report.weighting_method}   **Normalizer**: {report.normalizer}   "
-         + f"**Aggregator**: {report.aggregator}"),
-        (f"- **Coverage**: {report.coverage:.0%} "
-         + f"({report.explain.get('n_metrics_ok', 0)} computed, "
-         + f"{report.explain.get('n_metrics_missing', 0)} missing, "
-         + f"{report.explain.get('n_metrics_not_applicable', 0)} not applicable)"),
+        (
+            f"- **Weighting**: {report.weighting_method}   **Normalizer**: {report.normalizer}   "
+            + f"**Aggregator**: {report.aggregator}"
+        ),
+        (
+            f"- **Coverage**: {report.coverage:.0%} "
+            + f"({report.explain.get('n_metrics_ok', 0)} computed, "
+            + f"{report.explain.get('n_metrics_missing', 0)} missing, "
+            + f"{report.explain.get('n_metrics_not_applicable', 0)} not applicable)"
+        ),
     ]
     if _has_sensitivity_interval(report):
         low, high = report.sensitivity_interval or (float("nan"), float("nan"))
@@ -360,12 +384,16 @@ def to_markdown(report: GradeReport) -> str:
         )
     frequencies = _letter_scenario_frequency_text(report)
     if frequencies:
-        lines.append(
-            f"- **Letter frequencies under those model perturbations**: {frequencies}"
-        )
+        lines.append(f"- **Letter frequencies under those model perturbations**: {frequencies}")
     if report.percentile is not None:
         lines.append(f"- **Universe percentile**: {report.percentile:.0f}")
-    lines += ["", "## Pillars", "", "| pillar | score | weight | contribution |", "|---|---:|---:|---:|"]
+    lines += [
+        "",
+        "## Pillars",
+        "",
+        "| pillar | score | weight | contribution |",
+        "|---|---:|---:|---:|",
+    ]
     contributions = report.explain.get("pillar_contributions", {})
     for name, pillar in sorted(report.pillars.items(), key=lambda kv: -kv[1].score):
         lines.append(

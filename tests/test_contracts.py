@@ -103,9 +103,7 @@ def test_grade_config_fails_fast_on_non_operational_settings(kwargs, message):
 def test_cli_hides_methods_that_require_unavailable_configuration():
     parser = cli.build_parser()
     grade = next(
-        action
-        for action in parser._subparsers._group_actions
-        if action.dest == "command"
+        action for action in parser._subparsers._group_actions if action.dest == "command"
     ).choices["grade"]
     weighting = next(action for action in grade._actions if action.dest == "weighting")
     normalizer = next(action for action in grade._actions if action.dest == "normalizer")

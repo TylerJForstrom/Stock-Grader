@@ -45,17 +45,56 @@ from stock_grader.validation import EdgarLabelSearch, separation_report
 
 # Large, liquid, unambiguously going concerns — the negative class.
 CONTROLS = [
-    "AAPL", "MSFT", "JNJ", "PG", "KO", "WMT", "XOM", "CVX", "HD", "MCD",
-    "COST", "PEP", "LLY", "ABBV", "MRK", "UNH", "CAT", "HON", "LMT", "UPS",
-    "LIN", "NEE", "SO", "DUK", "T", "VZ", "ADBE", "CRM", "TXN", "QCOM",
+    "AAPL",
+    "MSFT",
+    "JNJ",
+    "PG",
+    "KO",
+    "WMT",
+    "XOM",
+    "CVX",
+    "HD",
+    "MCD",
+    "COST",
+    "PEP",
+    "LLY",
+    "ABBV",
+    "MRK",
+    "UNH",
+    "CAT",
+    "HON",
+    "LMT",
+    "UPS",
+    "LIN",
+    "NEE",
+    "SO",
+    "DUK",
+    "T",
+    "VZ",
+    "ADBE",
+    "CRM",
+    "TXN",
+    "QCOM",
 ]
 
 # Metrics that should carry information about solvency.
 WATCHED = [
-    "ohlson_o_score", "altman_z", "altman_z_prime", "piotroski_f_score",
-    "current_ratio", "quick_ratio", "interest_coverage", "debt_to_assets",
-    "net_margin", "roa", "roe", "fcf_to_debt", "cash_conversion",
-    "accruals_ratio", "fcf_to_net_income", "debt_to_equity",
+    "ohlson_o_score",
+    "altman_z",
+    "altman_z_prime",
+    "piotroski_f_score",
+    "current_ratio",
+    "quick_ratio",
+    "interest_coverage",
+    "debt_to_assets",
+    "net_margin",
+    "roa",
+    "roe",
+    "fcf_to_debt",
+    "cash_conversion",
+    "accruals_ratio",
+    "fcf_to_net_income",
+    "debt_to_equity",
 ]
 
 
@@ -69,7 +108,10 @@ def build_snapshot(client: SECClient, cik: str, name: str, asof: date) -> Securi
         return None
     submissions = client.submissions(cik) or {}
     snapshot = SecuritySnapshot(
-        ticker=name, asof=asof, fundamentals=fundamentals, cik=cik,
+        ticker=name,
+        asof=asof,
+        fundamentals=fundamentals,
+        cik=cik,
         sector=classify_sic(submissions.get("sic")),
     )
     snapshot.shares_outstanding = fundamentals.ttm("shares_diluted")
@@ -80,15 +122,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, default=60, help="labelled companies to fetch")
     parser.add_argument("--year", type=int, default=2023)
-    parser.add_argument("--label", default="going_concern",
-                        choices=["going_concern", "bankruptcy", "restatement", "material_weakness"])
-    parser.add_argument("--min-sample", type=int, default=5,
-                        help="skip metrics with fewer usable observations")
+    parser.add_argument(
+        "--label",
+        default="going_concern",
+        choices=["going_concern", "bankruptcy", "restatement", "material_weakness"],
+    )
+    parser.add_argument(
+        "--min-sample", type=int, default=5, help="skip metrics with fewer usable observations"
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO if args.verbose else logging.ERROR,
-                        format="[%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.ERROR, format="[%(levelname)s] %(message)s"
+    )
 
     asof = date(args.year, 12, 31)
     client = SECClient()
@@ -121,7 +168,9 @@ def main(argv: list[str] | None = None) -> int:
             healthy[ticker] = evaluate_metrics(snapshot)
 
     print(f"\nusable: {len(distressed)} distressed, {len(healthy)} control\n")
-    header = f"{'metric':24} {'n_dist':>7} {'n_ctrl':>7} {'med_dist':>11} {'med_ctrl':>11} {'AUC':>6}"
+    header = (
+        f"{'metric':24} {'n_dist':>7} {'n_ctrl':>7} {'med_dist':>11} {'med_ctrl':>11} {'AUC':>6}"
+    )
     print(header)
     print("-" * len(header))
 
@@ -134,8 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         right = {k: (v[name].value if name in v else None) for k, v in healthy.items()}
         report = separation_report(left, right, metric_name=name)
         if report["n_distressed"] < args.min_sample or report["n_healthy"] < args.min_sample:
-            print(f"{name:24} {report['n_distressed']:7} {report['n_healthy']:7}"
-                  f"   too few usable observations")
+            print(
+                f"{name:24} {report['n_distressed']:7} {report['n_healthy']:7}"
+                f"   too few usable observations"
+            )
             continue
         area = report["auc"]
         # A lower-is-better metric should be HIGHER for distressed companies; flip so that in every
@@ -144,11 +195,15 @@ def main(argv: list[str] | None = None) -> int:
             area = 1.0 - area
         rows.append((name, area))
         flag = "  <- INVERTED" if area < 0.45 else ""
-        print(f"{name:24} {report['n_distressed']:7} {report['n_healthy']:7} "
-              f"{report['median_distressed']:11.3f} {report['median_healthy']:11.3f} {area:6.2f}{flag}")
+        print(
+            f"{name:24} {report['n_distressed']:7} {report['n_healthy']:7} "
+            f"{report['median_distressed']:11.3f} {report['median_healthy']:11.3f} {area:6.2f}{flag}"
+        )
 
     print("\nAUC = P(a distressed company looks worse than a healthy one).")
-    print("0.5 is no signal. Below ~0.45 the metric is pointing the wrong way and is a real defect —")
+    print(
+        "0.5 is no signal. Below ~0.45 the metric is pointing the wrong way and is a real defect —"
+    )
     print("it is actively rewarding the companies it should be penalising.")
     inverted = [n for n, a in rows if a < 0.45]
     if inverted:

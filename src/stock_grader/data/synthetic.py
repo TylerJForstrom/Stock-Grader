@@ -84,7 +84,9 @@ def generate_prices(
     kappa, theta = 0.05, np.log(base_var)
     shocks = rng.standard_normal(n_days)
     for t in range(1, n_days):
-        log_var[t] = log_var[t - 1] + kappa * (theta - log_var[t - 1]) + vol_of_vol * np.sqrt(dt) * shocks[t]
+        log_var[t] = (
+            log_var[t - 1] + kappa * (theta - log_var[t - 1]) + vol_of_vol * np.sqrt(dt) * shocks[t]
+        )
     var = np.exp(log_var)
 
     returns = mu + np.sqrt(var) * rng.standard_normal(n_days)

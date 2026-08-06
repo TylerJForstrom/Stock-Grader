@@ -81,15 +81,16 @@ def weighted_mean(scores: pd.Series, weights: pd.Series | None = None, **_: obje
 
 
 @AGGREGATORS("weighted_median")
-def weighted_median(scores: pd.Series, weights: pd.Series | None = None, **_: object) -> float | None:
+def weighted_median(
+    scores: pd.Series, weights: pd.Series | None = None, **_: object
+) -> float | None:
     """Weighted median — ignores the magnitude of outliers entirely."""
     s, w = align_and_renormalize(scores, weights)
     if s.empty:
         return None
     order = s.sort_values().index
     cumulative = w.loc[order].cumsum()
-    position = cumulative.searchsorted(0.5)
-    position = min(int(position), len(order) - 1)
+    position = min(int(cumulative.searchsorted(0.5)), len(order) - 1)
     return float(s.loc[order[position]])
 
 
@@ -110,7 +111,9 @@ def trimmed_mean(
 
 
 @AGGREGATORS("geometric_mean")
-def geometric_mean(scores: pd.Series, weights: pd.Series | None = None, **_: object) -> float | None:
+def geometric_mean(
+    scores: pd.Series, weights: pd.Series | None = None, **_: object
+) -> float | None:
     """Weighted geometric mean.
 
     Scores are shifted off zero by a small epsilon before taking logs: a literal zero would make
@@ -197,7 +200,9 @@ def owa(
     expresses "I care about a company's weakest three attributes, whichever they turn out to be" —
     something identity-based weights cannot say.
     """
-    s, _ = align_and_renormalize(scores, weights)
+    # NOT `_`: that name is already bound to this function's **_ kwargs bag.
+    # owa weights by rank, so the renormalized identity weights are discarded.
+    s, _identity_weights = align_and_renormalize(scores, weights)
     if s.empty:
         return None
     n = len(s)

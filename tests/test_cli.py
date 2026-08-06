@@ -576,10 +576,10 @@ def test_backtest_records_trials_and_deflates_by_ledger_history(
             bootstrap_block_periods=1,
             seed=0,
             allow_unverified_panel=False,
-        # Scratch panels written straight into tmp_path: no producer
-        # cataloged them, so the strict sibling-manifest check must be
-        # opted out of explicitly (the ledger line records UNATTESTED).
-        allow_unmanifested_panel=True,
+            # Scratch panels written straight into tmp_path: no producer
+            # cataloged them, so the strict sibling-manifest check must be
+            # opted out of explicitly (the ledger line records UNATTESTED).
+            allow_unmanifested_panel=True,
             format="json",
             ledger=str(ledger),
         )
@@ -641,10 +641,10 @@ def test_backtest_null_sharpe_trial_does_not_poison_later_deflation(
             bootstrap_block_periods=1,
             seed=0,
             allow_unverified_panel=False,
-        # Scratch panels written straight into tmp_path: no producer
-        # cataloged them, so the strict sibling-manifest check must be
-        # opted out of explicitly (the ledger line records UNATTESTED).
-        allow_unmanifested_panel=True,
+            # Scratch panels written straight into tmp_path: no producer
+            # cataloged them, so the strict sibling-manifest check must be
+            # opted out of explicitly (the ledger line records UNATTESTED).
+            allow_unmanifested_panel=True,
             format="json",
             ledger=str(ledger),
         )
@@ -762,8 +762,8 @@ def test_preregistered_reevaluation_keeps_the_trial_denominator_flat(
         cli.main(
             [
                 "ledger-declare",
-        "--allow-unmanifested-panel",
-            "--allow-unmanifested-panel",
+                "--allow-unmanifested-panel",
+                "--allow-unmanifested-panel",
                 str(path),
                 "--quantiles",
                 "2",
@@ -798,9 +798,9 @@ def test_preregistered_reevaluation_keeps_the_trial_denominator_flat(
     assert records[-1]["trials"] == 1
     assert records[-1]["experiment"] == records[-2]["experiment"]
     assert records[-1]["experiment"].startswith("backtest:preregistered:all_weather:")
-    assert records[-1]["symbols"] == [
-        f"preregistration:{records[0]['integrity_sha256']}"
-    ], "the result must reference the declaration it re-evaluates"
+    assert records[-1]["symbols"] == [f"preregistration:{records[0]['integrity_sha256']}"], (
+        "the result must reference the declaration it re-evaluates"
+    )
     assert records[-1]["verdict"].startswith("PRIMARY (pre-registered) -- ")
     assert "disclosed peeking, not corrected" in records[-1]["leakage_controls"]
     # Shared-denominator consistency: the collapse rule counts both
@@ -1073,9 +1073,7 @@ def test_freeze_structural_refusals_are_idempotent_when_sibling_panels_exist(
     args = _freeze_args(tmp_path / "frozen", all_profiles=True)
 
     assert cli.cmd_freeze(args) == 0
-    existing = {
-        path: path.read_bytes() for path in (tmp_path / "frozen").rglob("*.parquet")
-    }
+    existing = {path: path.read_bytes() for path in (tmp_path / "frozen").rglob("*.parquet")}
     assert set(profile_names()) - refused == {path.parent.name for path in existing}
 
     # On the old alarm, both remaining pending profiles refusing made this exit
@@ -1374,8 +1372,10 @@ def test_monthly_freeze_workflow_keeps_deep_clock_and_adds_wide_bulk_clock() -> 
     assert 'WIDE="config/$(cat config/universe_wide_current)"' in workflow
     assert '--universe "$WIDE"' in workflow
     pointer = (
-        Path(__file__).resolve().parent.parent / "config" / "universe_wide_current"
-    ).read_text(encoding="utf-8").strip()
+        (Path(__file__).resolve().parent.parent / "config" / "universe_wide_current")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
     assert (Path(__file__).resolve().parent.parent / "config" / pointer).is_file(), (
         f"universe pointer names a missing file: {pointer}"
     )
@@ -1476,9 +1476,7 @@ def test_monthly_freeze_commits_panels_even_when_a_profile_refuses() -> None:
         # comments quote `if: always()` — a substring search over the raw text is
         # satisfied by the explanation of the guard rather than the guard itself.
         return any(
-            line.strip() == "if: always()"
-            for line in block
-            if not line.lstrip().startswith("#")
+            line.strip() == "if: always()" for line in block if not line.lstrip().startswith("#")
         )
 
     assert has_always_guard(step_block("Commit")), (
@@ -1569,8 +1567,7 @@ def test_ledger_retract_appends_and_keeps_chain_valid(tmp_path):
     assert cli.main(["ledger-retract", "f" * 64, "--ledger", str(ledger), "--reason", "x"]) == 2
     retraction_hash = records[-1]["integrity_sha256"]
     assert (
-        cli.main(["ledger-retract", retraction_hash, "--ledger", str(ledger), "--reason", "x"])
-        == 2
+        cli.main(["ledger-retract", retraction_hash, "--ledger", str(ledger), "--reason", "x"]) == 2
     )
 
 

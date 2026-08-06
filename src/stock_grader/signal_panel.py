@@ -90,6 +90,7 @@ def is_band_namespace(signal: str) -> bool:
     """
     return bool(BAND_NAMESPACE.search(str(signal)))
 
+
 #: Row schema of the EVALUABLE panel this module writes.
 SIGNAL_PANEL_SCHEMA_VERSION = "1.0"
 
@@ -508,9 +509,7 @@ def build_signal_panel(
     for entry, exit_ in windows.values():
         needed_days.update(d for d in days if entry <= d <= exit_)
     if not needed_days:
-        result.refusal = (
-            "the vault EOD archive covers none of the pending return windows"
-        )
+        result.refusal = "the vault EOD archive covers none of the pending return windows"
         return result, {}
 
     tickers: set[str] = set()
@@ -556,9 +555,8 @@ def build_signal_panel(
         )
     else:
         missing_inputs = sorted(
-            set(COST_INPUT_COLUMNS) - set.intersection(
-                *(set(observations[day].columns) for day in pending)
-            )
+            set(COST_INPUT_COLUMNS)
+            - set.intersection(*(set(observations[day].columns) for day in pending))
         )
         log(
             f"{signal}: no per-row cost column — the observation parts do not carry "
@@ -685,7 +683,9 @@ def build_signal_panel(
                     if inputs is None
                     else estimate_cost(inputs, config.cost_position_notional_usd)
                 )
-                if estimate is None:
+                # `inputs is None` already implies `estimate is None`, but spelling both
+                # out is what lets the else-branch below read inputs.* unguarded.
+                if inputs is None or estimate is None:
                     accounting.no_cost_estimate += 1
                     cost_columns = {
                         "round_trip_cost_bps": float("nan"),
@@ -694,9 +694,7 @@ def build_signal_panel(
                         "impact_bps": float("nan"),
                         "cost_participation": float("nan"),
                         "cost_capacity_truncated": False,
-                        "cost_notional_target_usd": float(
-                            config.cost_position_notional_usd
-                        ),
+                        "cost_notional_target_usd": float(config.cost_position_notional_usd),
                         "cost_notional_allowed_usd": float("nan"),
                         "cost_adv20_dollar": float("nan"),
                         "cost_sigma": float("nan"),
@@ -724,9 +722,7 @@ def build_signal_panel(
                         "cost_adv20_dollar": inputs.adv20_dollar,
                         "cost_sigma": inputs.sigma,
                         "cost_cs_spread_bps": inputs.cs_spread_bps,
-                        "cost_amihud_lambda_bps_per_musd": (
-                            inputs.amihud_lambda_bps_per_musd
-                        ),
+                        "cost_amihud_lambda_bps_per_musd": (inputs.amihud_lambda_bps_per_musd),
                         "cost_model_id": COST_MODEL_ID,
                     }
 
@@ -760,16 +756,10 @@ def build_signal_panel(
                     "dividend_covered": dividend_covered,
                     "terminal_price_used": terminal,
                     "symbol_changed": price_symbol.upper() != entry_symbol.upper(),
-                    "overlapping_windows": bool(
-                        getattr(observation, "overlapping_windows", False)
-                    ),
-                    "horizon_trading_days": int(
-                        getattr(observation, "horizon_trading_days", 0)
-                    ),
+                    "overlapping_windows": bool(getattr(observation, "overlapping_windows", False)),
+                    "horizon_trading_days": int(getattr(observation, "horizon_trading_days", 0)),
                     "vault_commit": str(getattr(observation, "vault_commit", "")),
-                    "observation_schema_version": str(
-                        getattr(observation, "schema_version", "")
-                    ),
+                    "observation_schema_version": str(getattr(observation, "schema_version", "")),
                     "panel_version": version,
                     "panel_schema_version": SIGNAL_PANEL_SCHEMA_VERSION,
                     "builder_commit": builder_commit,
@@ -825,13 +815,9 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     kept = sum(int(entry.get("kept", 0)) for entry in counts_by_date.values())
     unresolved = sum(int(entry.get("unresolved_dropped", 0)) for entry in counts_by_date.values())
     covered = sum(int(entry.get("dividend_covered", 0)) for entry in counts_by_date.values())
-    pit_rows = sum(
-        int(entry.get("pit_membership_rows", 0)) for entry in counts_by_date.values()
-    )
+    pit_rows = sum(int(entry.get("pit_membership_rows", 0)) for entry in counts_by_date.values())
     observed = sum(int(entry.get("observations", 0)) for entry in counts_by_date.values())
-    no_start = sum(
-        int(entry.get("no_start_price_dropped", 0)) for entry in counts_by_date.values()
-    )
+    no_start = sum(int(entry.get("no_start_price_dropped", 0)) for entry in counts_by_date.values())
     considered = kept + unresolved
     result.kept_rows = kept
     result.unresolved_rows = unresolved
@@ -842,9 +828,7 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     result.no_start_price_rows = no_start
     result.survival_rate = kept / observed if observed else 0.0
     priced = sum(int(entry.get("cost_priced", 0)) for entry in counts_by_date.values())
-    refused = sum(
-        int(entry.get("no_cost_estimate", 0)) for entry in counts_by_date.values()
-    )
+    refused = sum(int(entry.get("no_cost_estimate", 0)) for entry in counts_by_date.values())
     result.cost_priced_rows = priced
     result.no_cost_estimate_rows = refused
     # Denominator is the rows that WERE offered to the cost model, not every
@@ -865,9 +849,7 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     ]
     weight = sum(rows for rows, _fraction in truncation_weights)
     result.capacity_truncated_notional_fraction = (
-        sum(rows * fraction for rows, fraction in truncation_weights) / weight
-        if weight
-        else 0.0
+        sum(rows * fraction for rows, fraction in truncation_weights) / weight if weight else 0.0
     )
     # Restored from the persisted accounting, not from this run: an incremental
     # run re-prices nothing and must still name the cost model the closed parts
@@ -913,9 +895,7 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     result.attestations = {
         # Zero outcome-dependent drops AND full point-in-time membership. Both
         # legs, or the panel says False and reports its coverage.
-        "universe_is_pit": bool(
-            kept > 0 and unresolved == 0 and pit_rows == kept
-        ),
+        "universe_is_pit": bool(kept > 0 and unresolved == 0 and pit_rows == kept),
         "return_is_total": bool(
             result.dividend_archive_months
             and kept > 0
@@ -984,9 +964,7 @@ def evaluable_periods_from_counts(entries: Any) -> int:
     return total
 
 
-def band_verdict(
-    observed: dict[str, Any] | None, evaluable_periods: int
-) -> dict[str, Any] | None:
+def band_verdict(observed: dict[str, Any] | None, evaluable_periods: int) -> dict[str, Any] | None:
     """:func:`band_report`'s arithmetic, over the two inputs it actually reads.
 
     Split out because the verdict has a second reader. ``band_report`` composes
@@ -1101,9 +1079,7 @@ def write_signal_panel(
     # regenerated, and _aggregate's .get defaults read the hole as zero
     # unresolved drops — the attestation-friendly direction). Stock-Vault's own
     # writer has used an atomic write for exactly this reason.
-    _atomic_write_text(
-        counts_path, json.dumps(counts_by_date, indent=2, sort_keys=True) + "\n"
-    )
+    _atomic_write_text(counts_path, json.dumps(counts_by_date, indent=2, sort_keys=True) + "\n")
     for signal_date, part in sorted(new_parts.items()):
         part.to_parquet(out_dir / f"{signal_date.isoformat()}.parquet", index=False)
         result.parts_written += 1
@@ -1305,9 +1281,7 @@ def build_payload(result: SignalPanelResult) -> dict:
             "no_cost_estimate_rows": result.no_cost_estimate_rows,
             "cost_coverage": result.cost_coverage,
             "capacity_truncated_rows": result.capacity_truncated_rows,
-            "capacity_truncated_notional_fraction": (
-                result.capacity_truncated_notional_fraction
-            ),
+            "capacity_truncated_notional_fraction": (result.capacity_truncated_notional_fraction),
             "golden_vector_sha256": golden_vector_sha256(),
         },
         "attestations": result.attestations,

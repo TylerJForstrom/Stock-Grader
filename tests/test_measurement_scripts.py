@@ -115,14 +115,10 @@ def test_missing_cap_peer_survives_relaxed_pass_but_is_never_a_target(tmp_path) 
         "outside_requested_size_band": 2,
     }
     assert all(
-        row["fill_pass"] == "relaxed size band within 4-digit SIC"
-        for row in result["targets"]
+        row["fill_pass"] == "relaxed size band within 4-digit SIC" for row in result["targets"]
     )
     assert all(row["peers_without_market_cap"] == 1 for row in result["targets"])
-    assert all(
-        row["peers_outside_requested_size_band"] == 1
-        for row in result["targets"]
-    )
+    assert all(row["peers_outside_requested_size_band"] == 1 for row in result["targets"])
 
 
 def test_peer_snapshot_csv_preserves_leading_zero_sic(tmp_path) -> None:
@@ -165,15 +161,22 @@ def test_peer_widening_cli_output_is_path_and_newline_stable(tmp_path) -> None:
         output = directory / "measurement.json"
         frame.to_csv(source, index=False)
         source_bytes = source.read_bytes()
-        assert peer_widening_main(
-            [
-                str(source),
-                "--sample-size", "2",
-                "--minimum", "2",
-                "--maximum", "2",
-                "--output", str(output),
-            ]
-        ) == 0
+        assert (
+            peer_widening_main(
+                [
+                    str(source),
+                    "--sample-size",
+                    "2",
+                    "--minimum",
+                    "2",
+                    "--maximum",
+                    "2",
+                    "--output",
+                    str(output),
+                ]
+            )
+            == 0
+        )
         payloads.append(output.read_bytes())
 
     assert payloads[0] == payloads[1]
@@ -270,12 +273,8 @@ def test_sector_key_concentration_is_deterministic_and_correct() -> None:
     assert sic2["names_below_5"] == 4
     assert sic2["groups_below_15"] == 2
     assert sic2["names_below_15"] == 4
-    assert sic2["shrink_weight_n_over_n_plus_5_quantiles"]["min"] == pytest.approx(
-        1.0 / 6.0
-    )
-    assert sic2["shrink_weight_n_over_n_plus_5_quantiles"]["max"] == pytest.approx(
-        3.0 / 8.0
-    )
+    assert sic2["shrink_weight_n_over_n_plus_5_quantiles"]["min"] == pytest.approx(1.0 / 6.0)
+    assert sic2["shrink_weight_n_over_n_plus_5_quantiles"]["max"] == pytest.approx(3.0 / 8.0)
 
     sic3 = first["keys"]["sic3"]
     assert sic3["assigned_count"] == 4

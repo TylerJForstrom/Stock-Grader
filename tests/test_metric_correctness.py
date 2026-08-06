@@ -413,7 +413,9 @@ class TestAltmanVariantExclusivity:
         frame = _altman_frame().iloc[[1]].copy()
         earlier = frame.copy()
         earlier.index = pd.to_datetime(["2025-03-31"])
-        earlier[["assets", "liabilities", "working_capital", "retained_earnings", "equity"]] = np.nan
+        earlier[["assets", "liabilities", "working_capital", "retained_earnings", "equity"]] = (
+            np.nan
+        )
         frame[["ebit", "revenue"]] = np.nan
         mixed = pd.concat([earlier, frame]).sort_index()
 
@@ -452,10 +454,7 @@ class TestAltmanVariantExclusivity:
             evaluate_one(METRICS.get("altman_z_prime"), manufacturer).coverage
             is Coverage.NOT_APPLICABLE
         )
-        assert (
-            evaluate_one(METRICS.get("altman_z"), retailer).coverage
-            is Coverage.NOT_APPLICABLE
-        )
+        assert evaluate_one(METRICS.get("altman_z"), retailer).coverage is Coverage.NOT_APPLICABLE
         assert evaluate_one(METRICS.get("altman_z_prime"), retailer).coverage is Coverage.OK
 
     @pytest.mark.parametrize("sic", [None, "", "not-a-sic"])

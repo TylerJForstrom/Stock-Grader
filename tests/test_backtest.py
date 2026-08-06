@@ -262,9 +262,7 @@ def test_a_constant_cost_column_reproduces_the_flat_charge_it_replaces():
     """
     panel = _panel()
     flat = _flat_report(panel, transaction_cost_bps=10.0)
-    with_column = _flat_report(
-        panel.assign(**{COST_COLUMN: 10.0}), transaction_cost_bps=10.0
-    )
+    with_column = _flat_report(panel.assign(**{COST_COLUMN: 10.0}), transaction_cost_bps=10.0)
     assert with_column.per_row_costs_used is True
     assert with_column.mean_round_trip_cost_bps == pytest.approx(10.0)
     # Everything the cost cannot touch is identical; the cost-bearing numbers
@@ -445,9 +443,7 @@ def test_a_capped_name_contributes_only_the_exposure_it_could_hold():
     panel = _panel()
     first_date = panel["signal_date"].min()
     top_names = set(
-        panel.loc[panel["signal_date"] == first_date]
-        .sort_values("score")
-        .tail(10)["ticker"]
+        panel.loc[panel["signal_date"] == first_date].sort_values("score").tail(10)["ticker"]
     )
     # Truncate half of the top leg on every date (the tickers are stable).
     truncated = set(sorted(top_names)[:5])
@@ -466,9 +462,7 @@ def test_a_capped_name_contributes_only_the_exposure_it_could_hold():
     assert applied.mean_deployable_fraction < 1.0
     # The unweighted run still REPORTS the shortfall, and says plainly that it
     # did not apply it.
-    assert priced_away.mean_deployable_fraction == pytest.approx(
-        applied.mean_deployable_fraction
-    )
+    assert priced_away.mean_deployable_fraction == pytest.approx(applied.mean_deployable_fraction)
     assert any("priced away" in item or "switched off" in item for item in priced_away.limitations)
     assert any("per DEPLOYED dollar" in item for item in applied.limitations)
 
@@ -497,9 +491,7 @@ def test_a_leg_the_cap_refuses_entirely_is_not_a_zero_return_period():
     panel = _panel()
     first_date = panel["signal_date"].min()
     top_names = set(
-        panel.loc[panel["signal_date"] == first_date]
-        .sort_values("score")
-        .tail(10)["ticker"]
+        panel.loc[panel["signal_date"] == first_date].sort_values("score").tail(10)["ticker"]
     )
     costed = _capacity_panel(truncated_names=top_names, allowed_usd=0.0)
     report = evaluate_walk_forward(
@@ -644,10 +636,7 @@ def test_the_flat_path_still_produces_the_numbers_it_produced_before_costs_exist
     assert [item.net_spread for item in report.periods] == PRE_COST_MODEL_NET_SPREADS
     # The two original limitation lines are still the first two, verbatim.
     assert report.limitations[:2] == [
-        (
-            "Transaction costs are a fixed turnover charge and do not model market "
-            "impact or borrow."
-        ),
+        ("Transaction costs are a fixed turnover charge and do not model market impact or borrow."),
         (
             "Bootstrap intervals describe historical period variability, not "
             "future-return certainty."

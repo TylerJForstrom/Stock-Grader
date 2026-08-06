@@ -29,6 +29,7 @@ import subprocess
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -158,7 +159,7 @@ class DecayCurve:
     limitations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        payload = {
+        payload: dict[str, Any] = {
             "profile": self.profile,
             "archive_through": self.archive_through,
             "panel_origin": self.panel_origin,
@@ -278,7 +279,7 @@ def load_frozen_panels(
         by_value = frame.groupby(column)["signal_date"].unique()
         if len(by_value) > 1:
             drift = "; ".join(
-                f"{value[:12]}…: {', '.join(sorted(map(str, dates)))}"
+                f"{str(value)[:12]}…: {', '.join(sorted(map(str, dates)))}"
                 for value, dates in by_value.items()
             )
             if not allow_fingerprint_drift:
@@ -293,6 +294,25 @@ def load_frozen_panels(
 
 
 # -- panel construction --------------------------------------------------------
+
+
+def _session_position(sessions: pd.DatetimeIndex, moment: object) -> int:
+    """Integer position of one session within the archive's session index.
+
+    ``Index.get_loc`` returns an int only for a unique index and widens to a
+    slice or a boolean mask otherwise. The vault's close matrix is built from a
+    dict keyed by date, so the index is unique by construction — but if a
+    duplicated archive day ever breaks that, the horizon arithmetic downstream
+    would fail as an opaque ``TypeError`` on ``slice + int``. Fail here instead,
+    naming the session at fault.
+    """
+    position = sessions.get_loc(moment)
+    if not isinstance(position, (int, np.integer)):
+        raise ValueError(
+            f"session {moment!r} is duplicated in the archive index; "
+            f"decay horizons need a unique session index"
+        )
+    return int(position)
 
 
 def _split_suspect(closes: pd.Series) -> bool:
@@ -315,7 +335,9 @@ def build_horizon_panel(
     counts keys: dropped_missing_anchor, dropped_missing_exit,
     dropped_split_suspect, dropped_incomplete_window.
     """
-    sessions = closes.index
+    # market_eod_close_matrix already sets a DatetimeIndex; DataFrame.index is typed
+    # as a bare Index, and this re-wrap is a no-op for an index that is one already.
+    sessions = pd.DatetimeIndex(closes.index)
     counts = {
         "dropped_missing_anchor": 0,
         "dropped_missing_exit": 0,
@@ -323,12 +345,15 @@ def build_horizon_panel(
         "dropped_incomplete_window": 0,
     }
     rows: list[dict] = []
-    for signal_date, group in frozen.groupby("signal_date", sort=True):
+    for group_key, group in frozen.groupby("signal_date", sort=True):
+        # load_frozen_panels ran pd.to_datetime over this column, so the group key
+        # is already a Timestamp; the stubs widen groupby keys to a bare Scalar.
+        signal_date = pd.Timestamp(cast(Any, group_key))
         later = sessions[sessions > signal_date]
         if not len(later):
             counts["dropped_incomplete_window"] += len(group)
             continue
-        entry_i = sessions.get_loc(later[0])
+        entry_i = _session_position(sessions, later[0])
         exit_i = entry_i + horizon
         if exit_i >= len(sessions):
             # The horizon has not completed: a clean drop, never a truncated
@@ -343,8 +368,8 @@ def build_horizon_panel(
                 counts["dropped_missing_anchor"] += 1
                 continue
             series = closes[ticker]
-            entry_close = series.iloc[entry_i]
-            exit_close = series.iloc[exit_i]
+            entry_close = float(series.iloc[entry_i])
+            exit_close = float(series.iloc[exit_i])
             if pd.isna(entry_close) or entry_close <= 0:
                 counts["dropped_missing_anchor"] += 1
                 continue
@@ -365,13 +390,14 @@ def build_horizon_panel(
                     "return_end": return_end.date().isoformat(),
                     "ticker": ticker,
                     "cik": row.cik,
-                    "score": float(row.score),
+                    # itertuples fields are typed as the full pandas Scalar union, which
+                    # includes date/bytes; this column is float64 (load_frozen_panels
+                    # reads it from the frozen panel schema), so float() is safe.
+                    "score": float(row.score),  # type: ignore[arg-type]
                     "forward_return": forward,
                     "horizon_days": horizon,
                     "entry_close": float(entry_close),
-                    "exit_close": (
-                        float(exit_close) if not pd.isna(exit_close) else float("nan")
-                    ),
+                    "exit_close": (float(exit_close) if not pd.isna(exit_close) else float("nan")),
                     "profile": row.profile,
                     "config_fingerprint": row.config_fingerprint,
                     "universe_fingerprint": row.universe_fingerprint,
@@ -397,20 +423,21 @@ def _offset_average(values: Sequence[float | None]) -> float | None:
     offsets that happen to work would re-introduce the phase dependence this
     average exists to remove.
     """
-    if not values or any(
-        value is None or not math.isfinite(value) for value in values
-    ):
+    present = [value for value in values if value is not None]
+    if len(present) != len(values) or not present:
         return None
-    return float(sum(values) / len(values))
+    if any(not math.isfinite(value) for value in present):
+        return None
+    return float(sum(present) / len(present))
 
 
 def _median_spacing(signal_dates: pd.DatetimeIndex, sessions: pd.DatetimeIndex) -> int:
     if len(signal_dates) < 2:
         return 21
-    positions = []
+    positions: list[int] = []
     for date in signal_dates:
         later = sessions[sessions > date]
-        positions.append(sessions.get_loc(later[0]) if len(later) else len(sessions))
+        positions.append(_session_position(sessions, later[0]) if len(later) else len(sessions))
     gaps = np.diff(sorted(positions))
     gaps = gaps[gaps > 0]
     return int(np.median(gaps)) if len(gaps) else 21
@@ -437,9 +464,10 @@ def evaluate_decay(
     )
     if not len(closes.index):
         raise ValueError("the vault archive holds no sessions after the first signal date")
-    archive_end = closes.index.max().date().isoformat()
+    sessions = pd.DatetimeIndex(closes.index)
+    archive_end = sessions.max().date().isoformat()
     signal_dates = pd.DatetimeIndex(sorted(frozen["signal_date"].unique()))
-    spacing = _median_spacing(signal_dates, closes.index)
+    spacing = _median_spacing(signal_dates, sessions)
 
     origin = "retro_backfilled" if "retro" in Path(frozen_dir).parts[-2:] else "forward_frozen"
     curve = DecayCurve(
@@ -462,9 +490,7 @@ def evaluate_decay(
     panels: dict[int, pd.DataFrame] = {}
     usable = 0
     for horizon in config.horizons:
-        result = HorizonResult(
-            horizon_days=horizon, is_primary=horizon == config.primary_horizon
-        )
+        result = HorizonResult(horizon_days=horizon, is_primary=horizon == config.primary_horizon)
         overlap = max(1, math.ceil(horizon / spacing))
         result.overlap_periods = overlap
         panel, counts = build_horizon_panel(frozen, closes, horizon, config=config)
@@ -547,12 +573,13 @@ def evaluate_decay(
                 else float("nan")
             )
             intervals = [r.rank_ic_interval for r in offset_reports]
+            present = [interval for interval in intervals if interval is not None]
             result.rank_ic_interval = (
                 (
-                    min(interval[0] for interval in intervals),
-                    max(interval[1] for interval in intervals),
+                    min(interval[0] for interval in present),
+                    max(interval[1] for interval in present),
                 )
-                if intervals and all(interval is not None for interval in intervals)
+                if intervals and len(present) == len(intervals)
                 else None
             )
         result.rank_ic_information_ratio = _offset_average(
@@ -615,12 +642,16 @@ def evaluate_decay(
 
     curve.limitations.extend(
         [
-            ("forward returns are unadjusted price returns (no dividends, no delisting "
-            "proceeds); return_is_total is unattestable"),
+            (
+                "forward returns are unadjusted price returns (no dividends, no delisting "
+                "proceeds); return_is_total is unattestable"
+            ),
             "the universe is today's survivors; universe_is_pit is unattestable",
-            (f"split screen dropped {sum(r.dropped_split_suspect for r in curve.horizons)} "
-            f"observation(s); missing exits dropped "
-            f"{sum(r.dropped_missing_exit for r in curve.horizons)}"),
+            (
+                f"split screen dropped {sum(r.dropped_split_suspect for r in curve.horizons)} "
+                f"observation(s); missing exits dropped "
+                f"{sum(r.dropped_missing_exit for r in curve.horizons)}"
+            ),
         ]
     )
     return curve, panels
@@ -653,17 +684,17 @@ def fit_half_life(
     x = np.array([p[0] for p in points], dtype=float)
     y = np.log(np.array([p[1] for p in points], dtype=float))
 
-    log_variances: list[float] | None = []
+    log_variances: list[float] = []
+    weighted = True
     for _, mean_ic, interval in points:
         if interval is None:
-            log_variances = None
+            weighted = False
             break
         ic_se = (interval[1] - interval[0]) / (2.0 * _Z95)
         if not (math.isfinite(ic_se) and ic_se > 0.0):
-            log_variances = None
+            weighted = False
             break
         log_variances.append((ic_se / mean_ic) ** 2)  # delta method: Var[ln IC]
-    weighted = log_variances is not None
     w = 1.0 / np.array(log_variances, dtype=float) if weighted else np.ones_like(x)
 
     s_w = float(np.sum(w))
@@ -680,29 +711,49 @@ def fit_half_life(
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
     lambda_ = -float(slope)
     if lambda_ <= 0:
-        return None, None, r2, (
-            f"IC does not decay across the horizons tested; the natural holding period "
-            f"is at or beyond {max(p[0] for p in points)}d — extend the sweep before "
-            f"concluding"
+        return (
+            None,
+            None,
+            r2,
+            (
+                f"IC does not decay across the horizons tested; the natural holding period "
+                f"is at or beyond {max(p[0] for p in points)}d — extend the sweep before "
+                f"concluding"
+            ),
         )
     if r2 < 0.5:
-        return None, None, r2, (
-            f"exponential decay fits poorly (R2={r2:.2f}); the points do not describe "
-            f"a clean decay"
+        return (
+            None,
+            None,
+            r2,
+            (
+                f"exponential decay fits poorly (R2={r2:.2f}); the points do not describe "
+                f"a clean decay"
+            ),
         )
     half_life = math.log(2) / lambda_
     if not weighted:
-        return half_life, None, r2, (
-            "exponential fit accepted (unweighted: a per-horizon IC interval is "
-            "unavailable, so no half-life interval is reported)"
+        return (
+            half_life,
+            None,
+            r2,
+            (
+                "exponential fit accepted (unweighted: a per-horizon IC interval is "
+                "unavailable, so no half-life interval is reported)"
+            ),
         )
     # With known per-point variances the slope's variance is Sw / denominator.
     lambda_se = math.sqrt(s_w / denominator)
     if lambda_ - _Z95 * lambda_se <= 0.0:
-        return half_life, None, r2, (
-            "exponential fit accepted (inverse-variance weighted); the decay rate "
-            "is not distinguishable from zero at 95%, so the half-life interval "
-            "is unbounded above and not reported"
+        return (
+            half_life,
+            None,
+            r2,
+            (
+                "exponential fit accepted (inverse-variance weighted); the decay rate "
+                "is not distinguishable from zero at 95%, so the half-life interval "
+                "is unbounded above and not reported"
+            ),
         )
     interval = (
         math.log(2) / (lambda_ + _Z95 * lambda_se),
@@ -714,9 +765,7 @@ def fit_half_life(
 # -- ledger --------------------------------------------------------------------
 
 
-def record_sweep_trials(
-    curve: DecayCurve, *, ledger_path: Path, alpha: float = 0.05
-) -> dict:
+def record_sweep_trials(curve: DecayCurve, *, ledger_path: Path, alpha: float = 0.05) -> dict:
     """Every horizon is its own trial, on ONE order-independent denominator.
 
     Raises ``ValueError`` on a ledger whose chain does not verify: this
@@ -751,8 +800,7 @@ def record_sweep_trials(
         # Sharpe is their equal-weight average — every period used once, no
         # arbitrary phase — and only exists when EVERY offset can compute one.
         per_offset = [
-            [p.net_spread for p in report.periods]
-            for report in result.inference_by_offset
+            [p.net_spread for p in report.periods] for report in result.inference_by_offset
         ]
         spreads_by_horizon[result.horizon_days] = per_offset
         offset_sharpes = [per_period_sharpe(spreads) for spreads in per_offset]
@@ -806,7 +854,9 @@ def record_sweep_trials(
         result.significance = significance
         verdict_core = significance.verdict if significance else "INSUFFICIENT SAMPLE"
         gate = bool(result.is_primary and significance and significance.significant)
-        prefix = "PRIMARY (pre-declared)" if result.is_primary else "EXPLORATORY (non-primary horizon)"
+        prefix = (
+            "PRIMARY (pre-declared)" if result.is_primary else "EXPLORATORY (non-primary horizon)"
+        )
         overlap = result.overlap_periods
         record = ResearchRecord(
             experiment=f"signal_decay:{curve.profile}:h{result.horizon_days}",
@@ -986,20 +1036,30 @@ def decay_to_markdown(curve: DecayCurve) -> str:
         "",
         f"> {DISCLAIMER}",
         "",
-        (f"- **Archive through**: {curve.archive_through}   "
-        f"**Origin**: {curve.panel_origin}   **Commit**: `{curve.code_commit}`"),
-        (f"- **Config**: `{curve.config_fingerprint[:12]}`   "
-        f"**Universe**: `{curve.universe_fingerprint[:12]}`"),
-        (f"- **Signal dates**: {len(curve.signal_dates)} "
-        f"({curve.signal_dates[0]} .. {curve.signal_dates[-1]})"),
+        (
+            f"- **Archive through**: {curve.archive_through}   "
+            f"**Origin**: {curve.panel_origin}   **Commit**: `{curve.code_commit}`"
+        ),
+        (
+            f"- **Config**: `{curve.config_fingerprint[:12]}`   "
+            f"**Universe**: `{curve.universe_fingerprint[:12]}`"
+        ),
+        (
+            f"- **Signal dates**: {len(curve.signal_dates)} "
+            f"({curve.signal_dates[0]} .. {curve.signal_dates[-1]})"
+        ),
         "",
-        ("**What this is not.** The universe is today's survivors, returns are "
-        "unadjusted price returns (no dividends, no delisting proceeds), and no "
-        "filing cutoff is proven — four of the evaluator's five contract items fail "
-        "by construction, which is why every run requires `--allow-unverified-panel`."),
+        (
+            "**What this is not.** The universe is today's survivors, returns are "
+            "unadjusted price returns (no dividends, no delisting proceeds), and no "
+            "filing cutoff is proven — four of the evaluator's five contract items fail "
+            "by construction, which is why every run requires `--allow-unverified-panel`."
+        ),
         "",
-        ("| horizon | periods | eff. | overlap | obs | mean IC | IC 95% | IC IR | "
-        "IC>0 | IC/√d | net spread | Sharpe | dropped exit/split | trial |"),
+        (
+            "| horizon | periods | eff. | overlap | obs | mean IC | IC 95% | IC IR | "
+            "IC>0 | IC/√d | net spread | Sharpe | dropped exit/split | trial |"
+        ),
         "|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|:---:|:---|",
     ]
     for result in curve.horizons:
@@ -1054,30 +1114,36 @@ def decay_to_markdown(curve: DecayCurve) -> str:
         )
     lines += [
         "",
-        ("Inference columns (IC IR, net spread, Sharpe) are Jegadeesh–Titman "
-        "averages over all non-overlapping offset subsamples, and `eff.` is the "
-        "mean periods per offset. The offsets share overlapping returns, so the "
-        "average removes the arbitrary phase choice but never tightens a CI; "
-        "significance uses the most conservative offset."),
+        (
+            "Inference columns (IC IR, net spread, Sharpe) are Jegadeesh–Titman "
+            "averages over all non-overlapping offset subsamples, and `eff.` is the "
+            "mean periods per offset. The offsets share overlapping returns, so the "
+            "average removes the arbitrary phase choice but never tightens a CI; "
+            "significance uses the most conservative offset."
+        ),
         "",
         "## Reading the curve",
         "",
         half_life_line,
         "",
-        (f"Best horizon by IC IR: {curve.best_horizon_by_ic_ir or '—'}d; by IC/√d: "
-        f"{curve.best_horizon_by_ic_per_sqrt_day or '—'}d. Under a fixed rebalancing "
-        "budget the argmax of IC/√days is the holding-period estimate; both argmaxes "
-        "are post-hoc over this same sweep and neither clears a gate."),
+        (
+            f"Best horizon by IC IR: {curve.best_horizon_by_ic_ir or '—'}d; by IC/√d: "
+            f"{curve.best_horizon_by_ic_per_sqrt_day or '—'}d. Under a fixed rebalancing "
+            "budget the argmax of IC/√days is the holding-period estimate; both argmaxes "
+            "are post-hoc over this same sweep and neither clears a gate."
+        ),
         "",
         "## Multiple-testing charge",
         "",
-        (f"Prior trials {curve.ledger.get('prior_trials', 0)}, added "
-        f"{curve.ledger.get('trials_added', 0)}, lifetime "
-        f"{curve.ledger.get('lifetime_trials', 0)}; deflated benchmark Sharpe "
-        f"{_num(curve.ledger.get('deflated_benchmark_sr'), 4)}. The E[max] correction "
-        "assumes independent trials, but the horizons of one score are highly "
-        "correlated, so the correction over-deflates; the remedy is the pre-declared "
-        "primary horizon, never a private discount."),
+        (
+            f"Prior trials {curve.ledger.get('prior_trials', 0)}, added "
+            f"{curve.ledger.get('trials_added', 0)}, lifetime "
+            f"{curve.ledger.get('lifetime_trials', 0)}; deflated benchmark Sharpe "
+            f"{_num(curve.ledger.get('deflated_benchmark_sr'), 4)}. The E[max] correction "
+            "assumes independent trials, but the horizons of one score are highly "
+            "correlated, so the correction over-deflates; the remedy is the pre-declared "
+            "primary horizon, never a private discount."
+        ),
     ]
     if curve.ledger.get("prior_trials", 0) == 0 and curve.ledger.get("trials_added", 0) <= 1:
         lines.append(
