@@ -7,6 +7,53 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **An ABSENT band verdict no longer passes the gate that was built to enforce it**
+  (`stock_grader/signal_panel.py`, `stock_grader/cli.py`). The refusal below reads the verdict
+  and short-circuits on its *presence* — `if adv_band is not None and not
+  adv_band.get("reportable")` — so a banded panel whose sidecars carry no block at all was a
+  silent pass. Every panel the small-cap programme was measured on is in exactly that state:
+  they were built before `write_signal_panel` forwarded the verdict, so their `build.json` has
+  no `adv_band` key, and the gate could not fire on the run whose write-up names the commit that
+  added it. Two changes close it. `build_signal_panel` now REFUSES a banded namespace
+  (`<signal>__adv<ID>`) whose observation manifest declares no `adv_band` — a panel that names
+  itself a band and carries no verdict must not be manufactured. And `_load_adv_band` falls back
+  to the producer's own observation manifest, recomposing the verdict through the same
+  `band_verdict` the builder uses over the panel's own `counts.json`, labelling it
+  `RECOMPOSED at evaluation time`; if even that is missing, a banded namespace raises rather
+  than evaluating. An unbanded panel is untouched: no key in, no key out, no new behaviour.
+  Re-checked against the eight measured panels — all eight now resolve a verdict from their
+  observation manifests, all `reportable: true` at 47 evaluable periods against a floor of 30,
+  so **no measured number moves**; the gate is now load-bearing on artifacts it was nominal on.
+
+- **The licensing wall's gate could not see a docstring**
+  (`tests/test_licensing_wall.py`, `tests/test_backtest.py`, `tests/test_band_reportable.py`).
+  The gate globbed `docs/**/*.md` and nothing else, so a test docstring restating a band's
+  measured capacity truncation from the private archive reached public main unflagged — the
+  measurement belongs in Stock-Vault, and it is now stated there only. `src/` and `tests/` are
+  scanned on the same terms, because a comment is published exactly as loudly as a document.
+  The synthetic band fixture's dollar edges were also replaced with invented ones: the
+  pre-registered bands were cut at the archive's measured quartiles, so a real edge is itself an
+  archive measurement. Known limitation, recorded rather than papered over: a bare percentage
+  matches no shape the gate looks for, and cannot be made to without firing on the specification
+  (`1% of ADV20$`) far more often than on a leak. This gate is a floor, not a substitute for
+  review.
+
+- **The cross-repository cost pin asserted a byte-identity that was not true**
+  (`stock_grader/config/cost_golden_vectors.json`, `tests/test_costs.py`). Both copies of the
+  golden-vector file declared, in their own `note`, that "both repositories carry a
+  byte-identical copy" — while the `bar_vectors` block added here landed on this side only, so
+  the two files diverged, each suite asserted its own digest, and both stayed green. That is an
+  attestation asserted rather than computed, which is the exact failure the pin was created to
+  prevent. The note now describes the mechanism at the strength it holds: each side's literal
+  catches an edit that does not update that side, and only Stock-Vault's CI — which can fetch
+  this public file — catches a change landed in one repository and not the other; the reverse
+  direction is not checkable and is no longer claimed to be. A new `estimator_contract` block
+  declares the two things a porting implementation could not have guessed and which made a
+  literal port impossible: `amihud_lambda_bps_per_musd` is bps of price per $1M traded (a raw
+  |r|/$volume estimator must scale by 1e10), and `MIN_USABLE_PAIRS` is a property of the
+  *composed* estimate, enforced inside the spread estimator here and one level up in the vault.
+  Schema 1.2; the pinned digest moves and the same file lands in both repositories.
+
 - **A band below the pre-registered evaluable-period floor is refused, not silently reported**
   (`stock_grader/signal_panel.py`, `stock_grader/backtest.py`, `stock_grader/cli.py`,
   `docs/REPORT-SCHEMA.md`). Stock-Vault computes a `reportable` verdict for every ADV band it
