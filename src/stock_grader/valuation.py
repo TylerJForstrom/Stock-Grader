@@ -232,8 +232,8 @@ def _aligned_trailing_fcf(
 
     selected = frame.loc[:, ["cfo", "capex"]].copy()
     parsed_index = pd.to_datetime(selected.index, errors="coerce")
-    selected = selected.loc[~parsed_index.isna()]
-    selected.index = parsed_index[~parsed_index.isna()]
+    selected = selected.loc[parsed_index.notna()]
+    selected.index = parsed_index[parsed_index.notna()]
     selected = selected[~selected.index.duplicated(keep="last")].sort_index()
     cutoff = pd.Timestamp(snapshot.asof)
     selected = selected.loc[selected.index <= cutoff]

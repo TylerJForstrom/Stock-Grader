@@ -50,7 +50,7 @@ def _frame_prices(frame: pd.DataFrame | None) -> pd.Series | None:
         dates = pd.to_datetime(raw.index, errors="coerce", utc=True)
     except (TypeError, ValueError):
         return None
-    valid = ~dates.isna()
+    valid = dates.notna()
     values = raw.to_numpy(dtype="float64")[valid]
     index = pd.DatetimeIndex(dates[valid]).tz_convert(None).normalize()
     series = pd.Series(values, index=index, dtype="float64")
@@ -74,7 +74,9 @@ def _returns_from_prices(prices: pd.Series) -> pd.Series:
     material gap therefore starts a new segment; downstream minimum-history checks decide whether
     enough clean post-gap data remain.
     """
-    returns = np.log(prices / prices.shift(1))
+    # .apply dispatches a ufunc over the whole block, so this is the same call on the
+    # same values — it just keeps the result a Series instead of a bare ndarray.
+    returns = (prices / prices.shift(1)).apply(np.log)
     gaps = prices.index.to_series().diff().dt.days
     material_gaps = gaps > _MAX_RETURN_GAP_DAYS
     if material_gaps.any():
@@ -134,7 +136,7 @@ def _daily_risk_free(s: SecuritySnapshot, index: pd.Index) -> pd.Series:
         )
     except (TypeError, ValueError):
         return pd.Series(np.nan, index=target, dtype="float64")
-    valid_dates = ~rf_dates.isna()
+    valid_dates = rf_dates.notna()
     rates = pd.Series(
         raw.to_numpy(dtype="float64")[valid_dates],
         index=rf_dates[valid_dates],
@@ -150,7 +152,7 @@ def _daily_risk_free(s: SecuritySnapshot, index: pd.Index) -> pd.Series:
     valid = positions >= 0
     if np.any(valid):
         source_dates = rates.index.take(positions[valid])
-        ages = (target[valid] - source_dates).days
+        ages: pd.Index = (target[valid] - source_dates).days
         fresh = ages <= _MAX_RISK_FREE_STALENESS_DAYS
         target_positions = np.flatnonzero(valid)[fresh]
         selected_rates = rates.to_numpy()[positions[valid][fresh]]
@@ -200,7 +202,7 @@ def _aligned_factor_returns(
         }
     )
     consecutive_in_both = positions.diff().eq(1).all(axis=1)
-    returns = np.log(levels / levels.shift(1))
+    returns = (levels / levels.shift(1)).apply(np.log)
     returns = returns.mask((gaps > _MAX_RETURN_GAP_DAYS) | ~consecutive_in_both).dropna()
     return returns if len(returns) >= _MIN_FACTOR_OBSERVATIONS else None
 
@@ -1052,9 +1054,10 @@ def trend_strength(s: SecuritySnapshot) -> float | None:
 )
 def dollar_volume(s: SecuritySnapshot) -> float | None:
     """Median daily dollar volume over the last quarter."""
-    if not s.has_prices or "volume" not in s.prices.columns:
+    prices = s.prices
+    if prices is None or prices.empty or "volume" not in prices.columns:
         return None
-    frame = s.prices.iloc[-63:]
+    frame = prices.iloc[-63:]
     column = "adj_close" if "adj_close" in frame.columns else "close"
     product = (frame[column] * frame["volume"]).dropna()
     return float(product.median()) if len(product) >= 20 else None
@@ -1070,9 +1073,10 @@ def dollar_volume(s: SecuritySnapshot) -> float | None:
 )
 def amihud_illiquidity(s: SecuritySnapshot) -> float | None:
     """Amihud measure: mean of ``|return| / dollar volume`` — price impact per dollar traded."""
-    if not s.has_prices or "volume" not in s.prices.columns:
+    prices = s.prices
+    if prices is None or prices.empty or "volume" not in prices.columns:
         return None
-    frame = s.prices.iloc[-TRADING_DAYS:]
+    frame = prices.iloc[-TRADING_DAYS:]
     column = "adj_close" if "adj_close" in frame.columns else "close"
     returns = frame[column].pct_change().abs()
     turnover = frame[column] * frame["volume"]
@@ -1170,9 +1174,10 @@ def rsi_14(s: SecuritySnapshot) -> float | None:
 @metric("atr_percent", pillar="risk", direction=-1, unit="ratio", needs_prices=True, min_history=63)
 def atr_percent(s: SecuritySnapshot) -> float | None:
     """Average true range as a percentage of price — an intraday-aware volatility measure."""
-    if not s.has_prices:
+    prices = s.prices
+    if prices is None or prices.empty:
         return None
-    frame = s.prices.iloc[-40:]
+    frame = prices.iloc[-40:]
     if not {"high", "low", "close"} <= set(frame.columns) or len(frame) < 20:
         return None
     high, low, close = frame["high"], frame["low"], frame["close"]

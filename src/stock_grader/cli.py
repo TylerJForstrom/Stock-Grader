@@ -22,6 +22,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from rich.console import Console
@@ -336,7 +337,9 @@ def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
         if not no_network:
             providers.extend((TiingoPriceProvider(), YahooPriceProvider()))
     elif mode == "csv":
-        providers.append(CSVPriceProvider(price_dir))
+        # Validated above: mode == "csv" without --price-dir already raised. mypy
+        # cannot correlate the two conditions, so it still sees Any | None here.
+        providers.append(CSVPriceProvider(price_dir))  # type: ignore[arg-type]
     elif mode == "tiingo":
         providers.append(TiingoPriceProvider())
     elif mode == "stockanalysis":
@@ -1966,7 +1969,7 @@ def cmd_build_signal_panel(args: argparse.Namespace) -> int:
         if args.verbose:
             console.print(f"  {message}")
 
-    summaries = []
+    summaries: list[dict[str, Any]] = []
     failed = 0
     for signal in signals:
         try:

@@ -683,7 +683,9 @@ def build_signal_panel(
                     if inputs is None
                     else estimate_cost(inputs, config.cost_position_notional_usd)
                 )
-                if estimate is None:
+                # `inputs is None` already implies `estimate is None`, but spelling both
+                # out is what lets the else-branch below read inputs.* unguarded.
+                if inputs is None or estimate is None:
                     accounting.no_cost_estimate += 1
                     cost_columns = {
                         "round_trip_cost_bps": float("nan"),

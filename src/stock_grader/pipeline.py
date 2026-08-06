@@ -25,7 +25,7 @@ import hashlib
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -46,7 +46,7 @@ from .scoring import (
     to_letter,
     uncertainty_interval,
 )
-from .types import Coverage, GradeReport, MetricResult, SecuritySnapshot
+from .types import Coverage, GradeReport, MetricResult, PillarScore, SecuritySnapshot
 from .weighting import WEIGHT_METHOD_INFO, WeightingContext, compute_weights
 
 log = logging.getLogger(__name__)
@@ -613,6 +613,9 @@ def _sensitivity_range_and_letter_frequencies(
         return ((float("nan"), float("nan")), {})
     peers = np.asarray(other_peer_composites, dtype="float64")
     peers = peers[np.isfinite(peers)]
+    # Only ever called with the one positional score below; to_letter's cutoffs
+    # argument is defaulted, so it satisfies this narrower shape too.
+    letter_for: Callable[[float | None], str] | None
     if config.curve == "absolute":
         reported_samples = samples
         letter_for = to_letter
@@ -834,7 +837,7 @@ def _grade_from_matrix(
     # ---- Level 1: metrics -> pillars, one weighting computation per pillar (shared across the
     # universe, because the weights describe the metric set, not any individual security).
     pillar_scores: dict[str, pd.Series] = {}
-    pillar_objects: dict[str, dict[str, object]] = defaultdict(dict)
+    pillar_objects: dict[str, dict[str, PillarScore]] = defaultdict(dict)
 
     for pillar, members in sorted(pillars.items()):
         block = scores[members]
@@ -980,7 +983,8 @@ def _grade_from_matrix(
         # Separate the two very different reasons a pillar can be empty. Reporting "not applicable
         # to a general company" when the real cause is an absent price feed sends the reader
         # looking for a sector bug that does not exist.
-        dropped_na, dropped_missing = [], []
+        dropped_na: list[str] = []
+        dropped_missing: list[str] = []
         for pillar, obj in pillar_objects.get(ticker, {}).items():
             if pillar in objects:
                 continue
@@ -1189,7 +1193,10 @@ def _grade_from_matrix(
         )
         metric_evidence: dict[str, dict[str, object]] = {}
         for metric_name, metric_result in all_results.items():
-            pillar_object = objects.get(metric_result.pillar)
+            # Distinct name from the pillar_object bound by the loop above: this one
+            # is the metric's OWNING pillar and is absent whenever that pillar was
+            # dropped as unscored, so it is Optional where the other never is.
+            owning_pillar = objects.get(metric_result.pillar)
             metric_evidence[metric_name] = {
                 "pillar": metric_result.pillar,
                 "raw_value": metric_result.value,
@@ -1198,13 +1205,13 @@ def _grade_from_matrix(
                 "note": metric_result.note,
                 "raw_inputs": metric_result.raw_inputs,
                 "normalized_score": (
-                    pillar_object.metric_scores.get(metric_name)
-                    if pillar_object is not None
+                    owning_pillar.metric_scores.get(metric_name)
+                    if owning_pillar is not None
                     else None
                 ),
                 "effective_metric_weight": (
-                    pillar_object.weights.get(metric_name, 0.0)
-                    if pillar_object is not None
+                    owning_pillar.weights.get(metric_name, 0.0)
+                    if owning_pillar is not None
                     else 0.0
                 ),
                 "effective_pillar_weight": effective_weights.get(metric_result.pillar, 0.0),
@@ -1244,7 +1251,7 @@ def _grade_from_matrix(
             score=final_score,
             letter=letter,
             pillars=objects,
-            pillar_weights={k: float(v) for k, v in nominal_pillar_weights.items()},
+            pillar_weights={str(k): float(v) for k, v in nominal_pillar_weights.items()},
             effective_pillar_weights=effective_weights,
             lost_weight=lost_weight,
             percentile=percentile,

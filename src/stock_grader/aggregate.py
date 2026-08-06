@@ -90,8 +90,7 @@ def weighted_median(
         return None
     order = s.sort_values().index
     cumulative = w.loc[order].cumsum()
-    position = cumulative.searchsorted(0.5)
-    position = min(int(position), len(order) - 1)
+    position = min(int(cumulative.searchsorted(0.5)), len(order) - 1)
     return float(s.loc[order[position]])
 
 
@@ -201,7 +200,9 @@ def owa(
     expresses "I care about a company's weakest three attributes, whichever they turn out to be" —
     something identity-based weights cannot say.
     """
-    s, _ = align_and_renormalize(scores, weights)
+    # NOT `_`: that name is already bound to this function's **_ kwargs bag.
+    # owa weights by rank, so the renormalized identity weights are discarded.
+    s, _identity_weights = align_and_renormalize(scores, weights)
     if s.empty:
         return None
     n = len(s)

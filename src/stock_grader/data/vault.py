@@ -75,7 +75,9 @@ def _validate_market_eod_panel(frame: pd.DataFrame) -> pd.DataFrame:
     missing = sorted(set(_MARKET_EOD_COLUMNS) - set(frame.columns))
     if missing:
         raise VaultError("market_eod rows are missing required fields: " + ", ".join(missing))
-    table = frame.loc[:, _MARKET_EOD_COLUMNS].copy()
+    # list(), not the bare tuple: pandas reads a tuple indexer as a single
+    # MultiIndex key rather than a column selection, and it types as a Series.
+    table = frame.loc[:, list(_MARKET_EOD_COLUMNS)].copy()
     table["date"] = pd.to_datetime(table["date"], errors="raise").dt.normalize()
     table["symbol"] = table["symbol"].astype(str).str.upper().str.strip()
     if table["symbol"].eq("").any():

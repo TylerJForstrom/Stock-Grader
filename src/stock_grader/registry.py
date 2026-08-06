@@ -56,7 +56,9 @@ class Registry(Generic[T]):
                 except AttributeError:
                     pass
             try:
-                obj.name = name
+                # Deliberate duck-typing: T is unbounded, and objects without a
+                # settable .name are handled by the except below.
+                obj.name = name  # type: ignore[attr-defined]
             except AttributeError:
                 pass
             return self.register(name, obj)

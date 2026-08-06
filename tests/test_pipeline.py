@@ -19,7 +19,7 @@ from stock_grader.data.synthetic import generate_panel, generate_prices
 from stock_grader.metrics import fundamental, models, sector_specific, statistical  # noqa: F401
 from stock_grader.metrics.engine import evaluate_metrics
 from stock_grader.pipeline import GradeConfig, grade_universe, grade_universe_multi
-from stock_grader.profiles import consensus_grade, get_profile, profile_names
+from stock_grader.profiles import ConsensusResult, consensus_grade, get_profile, profile_names
 from stock_grader.registry import METRICS, WEIGHTINGS
 from stock_grader.types import Coverage, Fundamentals, PitMode, SectorClass, SecuritySnapshot
 
@@ -574,6 +574,23 @@ class TestConsensus:
             valid = {"A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"}
             assert set(result.letter_distribution) <= valid
             assert "clarity" not in result.to_dict()
+
+    def test_summary_renders_for_a_graded_consensus(self):
+        # summary() outlived the clarity scalar's removal by one line and read
+        # self.clarity, which __init__ never assigns: every non-empty consensus
+        # raised AttributeError the moment anything asked for its one-line form.
+        results = consensus_grade(_universe())
+        graded = [r for r in results.values() if not r.scores.empty]
+        assert graded, "fixture universe produced no graded consensus to summarise"
+        for result in graded:
+            line = result.summary()
+            assert result.ticker in line
+            assert "clarity" not in line
+            assert f"{result.spread:.0f}" in line
+
+    def test_summary_renders_for_an_ungradeable_consensus(self):
+        result = ConsensusResult("NOPE", {})
+        assert result.summary() == "NOPE: not gradeable"
 
 
 class TestSyntheticData:

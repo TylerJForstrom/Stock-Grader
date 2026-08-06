@@ -297,7 +297,11 @@ def _permanent_id_column(panel: pd.DataFrame) -> str | None:
 def _input_contract(panel: pd.DataFrame) -> dict[str, bool]:
     permanent_id = _permanent_id_column(panel)
     return {
-        "filing_cutoff_provided": "filed_through" in panel and panel["filed_through"].notna().all(),
+        # .all() hands back a numpy bool_, so without bool() this dict's values are a
+        # mix of Python and numpy booleans depending on which branch short-circuits.
+        "filing_cutoff_provided": bool(
+            "filed_through" in panel and panel["filed_through"].notna().all()
+        ),
         "point_in_time_universe_attested": _attested(panel, "universe_is_pit"),
         "total_returns_attested": _attested(panel, "return_is_total"),
         "delistings_included_attested": _attested(panel, "delisting_return_included"),
@@ -336,7 +340,9 @@ def _quantile_buckets(scores: pd.Series, quantiles: int) -> pd.Series:
     # Average ranks keep tied scores in the same percentile rather than assigning arbitrary
     # winners based on input order.  The floor produces integer buckets 0..quantiles-1.
     percentiles = scores.rank(method="average", pct=True)
-    buckets = np.minimum((percentiles * quantiles).apply(np.ceil) - 1, quantiles - 1)
+    # .clip(upper=) is the Series-native spelling of the elementwise np.minimum this
+    # used to call, and keeps the return a Series rather than degrading to an ndarray.
+    buckets = ((percentiles * quantiles).apply(np.ceil) - 1).clip(upper=quantiles - 1)
     return buckets.astype("int64")
 
 
@@ -421,7 +427,12 @@ def evaluate_walk_forward(
         if np.any(values[np.isfinite(values)] < 0.0):
             raise ValueError(f"{cost_column} cannot be negative")
         estimable = np.isfinite(values)
-        refused_by_date = frame.loc[~estimable].groupby("signal_date", sort=True).size().to_dict()
+        refused_by_date = {
+            # Same widening as the main loop below: a datetime64 column's group keys
+            # are Timestamps at runtime but typed as bare Hashable.
+            pd.Timestamp(key): int(count)  # type: ignore[arg-type]
+            for key, count in frame.loc[~estimable].groupby("signal_date", sort=True).size().items()
+        }
         frame = frame.loc[estimable].copy()
         if frame.empty:
             raise ValueError(
@@ -466,7 +477,10 @@ def evaluate_walk_forward(
         frame["_fill_fraction"] = np.clip(allowed / target, 0.0, 1.0)
         capacity_weighted = bool(config.capacity_weighted)
 
-    for signal_date, group in frame.groupby("signal_date", sort=True):
+    for group_key, group in frame.groupby("signal_date", sort=True):
+        # The stubs widen groupby keys to a bare Scalar; this column is datetime64,
+        # so normalise once here rather than re-wrapping at each downstream use.
+        signal_date = pd.Timestamp(group_key)  # type: ignore[arg-type]
         if len(group) < config.min_cross_section or group["score"].nunique() < 2:
             rejected += 1
             continue
@@ -565,7 +579,7 @@ def evaluate_walk_forward(
             net_spread = gross_spread - cost_rate * (top_turnover + bottom_turnover)
         periods.append(
             PeriodResult(
-                signal_date=pd.Timestamp(signal_date).date().isoformat(),
+                signal_date=signal_date.date().isoformat(),
                 return_start=starts.iloc[0].date().isoformat(),
                 return_end=ends.iloc[0].date().isoformat(),
                 n_securities=len(group),
@@ -803,7 +817,7 @@ def purged_walk_forward_splits(
 
     if train_periods < 2 or test_periods < 1 or embargo_periods < 0:
         raise ValueError("train_periods>=2, test_periods>=1, and embargo_periods>=0 are required")
-    unique = tuple(sorted(pd.Timestamp(item) for item in pd.unique(dates)))
+    unique = tuple(sorted(pd.Timestamp(item) for item in pd.Index(dates).unique()))
     step = step_periods or test_periods
     if step < 1:
         raise ValueError("step_periods must be positive")

@@ -17,6 +17,8 @@ information in the comparison.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -197,7 +199,7 @@ def profile_names() -> list[str]:
     return sorted(PROFILE_SPECS)
 
 
-def get_profile(name: str, **overrides) -> GradeConfig:
+def get_profile(name: str, **overrides: Any) -> GradeConfig:
     """Build a :class:`GradeConfig` from a named profile.
 
     Any pipeline setting can be overridden, which is how a user asks for "the value profile, but
@@ -206,7 +208,9 @@ def get_profile(name: str, **overrides) -> GradeConfig:
     if name not in PROFILE_SPECS:
         raise KeyError(f"unknown profile {name!r}; available: {', '.join(profile_names())}")
     spec = PROFILE_SPECS[name]
-    settings = {
+    # Heterogeneous settings bag, merged with arbitrary caller overrides and unpacked
+    # into GradeConfig, which validates every field it accepts in its own __init__.
+    settings: dict[str, Any] = {
         "name": name,
         "pillar_weights": dict(spec["weights"]),
         "pillar_aggregator": "ces",
@@ -293,7 +297,7 @@ class ConsensusResult:
             f"{self.ticker}: {self.letter} ({self.score:.1f}) — "
             f"best as {self.best_profile} ({self.scores.max():.0f}), "
             f"worst as {self.worst_profile} ({self.scores.min():.0f}), "
-            f"clarity {self.clarity:.0f}/100"
+            f"spread {self.spread:.0f} points"
         )
 
     def to_dict(self) -> dict:
@@ -323,7 +327,7 @@ def consensus_grade(
     """Grade a universe under every profile and combine.
 
     The disagreement between profiles is retained rather than averaged away — see
-    :class:`ConsensusResult.clarity`.
+    :attr:`ConsensusResult.letter_distribution` and :attr:`ConsensusResult.spread`.
     """
     names = profiles or profile_names()
     configs: list[GradeConfig] = []

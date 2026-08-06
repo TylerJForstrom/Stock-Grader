@@ -377,7 +377,9 @@ def normalize_series(
     if usable < 2 and anchors:
         scores = piecewise(values, anchors=anchors)
     elif sectors is not None and method != "piecewise":
-        scores = sector_neutral(values, sectors, inner=method, **kwargs)
+        # Untyped normalizer kwargs bag unpacked into typed keyword parameters;
+        # no signature can prove a runtime dict supplies the declared types.
+        scores = sector_neutral(values, sectors, inner=method, **kwargs)  # type: ignore[arg-type]
     else:
         fn = NORMALIZERS.get(method)
         scores = (

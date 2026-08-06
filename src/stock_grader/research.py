@@ -243,7 +243,8 @@ def _trend(name: str, unit: str, values: pd.Series) -> TrendSeries | None:
         name=name,
         unit=unit,
         observations=[
-            {"period": pd.Timestamp(index).date().isoformat(), "value": float(value)}
+            # Series.items() types its keys as Hashable; this index is datetime-like.
+            {"period": pd.Timestamp(index).date().isoformat(), "value": float(value)}  # type: ignore[arg-type]
             for index, value in clean.items()
         ],
     )

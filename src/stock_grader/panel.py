@@ -473,7 +473,9 @@ def foundry_splits_in_window(
         if row_ticker not in variants and (not row_cik or row_cik != cik):
             continue
         effective = row.get("effective_date")
-        effective_date = effective.date() if hasattr(effective, "date") else effective
+        effective_date = (
+            effective.date() if effective is not None and hasattr(effective, "date") else effective
+        )
         if not isinstance(effective_date, dt.date):
             continue
         if not (entry < effective_date <= exit_):

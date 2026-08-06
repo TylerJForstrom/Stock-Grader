@@ -19,11 +19,28 @@ so any grade can be argued with.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
 
 from .aggregate import aggregate, align_and_renormalize
 from .types import Coverage, MetricResult, PillarScore
+
+
+def _float_kwarg(kwargs: Mapping[str, object], name: str, default: float) -> float:
+    """Read a numeric aggregator kwarg out of an intentionally untyped kwargs bag.
+
+    The bag is heterogeneous by design — each aggregator reads its own keys — so
+    it is typed as ``object`` and the numeric keys are converted here. Anything
+    ``float()`` used to accept still converts; anything it did not still raises,
+    now naming the offending kwarg.
+    """
+    value = kwargs.get(name, default)
+    if isinstance(value, (str, int, float, np.integer, np.floating)):
+        return float(value)
+    raise TypeError(f"aggregator kwarg {name!r} must be a real number, got {type(value).__name__}")
+
 
 __all__ = [
     "GRADE_CUTOFFS",
@@ -393,7 +410,7 @@ def explain_aggregate_contributions(
         elif aggregator == "harmonic_mean":
             rho = -1.0
         else:
-            rho = float(aggregator_kwargs.get("rho", 0.5))
+            rho = _float_kwarg(aggregator_kwargs, "rho", 0.5)
         actual = scores.to_numpy(dtype="float64")
         effective_array = effective.to_numpy(dtype="float64")
         deltas = actual - float(neutral)
@@ -458,7 +475,7 @@ def explain_aggregate_contributions(
     ces_baseline = 0.0
     ces_increments: np.ndarray | None = None
     if aggregator == "ces":
-        ces_rho = float(aggregator_kwargs.get("rho", 0.5))
+        ces_rho = _float_kwarg(aggregator_kwargs, "rho", 0.5)
         shifted_actual = np.clip(actual, 1e-12, None)
         shifted_neutral = np.clip(neutral_values, 1e-12, None)
         if abs(ces_rho) < 1e-6:
@@ -552,14 +569,18 @@ def build_pillar_score(
     return PillarScore(
         pillar=pillar,
         score=float(score) if score is not None else float("nan"),
-        weights={k: float(v) for k, v in effective.items()},
+        weights={str(k): float(v) for k, v in effective.items()},
         contributions=explain_aggregate_contributions(
             metric_scores,
             weights,
             aggregator=aggregator,
-            **aggregator_kwargs,
+            # An object-valued bag unpacked into typed keyword parameters: the callee
+            # declares neutral: float and max_exact_components: int, and no signature
+            # can prove a runtime dict supplies those types. The bag reaches here from
+            # GradeConfig.aggregator_kwargs, which GradeConfig validates on the way in.
+            **aggregator_kwargs,  # type: ignore[arg-type]
         ),
-        metric_scores={k: float(v) for k, v in scores.items()},
+        metric_scores={str(k): float(v) for k, v in scores.items()},
         coverage=(ok / applicable) if applicable else 0.0,
         n_metrics=ok,
         n_missing=missing,

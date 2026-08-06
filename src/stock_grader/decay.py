@@ -29,6 +29,7 @@ import subprocess
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -158,7 +159,7 @@ class DecayCurve:
     limitations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        payload = {
+        payload: dict[str, Any] = {
             "profile": self.profile,
             "archive_through": self.archive_through,
             "panel_origin": self.panel_origin,
@@ -278,7 +279,7 @@ def load_frozen_panels(
         by_value = frame.groupby(column)["signal_date"].unique()
         if len(by_value) > 1:
             drift = "; ".join(
-                f"{value[:12]}…: {', '.join(sorted(map(str, dates)))}"
+                f"{str(value)[:12]}…: {', '.join(sorted(map(str, dates)))}"
                 for value, dates in by_value.items()
             )
             if not allow_fingerprint_drift:
@@ -293,6 +294,25 @@ def load_frozen_panels(
 
 
 # -- panel construction --------------------------------------------------------
+
+
+def _session_position(sessions: pd.DatetimeIndex, moment: object) -> int:
+    """Integer position of one session within the archive's session index.
+
+    ``Index.get_loc`` returns an int only for a unique index and widens to a
+    slice or a boolean mask otherwise. The vault's close matrix is built from a
+    dict keyed by date, so the index is unique by construction — but if a
+    duplicated archive day ever breaks that, the horizon arithmetic downstream
+    would fail as an opaque ``TypeError`` on ``slice + int``. Fail here instead,
+    naming the session at fault.
+    """
+    position = sessions.get_loc(moment)
+    if not isinstance(position, (int, np.integer)):
+        raise ValueError(
+            f"session {moment!r} is duplicated in the archive index; "
+            f"decay horizons need a unique session index"
+        )
+    return int(position)
 
 
 def _split_suspect(closes: pd.Series) -> bool:
@@ -315,7 +335,9 @@ def build_horizon_panel(
     counts keys: dropped_missing_anchor, dropped_missing_exit,
     dropped_split_suspect, dropped_incomplete_window.
     """
-    sessions = closes.index
+    # market_eod_close_matrix already sets a DatetimeIndex; DataFrame.index is typed
+    # as a bare Index, and this re-wrap is a no-op for an index that is one already.
+    sessions = pd.DatetimeIndex(closes.index)
     counts = {
         "dropped_missing_anchor": 0,
         "dropped_missing_exit": 0,
@@ -323,12 +345,15 @@ def build_horizon_panel(
         "dropped_incomplete_window": 0,
     }
     rows: list[dict] = []
-    for signal_date, group in frozen.groupby("signal_date", sort=True):
+    for group_key, group in frozen.groupby("signal_date", sort=True):
+        # load_frozen_panels ran pd.to_datetime over this column, so the group key
+        # is already a Timestamp; the stubs widen groupby keys to a bare Scalar.
+        signal_date = pd.Timestamp(group_key)  # type: ignore[arg-type]
         later = sessions[sessions > signal_date]
         if not len(later):
             counts["dropped_incomplete_window"] += len(group)
             continue
-        entry_i = sessions.get_loc(later[0])
+        entry_i = _session_position(sessions, later[0])
         exit_i = entry_i + horizon
         if exit_i >= len(sessions):
             # The horizon has not completed: a clean drop, never a truncated
@@ -343,8 +368,8 @@ def build_horizon_panel(
                 counts["dropped_missing_anchor"] += 1
                 continue
             series = closes[ticker]
-            entry_close = series.iloc[entry_i]
-            exit_close = series.iloc[exit_i]
+            entry_close = float(series.iloc[entry_i])
+            exit_close = float(series.iloc[exit_i])
             if pd.isna(entry_close) or entry_close <= 0:
                 counts["dropped_missing_anchor"] += 1
                 continue
@@ -365,7 +390,10 @@ def build_horizon_panel(
                     "return_end": return_end.date().isoformat(),
                     "ticker": ticker,
                     "cik": row.cik,
-                    "score": float(row.score),
+                    # itertuples fields are typed as the full pandas Scalar union, which
+                    # includes date/bytes; this column is float64 (load_frozen_panels
+                    # reads it from the frozen panel schema), so float() is safe.
+                    "score": float(row.score),  # type: ignore[arg-type]
                     "forward_return": forward,
                     "horizon_days": horizon,
                     "entry_close": float(entry_close),
@@ -395,18 +423,21 @@ def _offset_average(values: Sequence[float | None]) -> float | None:
     offsets that happen to work would re-introduce the phase dependence this
     average exists to remove.
     """
-    if not values or any(value is None or not math.isfinite(value) for value in values):
+    present = [value for value in values if value is not None]
+    if len(present) != len(values) or not present:
         return None
-    return float(sum(values) / len(values))
+    if any(not math.isfinite(value) for value in present):
+        return None
+    return float(sum(present) / len(present))
 
 
 def _median_spacing(signal_dates: pd.DatetimeIndex, sessions: pd.DatetimeIndex) -> int:
     if len(signal_dates) < 2:
         return 21
-    positions = []
+    positions: list[int] = []
     for date in signal_dates:
         later = sessions[sessions > date]
-        positions.append(sessions.get_loc(later[0]) if len(later) else len(sessions))
+        positions.append(_session_position(sessions, later[0]) if len(later) else len(sessions))
     gaps = np.diff(sorted(positions))
     gaps = gaps[gaps > 0]
     return int(np.median(gaps)) if len(gaps) else 21
@@ -433,9 +464,10 @@ def evaluate_decay(
     )
     if not len(closes.index):
         raise ValueError("the vault archive holds no sessions after the first signal date")
-    archive_end = closes.index.max().date().isoformat()
+    sessions = pd.DatetimeIndex(closes.index)
+    archive_end = sessions.max().date().isoformat()
     signal_dates = pd.DatetimeIndex(sorted(frozen["signal_date"].unique()))
-    spacing = _median_spacing(signal_dates, closes.index)
+    spacing = _median_spacing(signal_dates, sessions)
 
     origin = "retro_backfilled" if "retro" in Path(frozen_dir).parts[-2:] else "forward_frozen"
     curve = DecayCurve(
@@ -541,12 +573,13 @@ def evaluate_decay(
                 else float("nan")
             )
             intervals = [r.rank_ic_interval for r in offset_reports]
+            present = [interval for interval in intervals if interval is not None]
             result.rank_ic_interval = (
                 (
-                    min(interval[0] for interval in intervals),
-                    max(interval[1] for interval in intervals),
+                    min(interval[0] for interval in present),
+                    max(interval[1] for interval in present),
                 )
-                if intervals and all(interval is not None for interval in intervals)
+                if intervals and len(present) == len(intervals)
                 else None
             )
         result.rank_ic_information_ratio = _offset_average(
@@ -651,17 +684,17 @@ def fit_half_life(
     x = np.array([p[0] for p in points], dtype=float)
     y = np.log(np.array([p[1] for p in points], dtype=float))
 
-    log_variances: list[float] | None = []
+    log_variances: list[float] = []
+    weighted = True
     for _, mean_ic, interval in points:
         if interval is None:
-            log_variances = None
+            weighted = False
             break
         ic_se = (interval[1] - interval[0]) / (2.0 * _Z95)
         if not (math.isfinite(ic_se) and ic_se > 0.0):
-            log_variances = None
+            weighted = False
             break
         log_variances.append((ic_se / mean_ic) ** 2)  # delta method: Var[ln IC]
-    weighted = log_variances is not None
     w = 1.0 / np.array(log_variances, dtype=float) if weighted else np.ones_like(x)
 
     s_w = float(np.sum(w))
