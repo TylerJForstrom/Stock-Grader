@@ -42,6 +42,27 @@
       },
       "run_id": "31074557823",
       "run_utc": "2026-08-06T05:36:27Z"
+    },
+    {
+      "counts": {
+        "evaluated": 0,
+        "not_matured": 9,
+        "refused": 0
+      },
+      "event": "workflow_dispatch",
+      "profiles": {
+        "all_weather": "not_matured",
+        "deep_value": "not_matured",
+        "dividend_growth": "not_matured",
+        "dividend_income": "not_matured",
+        "garp": "not_matured",
+        "growth": "not_matured",
+        "quality": "not_matured",
+        "turnaround": "not_matured",
+        "value": "not_matured"
+      },
+      "run_id": "31077465837",
+      "run_utc": "2026-08-06T06:31:05Z"
     }
   ],
   "schema_version": "1.0"
