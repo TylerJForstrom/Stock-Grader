@@ -5,6 +5,67 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The participation cap is applied to the position, not just to the price of it**
+  (`stock_grader/backtest.py`, `docs/COST-MODEL.md`). `estimate_cost` caps an order at 1% of
+  `ADV20$` and prices the *capped slice*, but nothing downstream reduced the position: a
+  truncated name stayed a full-weight member of its quantile bucket while being charged the cost
+  of the fraction that fit. That converts a capacity constraint into a discount, and it does it
+  hardest in the thinnest band — the band the small-cap programme exists to interrogate — where
+  the cap binds on every row. Once the cap binds, participation is also pinned at the cap for
+  every name, so the impact term stops varying with ADV at all. The evaluator now weights each
+  row by `cost_notional_allowed_usd / cost_notional_target_usd`, so a name the cap could fill a
+  fifth of holds a fifth of an equal-weight position, contributes a fifth of the exposure, and is
+  charged its cost on those dollars; leg returns and leg costs are then both per *deployed*
+  dollar and describe the same position. A leg the cap refuses entirely makes the period drop out
+  counted rather than booking a fabricated 0%. `BacktestReport` gains `capacity_weighted` and
+  `mean_deployable_fraction`, `PeriodResult` gains the per-leg deployable fractions and the
+  truncated-name count, the markdown prints both, and every combination that does *not* apply the
+  constraint — no capacity columns on the panel, or `capacity_weighted=False` — adds a limitation
+  saying so in as many words. Stock-Vault's simulator has always reduced the filled quantity;
+  until now the evaluator and the simulator meant different things by the same cap.
+
+- **`rank_ic_net` subtracted cost with the wrong sign on the short leg**
+  (`stock_grader/backtest.py`). The statistic subtracted a strictly positive round-trip cost from
+  every name's forward return and ranked score against that — the net return of a long-only book.
+  The bottom quantile is the short leg, where cost also destroys P&L, so the return to rank
+  against there is `r + c`. Because expensive names cluster at low scores, the single-signed
+  subtraction pushed the short leg's ranked returns further down and mechanically *raised* the
+  correlation: on real banded panels the "cost-net" IC came out larger than the **gross** IC on
+  runs whose net spread was negative, so the report table contained two cost-net numbers pointing
+  opposite ways and the flattering one carried the more impressive name. It is now computed
+  side-aware — `r - c` for the long half, `r + c` for the short half, `r` for the middle buckets
+  nothing is held in — which can only attenuate. `PeriodResult.rank_ic_net` and
+  `BacktestReport.mean_rank_ic_net` are renamed `rank_ic_net_side_aware` /
+  `mean_rank_ic_net_side_aware` so a consumer of the old, differently-defined statistic fails
+  loudly rather than silently reading a new one. `net_spread` was never affected. The previous
+  regression test planted costs *uncorrelated* with score, where the bug is invisible; it is
+  replaced by a correlated-cost case that reproduces the real configuration.
+
+- **Corwin-Schultz omitted the overnight-gap adjustment its own docstring claimed**
+  (`stock_grader/costs.py`, `config/cost_golden_vectors.json`, `docs/COST-MODEL.md`).
+  `corwin_schultz_spread_bps` took highs and lows only, so the paper's adjustment could not be
+  applied and was not, while the module docstring, `docs/COST-MODEL.md` and the split-exclusion
+  rationale all described it — and the split exclusion justified itself by a mechanism the module
+  did not have. The omission is one-sided: an overnight gap inflates `gamma` far more than
+  `beta`, which shrinks `alpha` and shrinks the spread, so the public methodology of record
+  reported a *narrower* spread than the model it documents, largest in the gappiest thin names.
+  The estimator now requires `closes` and shifts the second session's range to touch the previous
+  close (`gap_adjusted_range`), matching Stock-Vault's independent implementation. No shipped
+  number moves: nothing in production calls the raw-bar estimators — production reads the
+  liquidity inputs from the vault's observation part — but the public method now matches the
+  published one.
+
+  The golden vectors could not have caught it: every vector supplies `cs_spread_bps` as a scalar
+  *input*, so the four raw-bar estimators were not pinned at all. `bar_vectors` is added to
+  `config/cost_golden_vectors.json` (schema 1.1) — raw bars in, spread/sigma/lambda out, plus
+  what the same tape produces *without* the adjustment so an implementation that drops it fails
+  rather than agreeing on a narrower number. The three tapes were cross-checked against
+  Stock-Vault's implementation in one process and agree to the last bit; on the gapped tape the
+  adjusted estimate is 128.9 bps against 0.0 unadjusted. The golden sha256 moves from
+  `58d7105d…` to `53684bf6…`; Stock-Vault must take the same file.
+
 ### Added
 
 - **Per-row trading costs** (`stock_grader/costs.py`, `docs/COST-MODEL.md`). The evaluator

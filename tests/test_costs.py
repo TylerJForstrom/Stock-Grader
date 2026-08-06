@@ -31,7 +31,7 @@ from stock_grader import costs
 #: a byte hash of a text file makes the pin fail on a Windows runner for a
 #: reason that has nothing to do with the cost model. See
 #: :func:`stock_grader.costs.golden_vector_sha256`.
-GOLDEN_SHA256 = "58d7105dfee491fd5ea9ff05e8cdd31df698ff28f0e7d1d810b7e6499c94852d"
+GOLDEN_SHA256 = "53684bf6e2e2823b0ad82d8ebf9be051cb72f976cdd6ffedaa8347a44e198416"
 
 
 def test_golden_vector_content_is_pinned():
@@ -266,8 +266,8 @@ def _bars(sessions: int, *, spread_fraction: float = 0.01) -> tuple[list, list, 
 def test_corwin_schultz_floors_the_window_mean_once_never_each_pair():
     """Per-pair flooring is a truncation bias, and it is why band gradients
     invert on a real archive. The estimator must average raw pair estimates."""
-    highs, lows, *_ = _bars(22)
-    spread, pairs = costs.corwin_schultz_spread_bps(highs, lows)
+    highs, lows, closes, _volumes = _bars(22)
+    spread, pairs = costs.corwin_schultz_spread_bps(highs, lows, closes)
     assert pairs == 21
     assert spread is not None and spread >= 0.0
 
@@ -278,18 +278,29 @@ def test_corwin_schultz_floors_the_window_mean_once_never_each_pair():
     # against a floor.
     gappy_high, gappy_low = [], []
     for index in range(22):
-        price = 20.0 * 1.003 if index % 2 else 20.0
-        gappy_high.append(price * 1.001)
-        gappy_low.append(price * 0.999)
+        price = 20.0 * 1.006 if index % 2 else 20.0
+        gappy_high.append(price * 1.002)
+        gappy_low.append(price * 0.998)
     for index in (5, 6, 7, 14, 15, 16):
-        price = gappy_high[index] / 1.001
+        price = gappy_high[index] / 1.002
         gappy_high[index] = price * 1.02
         gappy_low[index] = price * 0.98
+    # Each session closes at the end of its range that the NEXT session gaps
+    # away from, so the overnight-gap adjustment cannot absorb the gap and the
+    # two-day span stays wide. Closes at the other end would let the shift
+    # bring the ranges back on top of each other, and the tape would stop
+    # producing the negative pair estimates this test is about.
+    gappy_close = [
+        gappy_high[index] if index % 2 == 0 else gappy_low[index]
+        for index in range(22)
+    ]
 
-    raw_estimates = _raw_pair_estimates(gappy_high, gappy_low)
+    raw_estimates = _raw_pair_estimates(gappy_high, gappy_low, gappy_close)
     assert sum(1 for value in raw_estimates if value < 0) > len(raw_estimates) // 3
 
-    window_floored, _ = costs.corwin_schultz_spread_bps(gappy_high, gappy_low)
+    window_floored, _ = costs.corwin_schultz_spread_bps(
+        gappy_high, gappy_low, gappy_close
+    )
     per_pair = 1e4 * sum(max(value, 0.0) for value in raw_estimates) / len(raw_estimates)
     assert window_floored is not None and window_floored > 0.0
     assert per_pair > 2 * window_floored, (
@@ -298,19 +309,25 @@ def test_corwin_schultz_floors_the_window_mean_once_never_each_pair():
     )
 
 
-def _raw_pair_estimates(highs, lows) -> list[float]:
+def _raw_pair_estimates(highs, lows, closes) -> list[float]:
     """Unfloored two-day estimates, so the test can see the negatives that the
-    rejected treatment would truncate away."""
+    rejected treatment would truncate away.
+
+    Gap-adjusted, like the estimator under test: this helper exists to isolate
+    the FLOORING rule, so it must differ from the implementation in the
+    flooring and in nothing else.
+    """
     denominator = 3.0 - 2.0 * math.sqrt(2.0)
     estimates = []
     for index in range(len(highs) - 1):
+        high_2, low_2 = costs.gap_adjusted_range(
+            closes[index], highs[index + 1], lows[index + 1]
+        )
         beta = (
             math.log(highs[index] / lows[index]) ** 2
-            + math.log(highs[index + 1] / lows[index + 1]) ** 2
+            + math.log(high_2 / low_2) ** 2
         )
-        gamma = (
-            math.log(max(highs[index], highs[index + 1]) / min(lows[index], lows[index + 1])) ** 2
-        )
+        gamma = math.log(max(highs[index], high_2) / min(lows[index], low_2)) ** 2
         alpha = (math.sqrt(2 * beta) - math.sqrt(beta)) / denominator - math.sqrt(
             gamma / denominator
         )
@@ -318,9 +335,149 @@ def _raw_pair_estimates(highs, lows) -> list[float]:
     return estimates
 
 
+#: A tape that gaps away from the previous close every session, with each
+#: close near the end of its own range that the next session gaps away from.
+#: Adjusted, the two sessions' ranges very nearly coincide and the estimate is
+#: strongly positive; unadjusted, the overnight move is read as intraday range,
+#: which inflates gamma, shrinks alpha and floors the window at zero.
+_GAPPED_TAPE = (
+    # (low, high, close)
+    (20.00, 20.40, 20.05),
+    (20.65, 21.05, 20.70),
+    (21.30, 21.70, 21.65),
+    (20.90, 21.30, 20.95),
+    (21.55, 21.95, 21.90),
+    (21.10, 21.50, 21.15),
+    (21.75, 22.15, 21.95),
+    (21.80, 22.20, 21.85),
+    (22.45, 22.85, 22.80),
+    (22.05, 22.45, 22.10),
+    (22.70, 23.10, 22.75),
+    (23.35, 23.75, 23.50),
+)
+
+
+def test_the_overnight_gap_adjustment_is_applied_and_is_not_cosmetic():
+    """The regression for the adjustment this module's docstring promises.
+
+    The estimator took highs and lows only, so the paper's overnight-gap
+    adjustment could not be applied and was not, while the module docstring,
+    docs/COST-MODEL.md and the split-exclusion rationale all claimed it. The
+    omission is one-sided: an overnight gap inflates gamma, shrinks alpha and
+    shrinks the spread, so the public methodology of record reported a NARROWER
+    spread than the model it documents — the optimistic direction, largest in
+    exactly the gappy thin names the model exists to price.
+    """
+    highs = [row[1] for row in _GAPPED_TAPE]
+    lows = [row[0] for row in _GAPPED_TAPE]
+    closes = [row[2] for row in _GAPPED_TAPE]
+
+    adjusted, pairs = costs.corwin_schultz_spread_bps(highs, lows, closes)
+    unadjusted, _ = costs.corwin_schultz_spread_bps(
+        highs, lows, closes, gap_adjust=False
+    )
+    assert pairs == 11
+    assert unadjusted == 0.0
+    assert adjusted is not None and adjusted > 100.0
+    assert adjusted > unadjusted
+
+    # And the shift itself, in all three branches.
+    assert costs.gap_adjusted_range(20.05, 21.05, 20.65) == pytest.approx((20.45, 20.05))
+    assert costs.gap_adjusted_range(21.65, 21.30, 20.90) == pytest.approx((21.65, 21.25))
+    assert costs.gap_adjusted_range(20.95, 21.30, 20.90) == (21.30, 20.90)
+
+
+def test_closes_are_required_by_the_spread_estimator():
+    """A caller that cannot supply closes cannot silently get the unadjusted
+    estimate back: the adjustment is part of the model, not an option."""
+    highs = [row[1] for row in _GAPPED_TAPE]
+    lows = [row[0] for row in _GAPPED_TAPE]
+    with pytest.raises(TypeError):
+        costs.corwin_schultz_spread_bps(highs, lows)
+
+
+@pytest.mark.parametrize(
+    "vector", costs.BAR_GOLDEN_VECTORS, ids=lambda v: v["name"]
+)
+def test_raw_bar_golden_vector_is_reproduced(vector: dict):
+    """The pin, one level below the composition vectors.
+
+    Every entry in GOLDEN_VECTORS supplies ``cs_spread_bps`` as a scalar INPUT,
+    so none of them touches the four estimators that produce it: two
+    implementations could disagree about the overnight-gap adjustment, the
+    flooring rule or the usable-pair definition and still reproduce all seven.
+    These vectors take raw bars.
+    """
+    bars = vector["bars"]
+    excluded = vector["excluded_pairs"]
+    spread, pairs = costs.corwin_schultz_spread_bps(
+        bars["highs"], bars["lows"], bars["closes"], excluded_pairs=excluded
+    )
+    if vector["expected"] is None:
+        assert spread is None, f"{vector['name']} must refuse: {vector['why']}"
+        assert (
+            costs.cost_inputs_from_bars(
+                price=bars["closes"][-1],
+                adv20_dollar=5.0e6,
+                highs=bars["highs"],
+                lows=bars["lows"],
+                closes=bars["closes"],
+                volumes=bars["volumes"],
+                excluded_pairs=excluded,
+            )
+            is None
+        )
+        return
+    sigma, _ = costs.close_to_close_sigma(bars["closes"], excluded_pairs=excluded)
+    lam, _ = costs.amihud_lambda_bps_per_musd(
+        bars["closes"], bars["volumes"], excluded_pairs=excluded
+    )
+    expected = vector["expected"]
+    assert pairs == expected["usable_pairs"]
+    assert spread == pytest.approx(expected["cs_spread_bps"], rel=1e-9, abs=1e-12)
+    assert sigma == pytest.approx(expected["sigma"], rel=1e-9, abs=1e-12)
+    assert lam == pytest.approx(
+        expected["amihud_lambda_bps_per_musd"], rel=1e-9, abs=1e-12
+    )
+
+    # The vector also records what the SAME tape produces without the gap
+    # adjustment, so an implementation that omits it fails here rather than
+    # quietly agreeing on a narrower spread.
+    unadjusted, _ = costs.corwin_schultz_spread_bps(
+        bars["highs"],
+        bars["lows"],
+        bars["closes"],
+        excluded_pairs=excluded,
+        gap_adjust=False,
+    )
+    assert unadjusted == pytest.approx(
+        vector["unadjusted_cs_spread_bps"], rel=1e-9, abs=1e-12
+    )
+
+
+def test_the_bar_vectors_cover_what_the_composition_vectors_cannot():
+    """The blind spot this file was missing, asserted rather than assumed."""
+    for vector in costs.GOLDEN_VECTORS:
+        assert "cs_spread_bps" in vector["inputs"], (
+            "composition vectors take the spread as an input; if one ever "
+            "measured it, this test is stale"
+        )
+    names = {vector["name"] for vector in costs.BAR_GOLDEN_VECTORS}
+    assert {"gapped-window", "contained-closes", "bar-window-short-refusal"} <= names
+    gapped = next(v for v in costs.BAR_GOLDEN_VECTORS if v["name"] == "gapped-window")
+    assert gapped["unadjusted_cs_spread_bps"] != gapped["expected"]["cs_spread_bps"], (
+        "the gapped vector must DISCRIMINATE: an implementation without the "
+        "overnight-gap adjustment has to fail it"
+    )
+    contained = next(
+        v for v in costs.BAR_GOLDEN_VECTORS if v["name"] == "contained-closes"
+    )
+    assert contained["unadjusted_cs_spread_bps"] == contained["expected"]["cs_spread_bps"]
+
+
 def test_estimators_refuse_a_short_window_rather_than_reporting_a_thin_number():
     highs, lows, closes, volumes = _bars(8)
-    assert costs.corwin_schultz_spread_bps(highs, lows) == (None, 7)
+    assert costs.corwin_schultz_spread_bps(highs, lows, closes) == (None, 7)
     assert costs.close_to_close_sigma(closes) == (None, 7)
     assert costs.amihud_lambda_bps_per_musd(closes, volumes) == (None, 7)
     assert (

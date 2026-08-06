@@ -1,4 +1,223 @@
 {
+  "bar_vectors": [
+    {
+      "bars": {
+        "closes": [
+          20.05,
+          20.7,
+          21.65,
+          20.95,
+          21.9,
+          21.15,
+          21.95,
+          21.85,
+          22.8,
+          22.1,
+          22.75,
+          23.5
+        ],
+        "highs": [
+          20.4,
+          21.05,
+          21.7,
+          21.3,
+          21.95,
+          21.5,
+          22.15,
+          22.2,
+          22.85,
+          22.45,
+          23.1,
+          23.75
+        ],
+        "lows": [
+          20.0,
+          20.65,
+          21.3,
+          20.9,
+          21.55,
+          21.1,
+          21.75,
+          21.8,
+          22.45,
+          22.05,
+          22.7,
+          23.35
+        ],
+        "volumes": [
+          100000.0,
+          120000.0,
+          90000.0,
+          110000.0,
+          130000.0,
+          95000.0,
+          105000.0,
+          140000.0,
+          100000.0,
+          115000.0,
+          125000.0,
+          100000.0
+        ]
+      },
+      "excluded_pairs": null,
+      "expected": {
+        "amihud_lambda_bps_per_musd": 142.62012618942114,
+        "cs_spread_bps": 128.92849703831988,
+        "sigma": 0.03328104174774086,
+        "usable_pairs": 11
+      },
+      "name": "gapped-window",
+      "unadjusted_cs_spread_bps": 0.0,
+      "why": "Every session gaps away from the previous close, so the overnight-gap adjustment is the whole measurement: adjusted the window reads 128.9 bps, unadjusted it floors at zero. An implementation that omits the adjustment cannot pass this vector, and omitting it understates spread, which is the optimistic direction."
+    },
+    {
+      "bars": {
+        "closes": [
+          20.1,
+          20.2,
+          20.1,
+          20.2,
+          20.3,
+          20.2,
+          20.3,
+          20.4,
+          20.3,
+          20.4,
+          20.5,
+          20.4
+        ],
+        "highs": [
+          20.3,
+          20.35,
+          20.4,
+          20.3,
+          20.45,
+          20.5,
+          20.4,
+          20.55,
+          20.6,
+          20.5,
+          20.65,
+          20.7
+        ],
+        "lows": [
+          19.9,
+          19.95,
+          20.0,
+          19.9,
+          20.05,
+          20.1,
+          20.0,
+          20.15,
+          20.2,
+          20.1,
+          20.25,
+          20.3
+        ],
+        "volumes": [
+          200000.0,
+          210000.0,
+          190000.0,
+          220000.0,
+          205000.0,
+          195000.0,
+          215000.0,
+          225000.0,
+          185000.0,
+          230000.0,
+          240000.0,
+          200000.0
+        ]
+      },
+      "excluded_pairs": null,
+      "expected": {
+        "amihud_lambda_bps_per_musd": 11.699173366640442,
+        "cs_spread_bps": 89.03483514165282,
+        "sigma": 0.004973539033728484,
+        "usable_pairs": 11
+      },
+      "name": "contained-closes",
+      "unadjusted_cs_spread_bps": 89.03483514165282,
+      "why": "Every close sits inside the next session's range, so the adjustment must be a no-op: adjusted and unadjusted agree exactly. Pins that the shift does not fire where there is no gap."
+    },
+    {
+      "bars": {
+        "closes": [
+          20.05,
+          20.7,
+          21.65,
+          20.95,
+          21.9,
+          21.15,
+          21.95,
+          21.85,
+          22.8,
+          22.1,
+          22.75,
+          23.5
+        ],
+        "highs": [
+          20.4,
+          21.05,
+          21.7,
+          21.3,
+          21.95,
+          21.5,
+          22.15,
+          22.2,
+          22.85,
+          22.45,
+          23.1,
+          23.75
+        ],
+        "lows": [
+          20.0,
+          20.65,
+          21.3,
+          20.9,
+          21.55,
+          21.1,
+          21.75,
+          21.8,
+          22.45,
+          22.05,
+          22.7,
+          23.35
+        ],
+        "volumes": [
+          100000.0,
+          120000.0,
+          90000.0,
+          110000.0,
+          130000.0,
+          95000.0,
+          105000.0,
+          140000.0,
+          100000.0,
+          115000.0,
+          125000.0,
+          100000.0
+        ]
+      },
+      "excluded_pairs": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "expected": null,
+      "name": "bar-window-short-refusal",
+      "unadjusted_cs_spread_bps": null,
+      "why": "One excluded pair takes the same tape from 11 usable pairs to 10, one below MIN_USABLE_PAIRS. The estimators must refuse rather than report a thinner number that reads the same as a well-supported one."
+    }
+  ],
   "constants": {
     "ADV_PARTICIPATION_CAP": 0.01,
     "ATHL_ALPHA": 0.891,
@@ -11,8 +230,8 @@
     "TICK_SIZE_USD": 0.01
   },
   "cost_model_id": "cost-v1-cs2012-athl2005-amihud2002",
-  "note": "Cross-repository pin for the per-row trading-cost model. Stock-Grader (src/stock_grader/costs.py) and Stock-Vault (src/stock_vault/costs.py) implement this model independently because neither repository may import the other; this file is what keeps the two implementations from drifting apart in silence. Both repositories carry a byte-identical copy and both assert its sha256. Every input below is a synthetic round number chosen for arithmetic convenience: nothing here is measured from any archive, so the file is safe in a public repository. Tolerance: relative 1e-9. A change to this file is a change to the cost model and must land in both repositories in the same breath.",
-  "schema_version": "1.0",
+  "note": "Cross-repository pin for the per-row trading-cost model. Stock-Grader (src/stock_grader/costs.py) and Stock-Vault (src/stock_vault/costs.py) implement this model independently because neither repository may import the other; this file is what keeps the two implementations from drifting apart in silence. Both repositories carry a byte-identical copy and both assert its sha256. `vectors` pins the COMPOSITION (liquidity inputs in, one cost estimate out); `bar_vectors` pins the ESTIMATORS themselves (raw daily bars in, spread/sigma/lambda out), which the composition vectors cannot reach because they take the spread as a scalar input. Every input below is a synthetic round number chosen for arithmetic convenience: nothing here is measured from any archive, so the file is safe in a public repository. Tolerance: relative 1e-9. A change to this file is a change to the cost model and must land in both repositories in the same breath.",
+  "schema_version": "1.1",
   "vectors": [
     {
       "expected": {
