@@ -1509,6 +1509,35 @@ def _has_prior_panel(out_dir: Path, profile: str, signal_date: date) -> bool:
     return any(path.stem != signal_date.isoformat() for path in directory.glob("*.parquet"))
 
 
+# The same stem discipline every reader applies (``discover_frozen_panels``,
+# ``refresh_frozen_manifest``, the paper trader): only ``YYYY-MM-DD`` counts as
+# a dated part, so a stray temp file can never satisfy a month.
+_FROZEN_PART_STEM = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _month_part(out_dir: Path, profile: str, month: str) -> Path | None:
+    """The profile's earliest existing dated part inside ``month`` (YYYY-MM).
+
+    This is what makes the monthly clock idempotent PER MONTH PER ROOT rather
+    than merely per date. The distinction is not academic: on 2026-08-01 the
+    scheduled freeze wrote ``frozen_scores`` from a workflow that did not yet
+    contain the wide step, so ``frozen_scores_wide`` silently missed August
+    entirely — and because a freeze is an immutable dated artifact, no later
+    run could ever restore a 2026-08-01 wide snapshot. A re-dispatch must be
+    able to backfill only the root that missed the month, without minting a
+    redundant second snapshot in the root that did not.
+    """
+    directory = out_dir / profile
+    if not directory.is_dir():
+        return None
+    parts = sorted(
+        path
+        for path in directory.glob("*.parquet")
+        if _FROZEN_PART_STEM.fullmatch(path.stem) and path.stem[:7] == month
+    )
+    return parts[0] if parts else None
+
+
 def cmd_freeze(args: argparse.Namespace) -> int:
     """Freeze today's scores into the append-only forward panel.
 
@@ -1523,6 +1552,13 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     the extra profiles cost no network calls at all, and in a few years the
     panels answer *which* style lens has an edge rather than merely whether one
     blend does. The deflated-Sharpe ledger already charges for the extra trials.
+
+    ``--once-per-month`` is the monthly clock's idempotence: a profile that
+    already holds a dated part anywhere in the signal date's month is skipped
+    rather than frozen again. Off by default, because an ad-hoc mid-month
+    freeze is a legitimate thing for a human to want; monthly-freeze.yml opts
+    in on every root so a re-dispatch backfills the roots that missed the
+    month and leaves the ones that did not alone.
     """
     signal_date = date.fromisoformat(args.asof) if args.asof else date.today()
     if args.universe:
@@ -1541,12 +1577,33 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     def panel_path(profile: str) -> Path:
         return out_dir / profile / f"{signal_date.isoformat()}.parquet"
 
+    once_per_month = getattr(args, "once_per_month", False)
+    signal_month = signal_date.isoformat()[:7]
+
     pending = []
+    # Profiles skipped because this ROOT already holds a part for this MONTH.
+    # Tracked, not merely skipped: the refusal alarm below asks whether the
+    # month produced any evidence at all, and a month-skip is evidence.
+    already_this_month: list[str] = []
     for profile in profiles:
         if panel_path(profile).exists():
             status_console.print(f"[dim]{panel_path(profile)} already frozen; nothing to do[/dim]")
-        else:
-            pending.append(profile)
+            continue
+        existing = _month_part(out_dir, profile, signal_month) if once_per_month else None
+        if existing is not None:
+            # Loud, not dim, and on stdout: this line is the workflow log's
+            # only evidence that a root was deliberately left alone rather
+            # than silently missed — exactly the ambiguity that let the wide
+            # root lose a month in the first place. soft_wrap keeps it one
+            # grep-able line however narrow the runner's console is.
+            console.print(
+                f"already frozen this month: {out_dir / profile}/{existing.name} "
+                f"covers {signal_month}; skipping",
+                soft_wrap=True,
+            )
+            already_this_month.append(profile)
+            continue
+        pending.append(profile)
     if not pending:
         # Even a freeze that froze nothing refreshes the catalogs: a crash
         # between a prior run's panel write and its manifest write, or a
@@ -1655,7 +1712,13 @@ def cmd_freeze(args: argparse.Namespace) -> int:
         # where no requested profile has a same-date panel at all. Counting
         # already-frozen siblings makes unchanged structural refusals idempotent.
         regressed = sorted(p for p in refused if _has_prior_panel(out_dir, p, signal_date))
-        has_same_date_output = any(panel_path(profile).is_file() for profile in profiles)
+        # A profile skipped by --once-per-month counts: the clause below asks
+        # "did this month produce no evidence at all", and a root that already
+        # holds this month's part demonstrably did. Counting it is honest, not
+        # lenient — the regression and traded-profile alarms are untouched.
+        has_same_date_output = any(panel_path(profile).is_file() for profile in profiles) or bool(
+            already_this_month
+        )
         console.print(
             f"[red]{len(refused)} of {len(pending)} profiles were refused: "
             f"{', '.join(refused)}[/red]"
@@ -2566,6 +2629,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="grade the one set of snapshots under every registered profile "
         "and write a panel for each (no extra network calls); --profile "
         "is ignored",
+    )
+    p_freeze.add_argument(
+        "--once-per-month",
+        action="store_true",
+        help="skip any profile that already holds a dated part anywhere in the "
+        "signal date's month under --out; the monthly clock's idempotence, so "
+        "a re-dispatch backfills only the evidence roots that missed the month",
     )
     common(p_freeze, needs_universe=True)
     p_freeze.set_defaults(func=cmd_freeze)

@@ -1127,6 +1127,200 @@ def test_freeze_all_profiles_is_registered_on_the_subcommand(tmp_path) -> None:
     assert cli.build_parser().parse_args(["freeze", "--universe", "u.txt"]).all_profiles is False
 
 
+def _counting_freeze_universe(monkeypatch) -> list[list[str]]:
+    """Patch freeze's universe/grading and return the list of fetch calls made.
+
+    The list is the assertion that matters for --once-per-month: a skip that
+    still ran the SEC fetch and the snapshot build would be idempotent in the
+    evidence tree but not in the thing the freeze actually costs.
+    """
+    from tests.test_pipeline import _universe
+
+    snapshots = _universe(16, with_prices=False)
+    builds: list[list[str]] = []
+
+    def build_snapshots(tickers, args, provider):
+        builds.append(tickers)
+        return snapshots
+
+    _patch_freeze_universe(monkeypatch, snapshots)
+    monkeypatch.setattr(cli, "_build_snapshots", build_snapshots)
+    monkeypatch.setattr(
+        pipeline,
+        "grade_universe_multi",
+        lambda snaps, configs: {
+            config.name: {
+                snapshot.ticker: _report(snapshot.ticker, 50.0, "B", profile=config.name)
+                for snapshot in snaps
+            }
+            for config in configs
+        },
+    )
+    return builds
+
+
+def test_freeze_once_per_month_is_registered_on_the_subcommand(tmp_path) -> None:
+    """monthly-freeze.yml passes it subcommand-first; default OFF."""
+    args = cli.build_parser().parse_args(
+        ["freeze", "--universe", str(tmp_path / "u.txt"), "--once-per-month"]
+    )
+    assert args.once_per_month is True
+    assert cli.build_parser().parse_args(["freeze", "--universe", "u.txt"]).once_per_month is False
+
+
+def test_freeze_once_per_month_skips_a_root_that_already_froze_this_month(
+    tmp_path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A re-dispatch must not mint a second snapshot in a root that has the month.
+
+    Per-DATE immutability alone does not give this: 2026-08-06 is a date the
+    root has never seen, so the old check would happily freeze a redundant
+    second August part (and pay a full SEC fetch for it).
+    """
+    builds = _counting_freeze_universe(monkeypatch)
+    root = tmp_path / "frozen"
+
+    first = _freeze_args(root, asof="2026-08-01", all_profiles=True, once_per_month=True)
+    assert cli.cmd_freeze(first) == 0
+    frozen = {path: path.read_bytes() for path in root.rglob("*.parquet")}
+    assert {path.name for path in frozen} == {"2026-08-01.parquet"}
+    assert len(builds) == 1
+
+    later = _freeze_args(root, asof="2026-08-06", all_profiles=True, once_per_month=True)
+    assert cli.cmd_freeze(later) == 0
+    assert {path: path.read_bytes() for path in root.rglob("*.parquet")} == frozen
+    assert len(builds) == 1  # nothing pending: no fetch, no snapshot build at all
+
+    out = capsys.readouterr().out
+    # One unwrapped, grep-able line per skipped profile, naming the part that
+    # satisfies the month — so the log says WHY a root was left alone.
+    skips = [line for line in out.splitlines() if line.startswith("already frozen this month:")]
+    assert len(skips) == len(profile_names())
+    assert all(line.endswith("covers 2026-08; skipping") for line in skips), skips
+    assert any("2026-08-01.parquet" in line for line in skips)
+
+
+def test_freeze_once_per_month_still_freezes_a_root_that_missed_the_month(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """The 2026-08 incident, in miniature: a root whose newest part is July.
+
+    frozen_scores_wide missed 2026-08-01 entirely because the workflow step
+    that writes it landed on main after that run. --once-per-month must still
+    freeze such a root — skipping is per month, and this root has no August.
+    """
+    builds = _counting_freeze_universe(monkeypatch)
+    root = tmp_path / "frozen_wide"
+
+    july = _freeze_args(root, asof="2026-07-31", all_profiles=True, once_per_month=True)
+    assert cli.cmd_freeze(july) == 0
+
+    august = _freeze_args(root, asof="2026-08-06", all_profiles=True, once_per_month=True)
+    assert cli.cmd_freeze(august) == 0
+    assert len(builds) == 2  # a missing month is real work, not a skip
+    for profile in profile_names():
+        assert (root / profile / "2026-07-31.parquet").exists(), profile
+        assert (root / profile / "2026-08-06.parquet").exists(), profile
+
+
+def test_freeze_without_once_per_month_still_allows_an_ad_hoc_mid_month_freeze(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Default OFF: the flag is the monthly clock's policy, not the CLI's.
+
+    A human asking for a mid-month snapshot gets one; the panel builder already
+    drops the overlapping window (select_non_overlapping), so this stays safe.
+    """
+    _counting_freeze_universe(monkeypatch)
+    root = tmp_path / "frozen"
+
+    assert cli.cmd_freeze(_freeze_args(root, asof="2026-08-01", all_profiles=True)) == 0
+    assert cli.cmd_freeze(_freeze_args(root, asof="2026-08-06", all_profiles=True)) == 0
+    for profile in profile_names():
+        assert (root / profile / "2026-08-01.parquet").exists(), profile
+        assert (root / profile / "2026-08-06.parquet").exists(), profile
+
+
+def test_freeze_once_per_month_backfills_only_the_root_that_missed_the_month(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """End to end over BOTH evidence roots, against the real cadence clock.
+
+    One dispatch on 2026-08-06 against a tree where frozen_scores has August
+    and frozen_scores_wide does not: the narrow root must be untouched, the
+    wide root must gain an honestly-dated 2026-08-06 part, and
+    check_cadence must then pass for both roots.
+    """
+    from stock_grader.cadence import check_cadence
+
+    _counting_freeze_universe(monkeypatch)
+    repo = tmp_path / "repo"
+    narrow, wide = repo / "frozen_scores", repo / "frozen_scores_wide"
+
+    # The state main was actually in: both roots frozen for July, only the
+    # narrow root frozen for August.
+    assert cli.cmd_freeze(_freeze_args(narrow, asof="2026-07-31", all_profiles=True)) == 0
+    assert cli.cmd_freeze(_freeze_args(wide, asof="2026-07-31", all_profiles=True)) == 0
+    assert cli.cmd_freeze(_freeze_args(narrow, asof="2026-08-01", all_profiles=True)) == 0
+
+    today = date(2026, 8, 6)
+    ok, lines = check_cadence(repo, today, pre_run=True)
+    assert not ok, lines
+    assert any("FAIL freeze[frozen_scores_wide]" in line for line in lines)
+
+    # The dispatch: the same flag on both roots, one command each.
+    for root in (narrow, wide):
+        assert (
+            cli.cmd_freeze(
+                _freeze_args(root, asof="2026-08-06", all_profiles=True, once_per_month=True)
+            )
+            == 0
+        )
+
+    for profile in profile_names():
+        # No second August snapshot in the root that already had one…
+        assert sorted(p.name for p in (narrow / profile).glob("*.parquet")) == [
+            "2026-07-31.parquet",
+            "2026-08-01.parquet",
+        ], profile
+        # …and an honestly-dated August part in the root that had none. It is
+        # dated 2026-08-06 because that is when it was observed: backdating it
+        # to 2026-08-01 would be a point-in-time lie.
+        assert sorted(p.name for p in (wide / profile).glob("*.parquet")) == [
+            "2026-07-31.parquet",
+            "2026-08-06.parquet",
+        ], profile
+
+    ok, lines = check_cadence(repo, today, pre_run=True)
+    assert ok, lines
+    assert sum(1 for line in lines if line.startswith("PASS freeze[")) == 2
+
+
+def test_monthly_freeze_workflow_is_idempotent_per_month_on_every_root() -> None:
+    """Both freeze steps must carry --once-per-month.
+
+    A dispatch is the ONLY way to recover a root that missed its scheduled
+    month (freezes are immutable and cannot be backdated), and without this
+    flag that recovery also duplicates every root that did not miss it — which
+    is enough friction that the recovery does not get run.
+    """
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "monthly-freeze.yml"
+    ).read_text(encoding="utf-8")
+
+    freeze_lines = [line for line in workflow.splitlines() if "stock-grader freeze" in line]
+    assert len(freeze_lines) == 2
+    narrow_step = workflow.split("- name: Freeze scores", 1)[1].split("- name: Freeze wide", 1)[0]
+    wide_step = workflow.split("- name: Freeze wide", 1)[1].split("- name: Commit", 1)[0]
+    for step in (narrow_step, wide_step):
+        assert "--once-per-month" in step
+
+
 def test_shipped_panels_live_under_their_profile_directory() -> None:
     """Layout v2 (pinned cross-repo): frozen_scores/<profile>/<date>.parquet, no flat files."""
     frozen = Path(__file__).resolve().parent.parent / "frozen_scores"
@@ -1169,7 +1363,8 @@ def test_monthly_freeze_workflow_keeps_deep_clock_and_adds_wide_bulk_clock() -> 
     assert "df -h" in workflow
     invocations = [line.strip() for line in workflow.splitlines() if "stock-grader freeze" in line]
     assert invocations[0] == (
-        "stock-grader freeze --all-profiles --universe config/universe_default.txt "
+        "stock-grader freeze --all-profiles --once-per-month "
+        "--universe config/universe_default.txt "
         '--out frozen_scores "${FOUNDRY_ARGS[@]}"'
     )
     assert len(invocations) == 2

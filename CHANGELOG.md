@@ -7,6 +7,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **The monthly freeze is now idempotent per month PER EVIDENCE ROOT, so a missed root can be
+  recovered without duplicating the roots that did not miss** (`stock_grader/cli.py`,
+  `.github/workflows/monthly-freeze.yml`). The 2026-08 incident: the "Freeze wide SEC-float
+  universe" step reached main at 2026-08-02T00:47Z, eleven hours after the 2026-08-01T13:19Z
+  scheduled run (which ran from a workflow with exactly one freeze step). `frozen_scores` got
+  its 2026-08-01 part; `frozen_scores_wide` stayed at 2026-07-31, so the forward loop's cadence
+  self-gate failed on every run — correctly — and would have kept failing until 2026-09-01,
+  with August's wide evidence permanently missing. `cmd_freeze` was idempotent per DATE only, so
+  the obvious recovery (dispatch the workflow) would also have written a redundant second August
+  snapshot into `frozen_scores` and paid a second full SEC fetch for it. `freeze` grows an
+  opt-in `--once-per-month`: a profile that already holds a dated part anywhere in the signal
+  date's month is skipped with one grep-able `already frozen this month:` line naming the part
+  that satisfies it. Both workflow steps pass it, so a dispatch backfills only what is missing.
+  Off by default — an ad-hoc mid-month freeze stays available, and `select_non_overlapping`
+  already drops the overlapping window it would produce. The recovered wide part is dated the
+  day it was observed, not backdated to the 1st: a freeze is a point-in-time snapshot of what
+  was knowable when it ran, and 2026-08-01 for the wide root is simply gone.
+
 - **An ABSENT band verdict no longer passes the gate that was built to enforce it**
   (`stock_grader/signal_panel.py`, `stock_grader/cli.py`). The refusal below reads the verdict
   and short-circuits on its *presence* — `if adv_band is not None and not
