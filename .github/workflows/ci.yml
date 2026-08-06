@@ -56,6 +56,13 @@ jobs:
       - name: Format check
         run: ruff format --check src tests scripts
 
+      # Runs on every matrix entry on purpose, not once. pyproject deliberately leaves
+      # python_version unset, so mypy resolves numpy's and pandas' stubs against whichever
+      # interpreter is running — and those stubs genuinely disagree between versions. With
+      # warn_unused_ignores on, a `# type: ignore` that 3.12 needs is an ERROR on 3.11 for
+      # being unused, which is how this step first went red. Verified clean on 3.11, 3.12
+      # and 3.13. Prefer typing.cast over `# type: ignore` for a stub gap: a cast cannot go
+      # stale on one version while staying necessary on another.
       - name: Type check
         run: mypy --no-incremental
 

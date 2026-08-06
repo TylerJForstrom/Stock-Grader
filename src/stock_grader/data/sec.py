@@ -23,7 +23,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 import pandas as pd
@@ -678,8 +678,8 @@ def restate_for_splits(shares: pd.Series, scale_reference: pd.Series | None = No
                     # asof() is typed as returning the full pandas Scalar union; this
                     # reference series is numeric, and a non-numeric value would be
                     # caught by the except clause below either way.
-                    now = float(reference.asof(clean.index[i]))  # type: ignore[arg-type]
-                    before = float(reference.asof(clean.index[i - 1]))  # type: ignore[arg-type]
+                    now = float(cast(Any, reference.asof(clean.index[i])))
+                    before = float(cast(Any, reference.asof(clean.index[i - 1])))
                 except (KeyError, TypeError, ValueError):
                     before = now = 0.0
                 if not before or not np.isfinite(now / before):

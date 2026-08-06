@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -430,7 +431,7 @@ def evaluate_walk_forward(
         refused_by_date = {
             # Same widening as the main loop below: a datetime64 column's group keys
             # are Timestamps at runtime but typed as bare Hashable.
-            pd.Timestamp(key): int(count)  # type: ignore[arg-type]
+            pd.Timestamp(cast(Any, key)): int(count)
             for key, count in frame.loc[~estimable].groupby("signal_date", sort=True).size().items()
         }
         frame = frame.loc[estimable].copy()
@@ -480,7 +481,7 @@ def evaluate_walk_forward(
     for group_key, group in frame.groupby("signal_date", sort=True):
         # The stubs widen groupby keys to a bare Scalar; this column is datetime64,
         # so normalise once here rather than re-wrapping at each downstream use.
-        signal_date = pd.Timestamp(group_key)  # type: ignore[arg-type]
+        signal_date = pd.Timestamp(cast(Any, group_key))
         if len(group) < config.min_cross_section or group["score"].nunique() < 2:
             rejected += 1
             continue

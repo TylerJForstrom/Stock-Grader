@@ -18,7 +18,7 @@ import math
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import date
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -244,7 +244,7 @@ def _trend(name: str, unit: str, values: pd.Series) -> TrendSeries | None:
         unit=unit,
         observations=[
             # Series.items() types its keys as Hashable; this index is datetime-like.
-            {"period": pd.Timestamp(index).date().isoformat(), "value": float(value)}  # type: ignore[arg-type]
+            {"period": pd.Timestamp(cast(Any, index)).date().isoformat(), "value": float(value)}
             for index, value in clean.items()
         ],
     )

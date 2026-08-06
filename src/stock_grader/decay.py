@@ -29,7 +29,7 @@ import subprocess
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -348,7 +348,7 @@ def build_horizon_panel(
     for group_key, group in frozen.groupby("signal_date", sort=True):
         # load_frozen_panels ran pd.to_datetime over this column, so the group key
         # is already a Timestamp; the stubs widen groupby keys to a bare Scalar.
-        signal_date = pd.Timestamp(group_key)  # type: ignore[arg-type]
+        signal_date = pd.Timestamp(cast(Any, group_key))
         later = sessions[sessions > signal_date]
         if not len(later):
             counts["dropped_incomplete_window"] += len(group)
