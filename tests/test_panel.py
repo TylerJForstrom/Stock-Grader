@@ -157,10 +157,7 @@ def _write_frozen(root: Path, signal: dt.date, rows: list[dict], profile: str = 
 
 
 def _healthy_rows() -> list[dict]:
-    return [
-        _frozen_row(ticker, score)
-        for score, ticker in enumerate(sorted(HEALTHY), start=1)
-    ]
+    return [_frozen_row(ticker, score) for score, ticker in enumerate(sorted(HEALTHY), start=1)]
 
 
 class _Foundry:
@@ -218,7 +215,9 @@ def _config(**overrides) -> PanelBuildConfig:
 def test_return_start_is_strictly_after_signal_date_and_windows_are_uniform(
     market_vault, frozen_root
 ):
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     panel = result.panel
     assert panel is not None
     for signal, group in panel.groupby("signal_date"):
@@ -250,7 +249,9 @@ def test_window_for_returns_none_until_the_horizon_is_archived():
 def test_built_panel_passes_the_backtest_input_contract_except_total_returns(
     market_vault, frozen_root
 ):
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     report = evaluate_walk_forward(result.panel, BacktestConfig(min_cross_section=4, quantiles=2))
     assert report.input_contract == {
         "filing_cutoff_provided": True,
@@ -267,7 +268,9 @@ def test_built_panel_passes_the_backtest_input_contract_except_total_returns(
 
 def test_delisted_name_is_priced_not_dropped(market_vault, frozen_root):
     """DEADCO vanishes from market_eod mid-window; its cohort history prices it."""
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     panel = result.panel
     first = panel[panel["signal_date"] == SIGNALS[0].isoformat()]
 
@@ -329,17 +332,13 @@ class _AsofFoundry(_Foundry):
         return [{"ticker": "ALPHA", "cik": _ALPHA_OWNERS[asof]}]
 
 
-def test_missing_cik_resolves_from_the_foundry_map_as_of_each_signal_date(
-    market_vault, tmp_path
-):
+def test_missing_cik_resolves_from_the_foundry_map_as_of_each_signal_date(market_vault, tmp_path):
     """A ticker reused after a delisting must resolve to the CIK that owned it
     ON each signal date — resolving through today's snapshot would stamp the
     symbol's new owner onto the old owner's history, the exact mis-join the
     event-replay map exists to prevent."""
     root = _frozen_missing_alpha_cik(tmp_path / "frozen")
-    result = build_panel(
-        root, "all_weather", market_vault, _AsofFoundry(), _config(), today=TODAY
-    )
+    result = build_panel(root, "all_weather", market_vault, _AsofFoundry(), _config(), today=TODAY)
     panel = result.panel
     alpha = panel[panel["ticker"] == "ALPHA"].set_index("signal_date")["cik"]
     assert alpha["2026-08-03"] == "0003000101"
@@ -352,9 +351,7 @@ def test_missing_cik_resolves_from_the_foundry_map_as_of_each_signal_date(
     assert payload["cik_map_modes"] == result.cik_map_modes
 
 
-def test_cik_fallback_to_the_current_snapshot_is_recorded_never_overclaimed(
-    market_vault, tmp_path
-):
+def test_cik_fallback_to_the_current_snapshot_is_recorded_never_overclaimed(market_vault, tmp_path):
     """A foundry whose event archive cannot reach the signal dates refuses
     ``asof``: the builder falls back to the current snapshot, records
     ``current_snapshot`` per date in the sidecar, and flips NO attestation —
@@ -372,9 +369,7 @@ def test_cik_fallback_to_the_current_snapshot_is_recorded_never_overclaimed(
     )
     alpha = result.panel[result.panel["ticker"] == "ALPHA"]
     assert set(alpha["cik"]) == {"0003999999"}
-    assert result.cik_map_modes == {
-        s.isoformat(): "current_snapshot" for s in SIGNALS
-    }
+    assert result.cik_map_modes == {s.isoformat(): "current_snapshot" for s in SIGNALS}
     # The fallback is recorded, not attested: the attestation formula is
     # untouched (no outcome-dependent drops here, dates are post-epoch).
     assert result.attestations["universe_is_pit"] is True
@@ -384,7 +379,9 @@ def test_cik_fallback_to_the_current_snapshot_is_recorded_never_overclaimed(
 
 
 def test_split_confirmed_by_foundry_is_divided_out(market_vault, frozen_root):
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     row = result.panel[
         (result.panel["ticker"] == "SPLITF")
         & (result.panel["signal_date"] == SIGNALS[0].isoformat())
@@ -396,7 +393,9 @@ def test_split_confirmed_by_foundry_is_divided_out(market_vault, frozen_root):
 
 
 def test_split_reconstructed_from_volume_signature(market_vault, frozen_root):
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     row = result.panel[
         (result.panel["ticker"] == "SPLITR")
         & (result.panel["signal_date"] == SIGNALS[0].isoformat())
@@ -433,7 +432,9 @@ def test_detect_split_ignores_ordinary_volatility():
 
 
 def test_sec_dash_ticker_finds_polygon_dot_symbol(market_vault, frozen_root):
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     row = result.panel[
         (result.panel["ticker"] == "BRK-B")
         & (result.panel["signal_date"] == SIGNALS[0].isoformat())
@@ -448,7 +449,9 @@ def test_sec_dash_ticker_finds_polygon_dot_symbol(market_vault, frozen_root):
 
 
 def test_ungraded_rows_excluded_by_default_and_counted(market_vault, frozen_root):
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     assert all(p.ungraded_dropped == 1 for p in result.periods)  # NOPE is ungraded
     assert "NOPE" not in set(result.panel["ticker"])
 
@@ -511,7 +514,9 @@ def test_duplicate_cik_in_one_signal_date_is_refused_with_names(market_vault, tm
     ]
     _write_frozen(root, SIGNALS[0], rows)
     with pytest.raises(PanelBuildError) as excinfo:
-        build_panel(root, "all_weather", market_vault, _Foundry(), _config(min_periods=1), today=TODAY)
+        build_panel(
+            root, "all_weather", market_vault, _Foundry(), _config(min_periods=1), today=TODAY
+        )
     assert "SPLITF" in str(excinfo.value) and "SPLITR" in str(excinfo.value)
 
 
@@ -632,9 +637,7 @@ def test_ex_date_boundaries_entry_day_excluded_exit_day_included(tmp_path, froze
     assert gamma["forward_return"] == pytest.approx((76.2 + 0.5) / 75.2 - 1.0, abs=1e-9)
 
 
-def test_mid_window_split_with_dividend_stays_price_only_and_fails_the_bar(
-    tmp_path, frozen_root
-):
+def test_mid_window_split_with_dividend_stays_price_only_and_fails_the_bar(tmp_path, frozen_root):
     # SPLITF halves on 08-06 inside window 1; a same-window ex-date cannot be
     # placed on the entry share basis from a cumulative window factor.
     vault = _vault_with_dividends(
@@ -672,10 +675,10 @@ def test_archive_missing_the_window_months_keeps_rows_price_only(tmp_path, froze
     assert result.attestations["return_is_total"] is False
 
 
-def test_no_dividend_archive_means_v1_behavior_and_false_attestation(
-    market_vault, frozen_root
-):
-    result = build_panel(frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY)
+def test_no_dividend_archive_means_v1_behavior_and_false_attestation(market_vault, frozen_root):
+    result = build_panel(
+        frozen_root, "all_weather", market_vault, _Foundry(), _config(), today=TODAY
+    )
     assert result.dividend_archive_months == 0
     assert result.dividend_coverage == 0.0
     assert result.attestations["return_is_total"] is False

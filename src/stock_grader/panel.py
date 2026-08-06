@@ -208,6 +208,7 @@ class PanelBuildResult:
 
 # -- calendar and period selection --------------------------------------------
 
+
 def discover_frozen_panels(frozen_root: Path, profile: str) -> dict[dt.date, Path]:
     """Frozen panels for one profile, keyed and sorted by signal date.
 
@@ -548,9 +549,7 @@ def split_factor(
         # Every recorded split whose effective date falls in this gap, so a
         # session missing from the archive cannot hide one.
         in_gap = [
-            (effective, ratio)
-            for effective, ratio in recorded
-            if previous_day < effective <= day
+            (effective, ratio) for effective, ratio in recorded if previous_day < effective <= day
         ]
         if in_gap:
             placed.update(effective for effective, _ in in_gap)
@@ -636,8 +635,7 @@ def resolve_exit_price(
             continue
         history = history.sort_index()
         index_dates = [
-            d.date() if hasattr(d, "date") else dt.date.fromisoformat(str(d))
-            for d in history.index
+            d.date() if hasattr(d, "date") else dt.date.fromisoformat(str(d)) for d in history.index
         ]
         candidates = [
             (day, value)
@@ -1083,9 +1081,7 @@ def write_panel(
         return None, sidecar_path
     panel_path = out_dir / f"{profile}.parquet"
     result.panel.to_parquet(panel_path, index=False)
-    refresh_built_panel_manifest(
-        out_dir, built_now=frozenset({panel_path.name, sidecar_path.name})
-    )
+    refresh_built_panel_manifest(out_dir, built_now=frozenset({panel_path.name, sidecar_path.name}))
     return panel_path, sidecar_path
 
 
@@ -1126,9 +1122,7 @@ def write_vault_manifest(
     if extra:
         payload.update(extra)
         payload["schema_version"] = "1.0"
-    (directory / "manifest.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    )
+    (directory / "manifest.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def archive_to_vault(

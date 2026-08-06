@@ -69,9 +69,7 @@ def test_psr_grows_with_sample_size() -> None:
     rng = random.Random(1)
     short = [rng.gauss(0.0008, 0.01) for _ in range(60)]
     long = [rng.gauss(0.0008, 0.01) for _ in range(4000)]
-    assert probabilistic_sharpe_ratio(long, 0.0) > probabilistic_sharpe_ratio(
-        short, 0.0
-    )
+    assert probabilistic_sharpe_ratio(long, 0.0) > probabilistic_sharpe_ratio(short, 0.0)
 
 
 def test_psr_extreme_kurtosis_positive_signal_is_not_pinned_to_zero() -> None:

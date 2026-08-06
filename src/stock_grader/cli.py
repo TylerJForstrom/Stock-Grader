@@ -323,9 +323,7 @@ def _price_providers_from_args(args: argparse.Namespace) -> list[PriceProvider]:
 
     providers: list[PriceProvider] = []
     if vault_root:
-        vault_cache = (
-            Path(args.cache_dir).resolve() / "vault" if args.cache_dir else None
-        )
+        vault_cache = Path(args.cache_dir).resolve() / "vault" if args.cache_dir else None
         providers.append(VaultPriceProvider(VaultDataSource(vault_root), cache_dir=vault_cache))
     if mode == "auto":
         if price_dir:
@@ -1250,18 +1248,14 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     path = Path(args.panel)
     panel_attested = True
     try:
-        panel = _load_panel_frame(
-            path, strict=not getattr(args, "allow_unmanifested_panel", False)
-        )
+        panel = _load_panel_frame(path, strict=not getattr(args, "allow_unmanifested_panel", False))
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         return 2
     if getattr(args, "allow_unmanifested_panel", False):
         from .frozen_manifest import verify_sibling_manifest
 
-        panel_attested = (path.parent / "manifest.json").is_file() and verify_sibling_manifest(
-            path
-        )
+        panel_attested = (path.parent / "manifest.json").is_file() and verify_sibling_manifest(path)
     # The band verdict is read and enforced BEFORE anything is evaluated or
     # appended: a band the pre-registration refuses produces no statistic, so
     # it must not burn a trial in the append-only ledger either. Silence here
@@ -1398,9 +1392,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         ResearchRecord(
             experiment=experiment,
             market="us_equities",
-            symbols=(
-                [f"preregistration:{declaration_sha}"] if declaration_sha is not None else []
-            ),
+            symbols=([f"preregistration:{declaration_sha}"] if declaration_sha is not None else []),
             targets=["forward_return"],
             horizons=[],
             trials=len(trial_sharpes),
@@ -1675,9 +1667,7 @@ def cmd_freeze(args: argparse.Namespace) -> int:
                 # claim its feature set closed at the signal date; without --pit
                 # the SEC cache's contents at freeze time are the true bound and
                 # writing signal_date would be an unearned attestation.
-                "filed_through": (
-                    signal_date.isoformat() if getattr(args, "pit", False) else None
-                ),
+                "filed_through": (signal_date.isoformat() if getattr(args, "pit", False) else None),
                 "universe_id": selection.universe_id,
                 "universe_spec_sha256": selection.spec_sha256,
                 "code_commit": commit,
@@ -1892,9 +1882,7 @@ def cmd_build_panel(args: argparse.Namespace) -> int:
 
     panel_path, sidecar = write_panel(result, Path(args.out), args.profile, config)
     if panel_path is not None and args.archive_dir:
-        archive_to_vault(
-            panel_path, sidecar, Path(args.archive_dir), args.profile, date.today()
-        )
+        archive_to_vault(panel_path, sidecar, Path(args.archive_dir), args.profile, date.today())
     if args.format == "json":
         print(to_json(sidecar_payload(result, args.profile, config)))
     else:
@@ -2144,9 +2132,7 @@ def cmd_ledger_retract(args: argparse.Namespace) -> int:
         return 2
     already = [h for h in requested if known[h].get("experiment") == RETRACTION_EXPERIMENT]
     if already:
-        console.print(
-            f"[red]refusing to retract a retraction record: {', '.join(already)}[/red]"
-        )
+        console.print(f"[red]refusing to retract a retraction record: {', '.join(already)}[/red]")
         return 2
     lifecycle = [h for h in requested if known[h].get("experiment") == PROMOTION_EXPERIMENT]
     if lifecycle:
@@ -2789,9 +2775,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="local Stock-Vault clone; the evaluable panel is written INSIDE it "
         "(licensed per-row returns never reach this public repo)",
     )
-    p_signal.add_argument(
-        "--foundry", help="Stock-Data clone or raw URL, for split confirmation"
-    )
+    p_signal.add_argument("--foundry", help="Stock-Data clone or raw URL, for split confirmation")
     p_signal.add_argument(
         "--panel-version",
         type=_positive_int,
@@ -2802,8 +2786,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_signal.add_argument(
         "--rebuild",
         action="store_true",
-        help="re-price signal dates whose part already exists (parts are immutable "
-        "by default)",
+        help="re-price signal dates whose part already exists (parts are immutable by default)",
     )
     p_signal.add_argument("--no-verify-hashes", action="store_true")
     p_signal.add_argument("--verbose", action="store_true")
@@ -2880,7 +2863,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_declare.add_argument(
         "--schedule",
         required=True,
-        help='declared evaluation schedule, recorded verbatim in the declaration, e.g. '
+        help="declared evaluation schedule, recorded verbatim in the declaration, e.g. "
         '"monthly (cron 41 2 6 * *)" — sequential looks are disclosed, not corrected',
     )
     p_declare.add_argument(
@@ -2965,7 +2948,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_promote.add_argument(
         "--evidence-journal",
-        help='locator of the private evidence journal, e.g. '
+        help="locator of the private evidence journal, e.g. "
         '"Stock-Vault data/decision_journal/decisions.jsonl.gz"',
     )
     p_promote.add_argument(

@@ -118,7 +118,9 @@ def load_snapshots(path: str | Path) -> list[SecuritySnapshot]:
         try:
             sector = SectorClass(str(frame.at[index, "sector"]).strip().lower())
         except ValueError as exc:
-            raise ValueError(f"unknown sector for {tickers.at[index]}: {frame.at[index, 'sector']!r}") from exc
+            raise ValueError(
+                f"unknown sector for {tickers.at[index]}: {frame.at[index, 'sector']!r}"
+            ) from exc
         cap = market_caps[index]
         has_cap = cap is not None
         fundamentals = (
@@ -136,7 +138,11 @@ def load_snapshots(path: str | Path) -> list[SecuritySnapshot]:
                     if "cik" in frame and pd.notna(frame.at[index, "cik"])
                     else None
                 ),
-                sic=(str(frame.at[index, "sic"]).strip() if pd.notna(frame.at[index, "sic"]) else None),
+                sic=(
+                    str(frame.at[index, "sic"]).strip()
+                    if pd.notna(frame.at[index, "sic"])
+                    else None
+                ),
                 sector=sector,
                 currency=(
                     str(frame.at[index, "currency"]).strip()
@@ -186,11 +192,7 @@ def _sector_group_statistics(
     assigned_count = len(assigned_labels)
     snapshot_count = len(snapshots)
 
-    largest = (
-        min(ordered_counts, key=lambda item: (-item[1], item[0]))
-        if ordered_counts
-        else None
-    )
+    largest = min(ordered_counts, key=lambda item: (-item[1], item[0])) if ordered_counts else None
     largest_count = largest[1] if largest is not None else None
     shrink_weights = [size / (size + 5.0) for size in group_sizes]
 
@@ -202,14 +204,10 @@ def _sector_group_statistics(
 
     return {
         "assigned_count": assigned_count,
-        "assigned_fraction": (
-            float(assigned_count / snapshot_count) if snapshot_count else None
-        ),
+        "assigned_fraction": (float(assigned_count / snapshot_count) if snapshot_count else None),
         "unassigned_count": snapshot_count - assigned_count,
         "unassigned_fraction": (
-            float((snapshot_count - assigned_count) / snapshot_count)
-            if snapshot_count
-            else None
+            float((snapshot_count - assigned_count) / snapshot_count) if snapshot_count else None
         ),
         "group_count": len(ordered_counts),
         "largest_group_label": largest[0] if largest is not None else None,
@@ -244,9 +242,7 @@ def measure_sector_key_concentration(
     return {
         "snapshot_count": snapshot_count,
         "general_count": general_count,
-        "general_fraction": (
-            float(general_count / snapshot_count) if snapshot_count else None
-        ),
+        "general_fraction": (float(general_count / snapshot_count) if snapshot_count else None),
         "keys": {
             key: _sector_group_statistics(snapshots, key=key)
             for key in ("business_model", "sic2", "sic3")
@@ -256,11 +252,7 @@ def measure_sector_key_concentration(
 
 def _has_finite_positive_market_cap(snapshot: SecuritySnapshot) -> bool:
     market_cap = snapshot.market_cap
-    return (
-        market_cap is not None
-        and math.isfinite(market_cap)
-        and market_cap > 0.0
-    )
+    return market_cap is not None and math.isfinite(market_cap) and market_cap > 0.0
 
 
 def measure_peer_widening(
@@ -279,8 +271,7 @@ def measure_peer_widening(
         (
             snapshot
             for snapshot in snapshots
-            if snapshot.fundamentals is not None
-            and _has_finite_positive_market_cap(snapshot)
+            if snapshot.fundamentals is not None and _has_finite_positive_market_cap(snapshot)
         ),
         key=lambda snapshot: snapshot.ticker,
     )
@@ -289,7 +280,9 @@ def measure_peer_widening(
 
     rng = np.random.default_rng(seed)
     count = min(sample_size, len(eligible))
-    selected_indexes = sorted(int(index) for index in rng.choice(len(eligible), size=count, replace=False))
+    selected_indexes = sorted(
+        int(index) for index in rng.choice(len(eligible), size=count, replace=False)
+    )
     targets = [eligible[index] for index in selected_indexes]
 
     rows: list[dict[str, Any]] = []
@@ -345,9 +338,7 @@ def measure_peer_widening(
 
         selected_peers_with_market_cap += peers_with_market_cap
         selected_peers_without_market_cap += peers_without_market_cap
-        selected_peers_outside_requested_size_band += (
-            peers_outside_requested_size_band
-        )
+        selected_peers_outside_requested_size_band += peers_outside_requested_size_band
         ratio_min = min(ratios) if ratios else None
         ratio_max = max(ratios) if ratios else None
         spread = ratio_max / ratio_min if ratio_min and ratio_max else None
@@ -363,9 +354,7 @@ def measure_peer_widening(
                 "peer_count": len(peers),
                 "peers_with_market_cap": peers_with_market_cap,
                 "peers_without_market_cap": peers_without_market_cap,
-                "peers_outside_requested_size_band": (
-                    peers_outside_requested_size_band
-                ),
+                "peers_outside_requested_size_band": (peers_outside_requested_size_band),
                 "fill_pass": fill_pass,
                 "min_peer_to_target_market_cap": ratio_min,
                 "max_peer_to_target_market_cap": ratio_max,
@@ -390,16 +379,13 @@ def measure_peer_widening(
             [float(peer_count) for peer_count in peer_counts.elements()]
         ),
         "peer_count_distribution": {
-            str(peer_count): frequency
-            for peer_count, frequency in sorted(peer_counts.items())
+            str(peer_count): frequency for peer_count, frequency in sorted(peer_counts.items())
         },
         "insufficient_target_count": insufficient_target_count,
         "selected_peer_market_cap_counts": {
             "with_market_cap": selected_peers_with_market_cap,
             "without_market_cap": selected_peers_without_market_cap,
-            "outside_requested_size_band": (
-                selected_peers_outside_requested_size_band
-            ),
+            "outside_requested_size_band": (selected_peers_outside_requested_size_band),
         },
         "fill_pass_distribution": dict(sorted(fill_passes.items())),
         "min_peer_to_target_market_cap_quantiles": _quantiles(target_relative_minima),
@@ -432,9 +418,7 @@ def main(argv: list[str] | None = None) -> int:
         size_band_multiple=args.size_band_multiple,
     )
     result["snapshot_table"] = snapshot_table.name
-    result["snapshot_table_sha256"] = hashlib.sha256(
-        snapshot_table.read_bytes()
-    ).hexdigest()
+    result["snapshot_table_sha256"] = hashlib.sha256(snapshot_table.read_bytes()).hexdigest()
     payload = json.dumps(result, indent=2, sort_keys=True, allow_nan=False)
     if args.output:
         Path(args.output).write_bytes((payload + "\n").encode("utf-8"))

@@ -71,8 +71,14 @@ def _index(current: float | None, prior: float | None) -> float | None:
     return value if low <= value <= high else None
 
 
-@metric("beneish_m_score", pillar="quality", direction=-1, unit="score", winsor=(-8.0, 4.0),
-        description="Beneish M-score: likelihood that earnings have been manipulated")
+@metric(
+    "beneish_m_score",
+    pillar="quality",
+    direction=-1,
+    unit="score",
+    winsor=(-8.0, 4.0),
+    description="Beneish M-score: likelihood that earnings have been manipulated",
+)
 def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     """Beneish (1999) eight-variable earnings-manipulation model.
 
@@ -126,8 +132,12 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     )
     # Asset quality index — the share of assets that is neither current nor plant.
     aqi = None
-    if (curr_ca is not None and curr_ppe is not None
-            and prior_ca is not None and prior_ppe is not None):
+    if (
+        curr_ca is not None
+        and curr_ppe is not None
+        and prior_ca is not None
+        and prior_ppe is not None
+    ):
         curr_hard = safe_div(curr_ca + curr_ppe, curr_ta, positive_denominator=True)
         prior_hard = safe_div(prior_ca + prior_ppe, prior_ta, positive_denominator=True)
         if curr_hard is not None and prior_hard is not None:
@@ -136,8 +146,12 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     sgi = _index(curr_rev, prior_rev)
     # Depreciation index — a falling depreciation rate inflates earnings.
     depi = None
-    if (curr_dep is not None and curr_ppe is not None
-            and prior_dep is not None and prior_ppe is not None):
+    if (
+        curr_dep is not None
+        and curr_ppe is not None
+        and prior_dep is not None
+        and prior_ppe is not None
+    ):
         curr_rate = safe_div(curr_dep, curr_dep + curr_ppe, positive_denominator=True)
         prior_rate = safe_div(prior_dep, prior_dep + prior_ppe, positive_denominator=True)
         depi = _index(prior_rate, curr_rate)
@@ -148,8 +162,12 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     )
     # Leverage index.
     lvgi = None
-    if (curr_ltd is not None and curr_cl is not None
-            and prior_ltd is not None and prior_cl is not None):
+    if (
+        curr_ltd is not None
+        and curr_cl is not None
+        and prior_ltd is not None
+        and prior_cl is not None
+    ):
         lvgi = _index(
             safe_div(curr_ltd + curr_cl, curr_ta, positive_denominator=True),
             safe_div(prior_ltd + prior_cl, prior_ta, positive_denominator=True),
@@ -196,8 +214,14 @@ def beneish_m_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     return (float(score), components)
 
 
-@metric("ohlson_o_score", pillar="health", direction=-1, unit="score", winsor=(-15.0, 15.0),
-        description="Ohlson O-score: logit model of bankruptcy probability within two years")
+@metric(
+    "ohlson_o_score",
+    pillar="health",
+    direction=-1,
+    unit="score",
+    winsor=(-15.0, 15.0),
+    description="Ohlson O-score: logit model of bankruptcy probability within two years",
+)
 def ohlson_o_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     """Ohlson (1980) nine-variable bankruptcy logit.
 
@@ -258,8 +282,15 @@ def ohlson_o_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     return (
         float(score),
         {
-            "size": size, "TLTA": tlta, "WCTA": wcta, "CLCA": clca, "OENEG": oeneg,
-            "NITA": nita, "FUTL": futl, "INTWO": intwo, "CHIN": chin,
+            "size": size,
+            "TLTA": tlta,
+            "WCTA": wcta,
+            "CLCA": clca,
+            "OENEG": oeneg,
+            "NITA": nita,
+            "FUTL": futl,
+            "INTWO": intwo,
+            "CHIN": chin,
             "bankruptcy_probability": probability,
             "gnp_index_constant": GNP_INDEX,
             "funds_from_operations_proxy": "cash_from_operations",
@@ -269,8 +300,15 @@ def ohlson_o_score(s: SecuritySnapshot) -> tuple[float, dict] | None:
     )
 
 
-@metric("altman_z_prime", group="altman", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0),
-        description="Altman Z'' for non-manufacturers — no market value or sales-to-assets term")
+@metric(
+    "altman_z_prime",
+    group="altman",
+    pillar="health",
+    direction=1,
+    unit="score",
+    winsor=(-10.0, 20.0),
+    description="Altman Z'' for non-manufacturers — no market value or sales-to-assets term",
+)
 def altman_z_prime(s: SecuritySnapshot) -> tuple[float, dict[str, float]] | None:
     """Altman Z'' (1993), the four-variable revision for non-manufacturers.
 

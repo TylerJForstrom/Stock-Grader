@@ -265,11 +265,13 @@ def quantile_bucket(values: pd.Series, *, buckets: int = 10, **_: object) -> pd.
     max_label = float(np.nanmax(labels.to_numpy(dtype="float64")))
     if max_label <= 0:
         return _neutral(values)
-    return (labels.astype("float64") / max_label * 100.0)
+    return labels.astype("float64") / max_label * 100.0
 
 
 @NORMALIZERS("piecewise")
-def piecewise(values: pd.Series, *, anchors: list[tuple[float, float]] | None = None, **_: object) -> pd.Series:
+def piecewise(
+    values: pd.Series, *, anchors: list[tuple[float, float]] | None = None, **_: object
+) -> pd.Series:
     """Map raw values through calibrated ``(raw, score)`` anchor points by linear interpolation.
 
     The only normalizer that works with a universe of one, and the only one that is *absolute*:
@@ -378,6 +380,8 @@ def normalize_series(
         scores = sector_neutral(values, sectors, inner=method, **kwargs)
     else:
         fn = NORMALIZERS.get(method)
-        scores = fn(values, anchors=anchors, **kwargs) if method == "piecewise" else fn(values, **kwargs)
+        scores = (
+            fn(values, anchors=anchors, **kwargs) if method == "piecewise" else fn(values, **kwargs)
+        )
 
     return apply_direction(scores, direction)

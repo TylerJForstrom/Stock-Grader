@@ -233,9 +233,7 @@ class ResearchRecord:
             "targets": list(self.targets),
             "horizons": list(self.horizons),
             "trials": int(self.trials),
-            "metrics": {
-                k: (None if v is None else float(v)) for k, v in self.metrics.items()
-            },
+            "metrics": {k: (None if v is None else float(v)) for k, v in self.metrics.items()},
             "costs": {k: float(v) for k, v in self.costs.items()},
             "benchmark": self.benchmark,
             "leakage_controls": self.leakage_controls,
@@ -256,9 +254,7 @@ class ResearchRecord:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def to_line(self) -> str:
-        return json.dumps(
-            {**self.payload(), "integrity_sha256": self.integrity_sha256()}
-        )
+        return json.dumps({**self.payload(), "integrity_sha256": self.integrity_sha256()})
 
 
 def _last_line_sha256(file_path: Path) -> str:
@@ -764,10 +760,7 @@ def validate_promotion_transition(
             f"new spec (a new subject hash) and a new trial"
         )
     if from_stage != current:
-        return (
-            f"from_stage {from_stage!r} does not match the subject's recorded "
-            f"stage {current!r}"
-        )
+        return f"from_stage {from_stage!r} does not match the subject's recorded stage {current!r}"
     if to_stage == RETIRED_STAGE:
         return None
     if to_stage not in stages:

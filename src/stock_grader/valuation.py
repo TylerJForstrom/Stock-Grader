@@ -155,9 +155,7 @@ def _validate(
     terminal_dilution_rate: float | None,
 ) -> float:
     effective_terminal_dilution = (
-        annual_dilution_rate
-        if terminal_dilution_rate is None
-        else terminal_dilution_rate
+        annual_dilution_rate if terminal_dilution_rate is None else terminal_dilution_rate
     )
     values = {
         "base_fcf": base_fcf,
@@ -194,9 +192,9 @@ def _validate(
     if effective_terminal_dilution <= -1.0:
         raise ValueError("terminal_dilution_rate must be greater than -100%")
 
-    terminal_per_share_growth = (
-        (1.0 + terminal_growth_rate) / (1.0 + effective_terminal_dilution) - 1.0
-    )
+    terminal_per_share_growth = (1.0 + terminal_growth_rate) / (
+        1.0 + effective_terminal_dilution
+    ) - 1.0
     if discount_rate <= terminal_per_share_growth:
         raise ValueError(
             "discount_rate must be greater than terminal per-share growth after dilution"
@@ -413,12 +411,8 @@ def equity_cash_flow_value(
     except OverflowError as exc:
         raise ValueError("scenario assumptions overflow the projection horizon") from exc
 
-    terminal_per_share_growth = (
-        (1.0 + terminal_growth_rate) / (1.0 + terminal_dilution_rate) - 1.0
-    )
-    terminal_cash_flow_per_share = cash_flows_per_share[-1] * (
-        1.0 + terminal_per_share_growth
-    )
+    terminal_per_share_growth = (1.0 + terminal_growth_rate) / (1.0 + terminal_dilution_rate) - 1.0
+    terminal_cash_flow_per_share = cash_flows_per_share[-1] * (1.0 + terminal_per_share_growth)
     terminal_value_per_share = terminal_cash_flow_per_share / (
         discount_rate - terminal_per_share_growth
     )
@@ -679,8 +673,7 @@ def build_valuation_analysis(
             "scenario_order": ["bear", "base", "bull"],
             "reverse_growth_bounds": list(_REVERSE_GROWTH_BOUNDS),
             "cash_flow_definition": (
-                "cash_from_operations_minus_capex_after_interest; "
-                "levered_proxy_not_canonical_fcfe"
+                "cash_from_operations_minus_capex_after_interest; levered_proxy_not_canonical_fcfe"
             ),
             "interpretation": "illustrative_scenarios_not_analyst_forecasts",
         },
@@ -775,8 +768,7 @@ def build_valuation_analysis(
 
     scenario_values = [result.value_per_share for result in analysis.scenarios]
     analysis.scenario_values_ordered = all(
-        lower_value < upper_value
-        for lower_value, upper_value in pairwise(scenario_values)
+        lower_value < upper_value for lower_value, upper_value in pairwise(scenario_values)
     )
     if not analysis.scenario_values_ordered:
         raise RuntimeError("bear/base/bull assumptions did not produce strictly ordered values")
@@ -810,8 +802,7 @@ def build_valuation_analysis(
         analysis.implied_explicit_period_growth = implied_growth
         if implied_growth is None:
             analysis.warnings.append(
-                "market price implies growth outside the reverse-DCF search range "
-                "[-50%, 100%]"
+                "market price implies growth outside the reverse-DCF search range [-50%, 100%]"
             )
 
     analysis.available = True

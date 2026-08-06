@@ -87,10 +87,12 @@ class StockAnalysisPriceProvider(PriceProvider):
         self._lock = threading.Lock()
         self._session = requests.Session()
         # Identify honestly rather than impersonating a browser.
-        self._session.headers.update({
-            "User-Agent": f"Stock-Grader/0.1 (+{self.contact}) python-requests",
-            "Accept": "application/json",
-        })
+        self._session.headers.update(
+            {
+                "User-Agent": f"Stock-Grader/0.1 (+{self.contact}) python-requests",
+                "Accept": "application/json",
+            }
+        )
 
     def _throttle(self) -> None:
         with self._lock:
@@ -148,14 +150,22 @@ class StockAnalysisPriceProvider(PriceProvider):
             log.warning(
                 "stockanalysis payload for %s lacks expected columns (got %s) — refusing rather "
                 "than guessing which column is the adjusted close",
-                ticker, sorted(frame.columns),
+                ticker,
+                sorted(frame.columns),
             )
             return None
 
-        frame = frame.rename(columns={
-            "t": "date", "o": "open", "h": "high", "l": "low",
-            "c": "close", "a": "adj_close", "v": "volume",
-        })
+        frame = frame.rename(
+            columns={
+                "t": "date",
+                "o": "open",
+                "h": "high",
+                "l": "low",
+                "c": "close",
+                "a": "adj_close",
+                "v": "volume",
+            }
+        )
         frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
         frame = frame.dropna(subset=["date"]).set_index("date")
         frame = frame[["open", "high", "low", "close", "adj_close", "volume"]]

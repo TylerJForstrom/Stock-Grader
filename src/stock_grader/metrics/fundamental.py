@@ -239,32 +239,73 @@ def _enterprise_value(snapshot: SecuritySnapshot) -> float | None:
 # ---------------------------------------------------------------------------------------------
 
 
-@metric("pe_trailing", group="earnings_multiple", pillar="valuation", direction=-1, unit="x",
-        description="Price / trailing twelve-month earnings", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "pe_trailing",
+    group="earnings_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    description="Price / trailing twelve-month earnings",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def pe_trailing(s: SecuritySnapshot) -> float | None:
     """Undefined for loss-makers rather than negative — a negative P/E is not a cheap one."""
-    return safe_div(s.market_cap, _ttm(s, "net_income"), positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        s.market_cap, _ttm(s, "net_income"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
-@metric("price_to_sales", group="sales_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "price_to_sales",
+    group="sales_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def price_to_sales(s: SecuritySnapshot) -> float | None:
     """Price / trailing revenue. Meaningful even when earnings are negative."""
     return safe_div(s.market_cap, _ttm(s, "revenue"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("price_to_book", group="book_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "price_to_book",
+    group="book_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def price_to_book(s: SecuritySnapshot) -> float | None:
     """Price / shareholders' equity. Undefined when book value is negative."""
-    return safe_div(s.market_cap, _latest(s, "equity"), positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        s.market_cap, _latest(s, "equity"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
-@metric("price_to_tangible_book", group="book_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "price_to_tangible_book",
+    group="book_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def price_to_tangible_book(s: SecuritySnapshot) -> float | None:
     """Price / book value excluding goodwill and intangibles."""
-    return safe_div(s.market_cap, _latest(s, "tangible_book"), positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        s.market_cap, _latest(s, "tangible_book"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
-@metric("price_to_fcf", group="fcf_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "price_to_fcf",
+    group="fcf_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def price_to_fcf(s: SecuritySnapshot) -> float | None:
     """Price / free cash flow."""
     return safe_div(s.market_cap, _ttm(s, "fcf"), positive_denominator=True, cap=_MULTIPLE_CAP)
@@ -276,28 +317,64 @@ def price_to_ocf(s: SecuritySnapshot) -> float | None:
     return safe_div(s.market_cap, _ttm(s, "cfo"), positive_denominator=True, cap=_MULTIPLE_CAP)
 
 
-@metric("ev_to_ebitda", group="ebit_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "ev_to_ebitda",
+    group="ebit_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def ev_to_ebitda(s: SecuritySnapshot) -> float | None:
     """Enterprise value / EBITDA — capital-structure neutral, so it compares across leverage."""
-    return safe_div(_enterprise_value(s), _ttm(s, "ebitda"), positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        _enterprise_value(s), _ttm(s, "ebitda"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
-@metric("ev_to_ebit", group="ebit_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "ev_to_ebit",
+    group="ebit_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def ev_to_ebit(s: SecuritySnapshot) -> float | None:
     """Enterprise value / EBIT. Charges companies for depreciation, unlike EV/EBITDA."""
-    return safe_div(_enterprise_value(s), _ttm(s, "ebit"), positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        _enterprise_value(s), _ttm(s, "ebit"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
-@metric("ev_to_sales", group="sales_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "ev_to_sales",
+    group="sales_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def ev_to_sales(s: SecuritySnapshot) -> float | None:
     """Enterprise value / revenue."""
-    return safe_div(_enterprise_value(s), _ttm(s, "revenue"), positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        _enterprise_value(s), _ttm(s, "revenue"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
-@metric("ev_to_fcf", group="fcf_multiple", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "ev_to_fcf",
+    group="fcf_multiple",
+    pillar="valuation",
+    direction=-1,
+    unit="x",
+    winsor=(0.0, _MULTIPLE_CAP),
+)
 def ev_to_fcf(s: SecuritySnapshot) -> float | None:
     """Enterprise value / free cash flow."""
-    return safe_div(_enterprise_value(s), _ttm(s, "fcf"), positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        _enterprise_value(s), _ttm(s, "fcf"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
 @metric("earnings_yield", group="earnings_multiple", pillar="valuation", direction=1, unit="ratio")
@@ -319,11 +396,14 @@ def fcf_yield(s: SecuritySnapshot) -> float | None:
 # shipped equal weighting. The sector matrix still references the name harmlessly.
 
 
-@metric("ev_to_gross_profit", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP))
+@metric(
+    "ev_to_gross_profit", pillar="valuation", direction=-1, unit="x", winsor=(0.0, _MULTIPLE_CAP)
+)
 def ev_to_gross_profit(s: SecuritySnapshot) -> float | None:
     """EV / gross profit — the cleanest top-line profitability measure to pay for."""
-    return safe_div(_enterprise_value(s), _ttm(s, "gross_profit"),
-                    positive_denominator=True, cap=_MULTIPLE_CAP)
+    return safe_div(
+        _enterprise_value(s), _ttm(s, "gross_profit"), positive_denominator=True, cap=_MULTIPLE_CAP
+    )
 
 
 @metric("peg_ratio", pillar="valuation", direction=-1, unit="x", winsor=(0.0, 20.0))
@@ -578,7 +658,9 @@ def earnings_growth_consistency(s: SecuritySnapshot) -> float | None:
     return consistency(list(history)) if history is not None else None
 
 
-@metric("revenue_growth_acceleration", pillar="growth", direction=1, unit="ratio", winsor=(-2.0, 2.0))
+@metric(
+    "revenue_growth_acceleration", pillar="growth", direction=1, unit="ratio", winsor=(-2.0, 2.0)
+)
 def revenue_growth_acceleration(s: SecuritySnapshot) -> float | None:
     """Recent growth minus older growth — the second derivative of revenue."""
     recent = _cagr_metric(s, "revenue", 2)
@@ -596,8 +678,12 @@ def revenue_growth_acceleration(s: SecuritySnapshot) -> float | None:
 @metric("current_ratio", pillar="health", direction=1, unit="x", winsor=(0.0, 20.0))
 def current_ratio(s: SecuritySnapshot) -> float | None:
     """Current assets / current liabilities. Not defined for banks — see the sector matrix."""
-    return safe_div(_latest(s, "current_assets"), _latest(s, "current_liabilities"),
-                    positive_denominator=True, cap=20.0)
+    return safe_div(
+        _latest(s, "current_assets"),
+        _latest(s, "current_liabilities"),
+        positive_denominator=True,
+        cap=20.0,
+    )
 
 
 @metric("quick_ratio", pillar="health", direction=1, unit="x", winsor=(0.0, 20.0))
@@ -607,22 +693,25 @@ def quick_ratio(s: SecuritySnapshot) -> float | None:
     if current is None:
         return None
     inventory = _latest(s, "inventory") or 0.0
-    return safe_div(current - inventory, _latest(s, "current_liabilities"),
-                    positive_denominator=True, cap=20.0)
+    return safe_div(
+        current - inventory, _latest(s, "current_liabilities"), positive_denominator=True, cap=20.0
+    )
 
 
 @metric("cash_ratio", pillar="health", direction=1, unit="x", winsor=(0.0, 20.0))
 def cash_ratio(s: SecuritySnapshot) -> float | None:
     """Cash / current liabilities."""
-    return safe_div(_latest(s, "cash"), _latest(s, "current_liabilities"),
-                    positive_denominator=True, cap=20.0)
+    return safe_div(
+        _latest(s, "cash"), _latest(s, "current_liabilities"), positive_denominator=True, cap=20.0
+    )
 
 
 @metric("debt_to_equity", pillar="health", direction=-1, unit="x", winsor=(0.0, 20.0))
 def debt_to_equity(s: SecuritySnapshot) -> float | None:
     """Total debt / equity."""
-    return safe_div(_latest(s, "total_debt"), _latest(s, "equity"),
-                    positive_denominator=True, cap=20.0)
+    return safe_div(
+        _latest(s, "total_debt"), _latest(s, "equity"), positive_denominator=True, cap=20.0
+    )
 
 
 @metric("net_debt_to_ebitda", pillar="health", direction=-1, unit="x", winsor=(-10.0, 30.0))
@@ -658,7 +747,9 @@ def fcf_to_debt(s: SecuritySnapshot) -> float | None:
     return safe_div(_ttm(s, "fcf"), debt, cap=10.0)
 
 
-@metric("altman_z", group="altman", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0))
+@metric(
+    "altman_z", group="altman", pillar="health", direction=1, unit="score", winsor=(-10.0, 20.0)
+)
 def altman_z(s: SecuritySnapshot) -> float | None:
     """Altman Z-score for public manufacturers.
 
@@ -827,14 +918,22 @@ def inventory_turnover(s: SecuritySnapshot) -> float | None:
     return safe_div(_ttm(s, "cogs"), _latest(s, "inventory"), positive_denominator=True, cap=100.0)
 
 
-@metric("days_sales_outstanding", pillar="efficiency", direction=-1, unit="days", winsor=(0.0, 365.0))
+@metric(
+    "days_sales_outstanding", pillar="efficiency", direction=-1, unit="days", winsor=(0.0, 365.0)
+)
 def days_sales_outstanding(s: SecuritySnapshot) -> float | None:
     """Receivables / revenue * 365 — how long customers take to pay."""
     ratio = safe_div(_latest(s, "receivables"), _ttm(s, "revenue"), positive_denominator=True)
     return ratio * 365.0 if ratio is not None else None
 
 
-@metric("days_inventory_outstanding", pillar="efficiency", direction=-1, unit="days", winsor=(0.0, 730.0))
+@metric(
+    "days_inventory_outstanding",
+    pillar="efficiency",
+    direction=-1,
+    unit="days",
+    winsor=(0.0, 730.0),
+)
 def days_inventory_outstanding(s: SecuritySnapshot) -> float | None:
     """Inventory / COGS * 365."""
     ratio = safe_div(_latest(s, "inventory"), _ttm(s, "cogs"), positive_denominator=True)
@@ -867,8 +966,7 @@ def _flow_or_structural_zero(snapshot: SecuritySnapshot, concept: str) -> float 
     if f is None:
         return None
     has_statements = (
-        _latest(snapshot, "assets") is not None
-        and _ttm(snapshot, "net_income") is not None
+        _latest(snapshot, "assets") is not None and _ttm(snapshot, "net_income") is not None
     )
     if not has_statements:
         return None
@@ -977,8 +1075,14 @@ def dividend_yield(s: SecuritySnapshot) -> float | None:
     return None
 
 
-@metric("payout_ratio", pillar="shareholder", direction=0, unit="ratio",
-        ideal_band=(0.25, 0.60), winsor=(0.0, 3.0))
+@metric(
+    "payout_ratio",
+    pillar="shareholder",
+    direction=0,
+    unit="ratio",
+    ideal_band=(0.25, 0.60),
+    winsor=(0.0, 3.0),
+)
 def payout_ratio(s: SecuritySnapshot) -> float | None:
     """Dividends / net income — **non-monotonic**, with an ideal band of roughly 25-60%.
 
@@ -993,8 +1097,14 @@ def payout_ratio(s: SecuritySnapshot) -> float | None:
     return safe_div(abs(dividends), _ttm(s, "net_income"), positive_denominator=True, cap=3.0)
 
 
-@metric("fcf_payout_ratio", pillar="shareholder", direction=0, unit="ratio",
-        ideal_band=(0.20, 0.60), winsor=(0.0, 3.0))
+@metric(
+    "fcf_payout_ratio",
+    pillar="shareholder",
+    direction=0,
+    unit="ratio",
+    ideal_band=(0.20, 0.60),
+    winsor=(0.0, 3.0),
+)
 def fcf_payout_ratio(s: SecuritySnapshot) -> float | None:
     """Dividends / free cash flow — the sustainability test earnings-based payout can miss."""
     dividends = _ttm(s, "dividends_paid")

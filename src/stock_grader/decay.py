@@ -369,9 +369,7 @@ def build_horizon_panel(
                     "forward_return": forward,
                     "horizon_days": horizon,
                     "entry_close": float(entry_close),
-                    "exit_close": (
-                        float(exit_close) if not pd.isna(exit_close) else float("nan")
-                    ),
+                    "exit_close": (float(exit_close) if not pd.isna(exit_close) else float("nan")),
                     "profile": row.profile,
                     "config_fingerprint": row.config_fingerprint,
                     "universe_fingerprint": row.universe_fingerprint,
@@ -397,9 +395,7 @@ def _offset_average(values: Sequence[float | None]) -> float | None:
     offsets that happen to work would re-introduce the phase dependence this
     average exists to remove.
     """
-    if not values or any(
-        value is None or not math.isfinite(value) for value in values
-    ):
+    if not values or any(value is None or not math.isfinite(value) for value in values):
         return None
     return float(sum(values) / len(values))
 
@@ -462,9 +458,7 @@ def evaluate_decay(
     panels: dict[int, pd.DataFrame] = {}
     usable = 0
     for horizon in config.horizons:
-        result = HorizonResult(
-            horizon_days=horizon, is_primary=horizon == config.primary_horizon
-        )
+        result = HorizonResult(horizon_days=horizon, is_primary=horizon == config.primary_horizon)
         overlap = max(1, math.ceil(horizon / spacing))
         result.overlap_periods = overlap
         panel, counts = build_horizon_panel(frozen, closes, horizon, config=config)
@@ -615,12 +609,16 @@ def evaluate_decay(
 
     curve.limitations.extend(
         [
-            ("forward returns are unadjusted price returns (no dividends, no delisting "
-            "proceeds); return_is_total is unattestable"),
+            (
+                "forward returns are unadjusted price returns (no dividends, no delisting "
+                "proceeds); return_is_total is unattestable"
+            ),
             "the universe is today's survivors; universe_is_pit is unattestable",
-            (f"split screen dropped {sum(r.dropped_split_suspect for r in curve.horizons)} "
-            f"observation(s); missing exits dropped "
-            f"{sum(r.dropped_missing_exit for r in curve.horizons)}"),
+            (
+                f"split screen dropped {sum(r.dropped_split_suspect for r in curve.horizons)} "
+                f"observation(s); missing exits dropped "
+                f"{sum(r.dropped_missing_exit for r in curve.horizons)}"
+            ),
         ]
     )
     return curve, panels
@@ -680,29 +678,49 @@ def fit_half_life(
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
     lambda_ = -float(slope)
     if lambda_ <= 0:
-        return None, None, r2, (
-            f"IC does not decay across the horizons tested; the natural holding period "
-            f"is at or beyond {max(p[0] for p in points)}d — extend the sweep before "
-            f"concluding"
+        return (
+            None,
+            None,
+            r2,
+            (
+                f"IC does not decay across the horizons tested; the natural holding period "
+                f"is at or beyond {max(p[0] for p in points)}d — extend the sweep before "
+                f"concluding"
+            ),
         )
     if r2 < 0.5:
-        return None, None, r2, (
-            f"exponential decay fits poorly (R2={r2:.2f}); the points do not describe "
-            f"a clean decay"
+        return (
+            None,
+            None,
+            r2,
+            (
+                f"exponential decay fits poorly (R2={r2:.2f}); the points do not describe "
+                f"a clean decay"
+            ),
         )
     half_life = math.log(2) / lambda_
     if not weighted:
-        return half_life, None, r2, (
-            "exponential fit accepted (unweighted: a per-horizon IC interval is "
-            "unavailable, so no half-life interval is reported)"
+        return (
+            half_life,
+            None,
+            r2,
+            (
+                "exponential fit accepted (unweighted: a per-horizon IC interval is "
+                "unavailable, so no half-life interval is reported)"
+            ),
         )
     # With known per-point variances the slope's variance is Sw / denominator.
     lambda_se = math.sqrt(s_w / denominator)
     if lambda_ - _Z95 * lambda_se <= 0.0:
-        return half_life, None, r2, (
-            "exponential fit accepted (inverse-variance weighted); the decay rate "
-            "is not distinguishable from zero at 95%, so the half-life interval "
-            "is unbounded above and not reported"
+        return (
+            half_life,
+            None,
+            r2,
+            (
+                "exponential fit accepted (inverse-variance weighted); the decay rate "
+                "is not distinguishable from zero at 95%, so the half-life interval "
+                "is unbounded above and not reported"
+            ),
         )
     interval = (
         math.log(2) / (lambda_ + _Z95 * lambda_se),
@@ -714,9 +732,7 @@ def fit_half_life(
 # -- ledger --------------------------------------------------------------------
 
 
-def record_sweep_trials(
-    curve: DecayCurve, *, ledger_path: Path, alpha: float = 0.05
-) -> dict:
+def record_sweep_trials(curve: DecayCurve, *, ledger_path: Path, alpha: float = 0.05) -> dict:
     """Every horizon is its own trial, on ONE order-independent denominator.
 
     Raises ``ValueError`` on a ledger whose chain does not verify: this
@@ -751,8 +767,7 @@ def record_sweep_trials(
         # Sharpe is their equal-weight average — every period used once, no
         # arbitrary phase — and only exists when EVERY offset can compute one.
         per_offset = [
-            [p.net_spread for p in report.periods]
-            for report in result.inference_by_offset
+            [p.net_spread for p in report.periods] for report in result.inference_by_offset
         ]
         spreads_by_horizon[result.horizon_days] = per_offset
         offset_sharpes = [per_period_sharpe(spreads) for spreads in per_offset]
@@ -806,7 +821,9 @@ def record_sweep_trials(
         result.significance = significance
         verdict_core = significance.verdict if significance else "INSUFFICIENT SAMPLE"
         gate = bool(result.is_primary and significance and significance.significant)
-        prefix = "PRIMARY (pre-declared)" if result.is_primary else "EXPLORATORY (non-primary horizon)"
+        prefix = (
+            "PRIMARY (pre-declared)" if result.is_primary else "EXPLORATORY (non-primary horizon)"
+        )
         overlap = result.overlap_periods
         record = ResearchRecord(
             experiment=f"signal_decay:{curve.profile}:h{result.horizon_days}",
@@ -986,20 +1003,30 @@ def decay_to_markdown(curve: DecayCurve) -> str:
         "",
         f"> {DISCLAIMER}",
         "",
-        (f"- **Archive through**: {curve.archive_through}   "
-        f"**Origin**: {curve.panel_origin}   **Commit**: `{curve.code_commit}`"),
-        (f"- **Config**: `{curve.config_fingerprint[:12]}`   "
-        f"**Universe**: `{curve.universe_fingerprint[:12]}`"),
-        (f"- **Signal dates**: {len(curve.signal_dates)} "
-        f"({curve.signal_dates[0]} .. {curve.signal_dates[-1]})"),
+        (
+            f"- **Archive through**: {curve.archive_through}   "
+            f"**Origin**: {curve.panel_origin}   **Commit**: `{curve.code_commit}`"
+        ),
+        (
+            f"- **Config**: `{curve.config_fingerprint[:12]}`   "
+            f"**Universe**: `{curve.universe_fingerprint[:12]}`"
+        ),
+        (
+            f"- **Signal dates**: {len(curve.signal_dates)} "
+            f"({curve.signal_dates[0]} .. {curve.signal_dates[-1]})"
+        ),
         "",
-        ("**What this is not.** The universe is today's survivors, returns are "
-        "unadjusted price returns (no dividends, no delisting proceeds), and no "
-        "filing cutoff is proven — four of the evaluator's five contract items fail "
-        "by construction, which is why every run requires `--allow-unverified-panel`."),
+        (
+            "**What this is not.** The universe is today's survivors, returns are "
+            "unadjusted price returns (no dividends, no delisting proceeds), and no "
+            "filing cutoff is proven — four of the evaluator's five contract items fail "
+            "by construction, which is why every run requires `--allow-unverified-panel`."
+        ),
         "",
-        ("| horizon | periods | eff. | overlap | obs | mean IC | IC 95% | IC IR | "
-        "IC>0 | IC/√d | net spread | Sharpe | dropped exit/split | trial |"),
+        (
+            "| horizon | periods | eff. | overlap | obs | mean IC | IC 95% | IC IR | "
+            "IC>0 | IC/√d | net spread | Sharpe | dropped exit/split | trial |"
+        ),
         "|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|:---:|:---|",
     ]
     for result in curve.horizons:
@@ -1054,30 +1081,36 @@ def decay_to_markdown(curve: DecayCurve) -> str:
         )
     lines += [
         "",
-        ("Inference columns (IC IR, net spread, Sharpe) are Jegadeesh–Titman "
-        "averages over all non-overlapping offset subsamples, and `eff.` is the "
-        "mean periods per offset. The offsets share overlapping returns, so the "
-        "average removes the arbitrary phase choice but never tightens a CI; "
-        "significance uses the most conservative offset."),
+        (
+            "Inference columns (IC IR, net spread, Sharpe) are Jegadeesh–Titman "
+            "averages over all non-overlapping offset subsamples, and `eff.` is the "
+            "mean periods per offset. The offsets share overlapping returns, so the "
+            "average removes the arbitrary phase choice but never tightens a CI; "
+            "significance uses the most conservative offset."
+        ),
         "",
         "## Reading the curve",
         "",
         half_life_line,
         "",
-        (f"Best horizon by IC IR: {curve.best_horizon_by_ic_ir or '—'}d; by IC/√d: "
-        f"{curve.best_horizon_by_ic_per_sqrt_day or '—'}d. Under a fixed rebalancing "
-        "budget the argmax of IC/√days is the holding-period estimate; both argmaxes "
-        "are post-hoc over this same sweep and neither clears a gate."),
+        (
+            f"Best horizon by IC IR: {curve.best_horizon_by_ic_ir or '—'}d; by IC/√d: "
+            f"{curve.best_horizon_by_ic_per_sqrt_day or '—'}d. Under a fixed rebalancing "
+            "budget the argmax of IC/√days is the holding-period estimate; both argmaxes "
+            "are post-hoc over this same sweep and neither clears a gate."
+        ),
         "",
         "## Multiple-testing charge",
         "",
-        (f"Prior trials {curve.ledger.get('prior_trials', 0)}, added "
-        f"{curve.ledger.get('trials_added', 0)}, lifetime "
-        f"{curve.ledger.get('lifetime_trials', 0)}; deflated benchmark Sharpe "
-        f"{_num(curve.ledger.get('deflated_benchmark_sr'), 4)}. The E[max] correction "
-        "assumes independent trials, but the horizons of one score are highly "
-        "correlated, so the correction over-deflates; the remedy is the pre-declared "
-        "primary horizon, never a private discount."),
+        (
+            f"Prior trials {curve.ledger.get('prior_trials', 0)}, added "
+            f"{curve.ledger.get('trials_added', 0)}, lifetime "
+            f"{curve.ledger.get('lifetime_trials', 0)}; deflated benchmark Sharpe "
+            f"{_num(curve.ledger.get('deflated_benchmark_sr'), 4)}. The E[max] correction "
+            "assumes independent trials, but the horizons of one score are highly "
+            "correlated, so the correction over-deflates; the remedy is the pre-declared "
+            "primary horizon, never a private discount."
+        ),
     ]
     if curve.ledger.get("prior_trials", 0) == 0 and curve.ledger.get("trials_added", 0) <= 1:
         lines.append(

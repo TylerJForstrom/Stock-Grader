@@ -111,10 +111,7 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, np.generic):
         return _json_safe(value.item())
     if isinstance(value, pd.Series):
-        return {
-            str(index): _json_safe(item)
-            for index, item in value.items()
-        }
+        return {str(index): _json_safe(item) for index, item in value.items()}
     if isinstance(value, pd.DataFrame):
         return _json_safe(value.to_dict(orient="index"))
     if isinstance(value, float) and not math.isfinite(value):
@@ -199,11 +196,7 @@ def _metric_evidence(
                 raw_value=raw,
                 unit=result.unit or (spec.unit if spec is not None else ""),
                 coverage=result.coverage.value,
-                missing_reason=(
-                    result.note
-                    if result.coverage is not Coverage.OK
-                    else ""
-                ),
+                missing_reason=(result.note if result.coverage is not Coverage.OK else ""),
                 normalized_score=float(normalized) if normalized is not None else None,
                 metric_weight=float(metric_weight),
                 effective_pillar_weight=float(pillar_weight),
@@ -408,9 +401,7 @@ def build_research_report(
             dict(target.fundamentals.tag_used) if target.fundamentals is not None else {}
         ),
         "concept_provenance": (
-            dict(target.fundamentals.concept_provenance)
-            if target.fundamentals is not None
-            else {}
+            dict(target.fundamentals.concept_provenance) if target.fundamentals is not None else {}
         ),
         "peer_fingerprint": peer_selection.fingerprint,
     }
@@ -549,8 +540,7 @@ def research_to_markdown(report: ResearchReport) -> str:
         curve_effect = explain.get("peer_rank_curve_effect")
         residual = explain.get("attribution_residual")
         contribution_total = sum(
-            float(value)
-            for value in explain.get("metric_contributions", {}).values()
+            float(value) for value in explain.get("metric_contributions", {}).values()
         )
         if (
             math.isfinite(grade.score)
@@ -626,12 +616,8 @@ def research_to_markdown(report: ResearchReport) -> str:
     available_metrics.sort(key=lambda metric: abs(metric.contribution), reverse=True)
     # Rows the grade did not use (exact contribution 0.0) collapse to one
     # audit line below the table instead of padding it with dead weight.
-    zero_contribution = [
-        metric for metric in available_metrics if metric.contribution == 0.0
-    ]
-    available_metrics = [
-        metric for metric in available_metrics if metric.contribution != 0.0
-    ]
+    zero_contribution = [metric for metric in available_metrics if metric.contribution == 0.0]
+    available_metrics = [metric for metric in available_metrics if metric.contribution != 0.0]
     lines += [
         "",
         "## Highest-impact metric evidence",
@@ -675,17 +661,11 @@ def research_to_markdown(report: ResearchReport) -> str:
         ]
         for metric in unavailable_metrics:
             reason = (metric.missing_reason or metric.note or "not supplied").replace("|", "\\|")
-            lines.append(
-                f"| {metric.name} | {metric.pillar} | {metric.coverage} | {reason} |"
-            )
+            lines.append(f"| {metric.name} | {metric.pillar} | {metric.coverage} | {reason} |")
 
     if report.trends:
         periods = sorted(
-            {
-                observation["period"]
-                for trend in report.trends
-                for observation in trend.observations
-            }
+            {observation["period"] for trend in report.trends for observation in trend.observations}
         )
         lines += [
             "",
@@ -732,9 +712,7 @@ def research_to_markdown(report: ResearchReport) -> str:
         ]
     else:
         lines.append(
-            report.valuation.warnings[0]
-            if report.valuation.warnings
-            else "Valuation unavailable."
+            report.valuation.warnings[0] if report.valuation.warnings else "Valuation unavailable."
         )
 
     if report.warnings:

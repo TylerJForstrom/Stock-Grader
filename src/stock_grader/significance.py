@@ -100,9 +100,9 @@ def norm_ppf(p: float) -> float:
     if p <= phigh:
         q = p - 0.5
         r = q * q
-        return (
-            (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
-        ) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1.0)
+        return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (
+            ((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1.0
+        )
     q = math.sqrt(-2.0 * math.log(1.0 - p))
     return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
         (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0
@@ -129,9 +129,7 @@ def per_period_sharpe(returns: Sequence[float]) -> float:
     return mean(returns) / sd if sd > 0 else 0.0
 
 
-def probabilistic_sharpe_ratio(
-    returns: Sequence[float], benchmark_sr: float = 0.0
-) -> float:
+def probabilistic_sharpe_ratio(returns: Sequence[float], benchmark_sr: float = 0.0) -> float:
     """P(true per-period Sharpe > ``benchmark_sr``), skew/kurtosis-aware."""
     n = len(returns)
     if n < 2:
@@ -285,14 +283,8 @@ class SignificanceReport:
                 ),
                 f"  skew {self.skew:+.2f}  excess-kurtosis {self.excess_kurtosis:+.2f}",
                 f"  PSR vs 0 (ignores search): {self.psr_vs_zero:.3f}",
-                (
-                    "  deflated benchmark Sharpe (per-period): "
-                    f"{self.deflated_benchmark_sr:.4f}"
-                ),
-                (
-                    f"  DSR (P[edge | searched {self.n_trials}]): "
-                    f"{self.deflated_sharpe:.3f}"
-                ),
+                (f"  deflated benchmark Sharpe (per-period): {self.deflated_benchmark_sr:.4f}"),
+                (f"  DSR (P[edge | searched {self.n_trials}]): {self.deflated_sharpe:.3f}"),
                 f"  VERDICT: {self.verdict}",
             ]
         )

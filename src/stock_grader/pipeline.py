@@ -116,9 +116,7 @@ class GradeConfig:
             str(pillar): value for pillar, value in (pillar_weights or {}).items()
         }
         self.metric_weights = {
-            str(pillar): {
-                str(metric_name): value for metric_name, value in weights.items()
-            }
+            str(pillar): {str(metric_name): value for metric_name, value in weights.items()}
             for pillar, weights in (metric_weights or {}).items()
         }
         if metric_whitelist is not None and isinstance(metric_whitelist, (str, bytes)):
@@ -143,9 +141,7 @@ class GradeConfig:
             (set(self.pillar_weights) | set(self.metric_weights)) - valid_pillars
         )
         if unknown_pillars:
-            raise ValueError(
-                "weights contain unknown pillars: " + ", ".join(unknown_pillars)
-            )
+            raise ValueError("weights contain unknown pillars: " + ", ".join(unknown_pillars))
         configured_vectors = [("pillar_weights", self.pillar_weights)] + [
             (f"metric_weights[{pillar!r}]", values)
             for pillar, values in self.metric_weights.items()
@@ -165,8 +161,7 @@ class GradeConfig:
             invalid.sort()
             if invalid:
                 raise ValueError(
-                    f"{label} contains negative or non-finite weights: "
-                    + ", ".join(invalid)
+                    f"{label} contains negative or non-finite weights: " + ", ".join(invalid)
                 )
             if weights and not any(float(value) > 0.0 for value in weights.values()):
                 raise ValueError(f"{label} must contain at least one positive weight")
@@ -180,8 +175,7 @@ class GradeConfig:
             )
             if unknown:
                 raise ValueError(
-                    f"metric_weights[{pillar!r}] contains unknown metrics: "
-                    + ", ".join(unknown)
+                    f"metric_weights[{pillar!r}] contains unknown metrics: " + ", ".join(unknown)
                 )
             if misplaced:
                 raise ValueError(
@@ -265,14 +259,10 @@ class GradeConfig:
                     f"and overflow before they get there."
                 )
         trim = self.aggregator_kwargs.get("trim")
-        if trim is not None and (
-            not np.isfinite(trim) or not 0.0 <= float(trim) < 0.5
-        ):
+        if trim is not None and (not np.isfinite(trim) or not 0.0 <= float(trim) < 0.5):
             raise ValueError("trim must be finite and in [0, 0.5)")
         temperature = self.aggregator_kwargs.get("temperature")
-        if temperature is not None and (
-            not np.isfinite(temperature) or float(temperature) < 0.0
-        ):
+        if temperature is not None and (not np.isfinite(temperature) or float(temperature) < 0.0):
             raise ValueError("temperature must be finite and non-negative")
         pessimism = self.aggregator_kwargs.get("pessimism")
         if pessimism is not None and (
@@ -288,10 +278,12 @@ class GradeConfig:
             raise ValueError("min_defining_pillar_coverage must be within [0, 1]")
         self.min_defining_pillar_coverage = coverage_floor
         valid_sector_neutral_keys = {"business_model", "sic2", "sic3"}
-        if not isinstance(sector_neutral_key, str) or sector_neutral_key not in valid_sector_neutral_keys:
+        if (
+            not isinstance(sector_neutral_key, str)
+            or sector_neutral_key not in valid_sector_neutral_keys
+        ):
             raise ValueError(
-                "sector_neutral_key must be one of "
-                + ", ".join(sorted(valid_sector_neutral_keys))
+                "sector_neutral_key must be one of " + ", ".join(sorted(valid_sector_neutral_keys))
             )
         self.sector_neutral = sector_neutral
         self.sector_neutral_key = sector_neutral_key
@@ -303,9 +295,7 @@ class GradeConfig:
         try:
             min_profile_weight_coverage = float(min_profile_weight_coverage)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "min_profile_weight_coverage must be numeric"
-            ) from exc
+            raise ValueError("min_profile_weight_coverage must be numeric") from exc
         if (
             not np.isfinite(min_profile_weight_coverage)
             or not 0.0 <= min_profile_weight_coverage <= 1.0
@@ -313,13 +303,11 @@ class GradeConfig:
             raise ValueError(
                 "min_profile_weight_coverage must be between 0 and 1, "
                 f"got {min_profile_weight_coverage!r}"
-        )
+            )
         self.min_profile_weight_coverage = float(min_profile_weight_coverage)
         if isinstance(required_pillars, (str, bytes)):
             raise ValueError("required_pillars must be a collection, not a string")
-        self.required_pillars = frozenset(
-            str(pillar) for pillar in (required_pillars or ())
-        )
+        self.required_pillars = frozenset(str(pillar) for pillar in (required_pillars or ()))
         unknown_required = sorted(self.required_pillars - valid_pillars)
         if unknown_required:
             raise ValueError(
@@ -366,9 +354,7 @@ def _config_manifest(config: GradeConfig) -> tuple[dict[str, object], str]:
     # comparability contract. Non-default grouping is a methodology change and must fingerprint.
     if config.sector_neutral_key != "business_model":
         manifest["sector_neutral_key"] = config.sector_neutral_key
-    encoded = json.dumps(
-        manifest, sort_keys=True, separators=(",", ":"), default=str
-    ).encode()
+    encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":"), default=str).encode()
     return manifest, hashlib.sha256(encoded).hexdigest()
 
 
@@ -668,9 +654,7 @@ def _combined_metric_names(configs: Sequence[GradeConfig]) -> list[str] | None:
         return None
     return list(
         dict.fromkeys(
-            metric_name
-            for config in configs
-            for metric_name in (config.metric_whitelist or ())
+            metric_name for config in configs for metric_name in (config.metric_whitelist or ())
         )
     )
 
@@ -752,9 +736,7 @@ def grade_universe_multi(
         normalized_matrix = None
         if not scoped_matrix.empty:
             whitelist_key = (
-                None
-                if config.metric_whitelist is None
-                else tuple(sorted(config.metric_whitelist))
+                None if config.metric_whitelist is None else tuple(sorted(config.metric_whitelist))
             )
             cache_key = (
                 config.normalizer,
@@ -825,13 +807,21 @@ def _grade_from_matrix(
         log.warning("no metrics registered or evaluated; returning ungraded reports")
         return {
             s.ticker: GradeReport(
-                ticker=s.ticker, asof=s.asof, profile=config.name, score=float("nan"),
-                letter="N/A", warnings=["no metrics available"],
+                ticker=s.ticker,
+                asof=s.asof,
+                profile=config.name,
+                score=float("nan"),
+                letter="N/A",
+                warnings=["no metrics available"],
             )
             for s in snapshots
         }
 
-    scores = normalized_matrix if normalized_matrix is not None else _normalize_matrix(matrix, snapshots, config)
+    scores = (
+        normalized_matrix
+        if normalized_matrix is not None
+        else _normalize_matrix(matrix, snapshots, config)
+    )
     pillars = _pillar_members(list(scores.columns))
     # Time-series diagnostics (Hurst, variance ratio, autocorrelation) carry
     # near-zero cross-sectional pricing content at these universe sizes; they
@@ -875,7 +865,9 @@ def _grade_from_matrix(
             column[ticker] = pillar_score.score
         pillar_scores[pillar] = pd.Series(column, dtype="float64")
         for ticker in block.index:
-            warnings_by_ticker[ticker].extend(w for w in ctx.warnings if w not in warnings_by_ticker[ticker])
+            warnings_by_ticker[ticker].extend(
+                w for w in ctx.warnings if w not in warnings_by_ticker[ticker]
+            )
 
     pillar_matrix = pd.DataFrame(pillar_scores)
     if pillar_matrix.empty:
@@ -906,9 +898,7 @@ def _grade_from_matrix(
     pillar_weights = compute_weights(pillar_matrix, method=top_method, ctx=top_ctx)
     if config.pillar_weights:
         nominal_pillar_weights = pd.Series(config.pillar_weights, dtype="float64")
-        nominal_pillar_weights = nominal_pillar_weights[
-            nominal_pillar_weights > 0.0
-        ]
+        nominal_pillar_weights = nominal_pillar_weights[nominal_pillar_weights > 0.0]
         nominal_pillar_weights = nominal_pillar_weights / nominal_pillar_weights.sum()
     else:
         nominal_pillar_weights = pillar_weights.copy()
@@ -934,7 +924,8 @@ def _grade_from_matrix(
         results_for = results.get(snapshot.ticker, {})
         ok_count = sum(1 for r in results_for.values() if r.coverage is Coverage.OK)
         missing_count = sum(
-            1 for name, r in results_for.items()
+            1
+            for name, r in results_for.items()
             if r.coverage is Coverage.MISSING and name in universe_computable
         )
         applicable_count = ok_count + missing_count
@@ -956,7 +947,8 @@ def _grade_from_matrix(
         profile_gate_state[snapshot.ticker] = gate_state
         _, _, gate_reasons = gate_state
         gradeable[snapshot.ticker] = (
-            cov >= MIN_COVERAGE_TO_GRADE and np.isfinite(composite.get(snapshot.ticker, np.nan))
+            cov >= MIN_COVERAGE_TO_GRADE
+            and np.isfinite(composite.get(snapshot.ticker, np.nan))
             and not gate_reasons
         )
     ranked_base = composite[[t for t in composite.index if gradeable.get(t)]]
@@ -983,9 +975,7 @@ def _grade_from_matrix(
         # whole efficiency pillar is structurally undefined. Carrying it as NaN would print a
         # meaningless row and invite it into downstream arithmetic.
         objects = {
-            p: obj
-            for p, obj in pillar_objects.get(ticker, {}).items()
-            if np.isfinite(obj.score)
+            p: obj for p, obj in pillar_objects.get(ticker, {}).items() if np.isfinite(obj.score)
         }
         # Separate the two very different reasons a pillar can be empty. Reporting "not applicable
         # to a general company" when the real cause is an absent price feed sends the reader
@@ -999,9 +989,7 @@ def _grade_from_matrix(
 
         all_results = results.get(ticker, {})
         metric_errors = sorted(
-            name
-            for name, result in all_results.items()
-            if result.note.startswith("error:")
+            name for name, result in all_results.items() if result.note.startswith("error:")
         )
         ok = sum(1 for r in all_results.values() if r.coverage is Coverage.OK)
         missing = sum(1 for r in all_results.values() if r.coverage is Coverage.MISSING)
@@ -1015,7 +1003,11 @@ def _grade_from_matrix(
         applicable = ok + missing_company
         coverage = (ok / applicable) if applicable else 0.0
 
-        percentile = float(percentiles[ticker]) if percentiles is not None and ticker in percentiles else None
+        percentile = (
+            float(percentiles[ticker])
+            if percentiles is not None and ticker in percentiles
+            else None
+        )
         n_ranked = int(len(ranked_base.dropna())) if percentiles is not None else 0
         percentile_range = None
         if percentile is not None and np.isfinite(percentile) and n_ranked >= 2:
@@ -1037,7 +1029,9 @@ def _grade_from_matrix(
             # ending at 25.
             final_score, letter = float(percentile), grade_from_percentile(percentile)
         else:
-            final_score, letter = hybrid_grade(score, percentile, absolute_weight=config.absolute_weight)
+            final_score, letter = hybrid_grade(
+                score, percentile, absolute_weight=config.absolute_weight
+            )
         if previous_letters and ticker in previous_letters and np.isfinite(final_score):
             letter = apply_hysteresis(
                 float(final_score),
@@ -1060,7 +1054,8 @@ def _grade_from_matrix(
         # correctly for months while every profile weighted them at zero, because the profiles were
         # written back when those pillars could never fire.
         unweighted = sorted(
-            p for p, obj in objects.items()
+            p
+            for p, obj in objects.items()
             if np.isfinite(obj.score) and nominal_pillar_weights.get(p, 0.0) <= 0.0
         )
         if unweighted:
@@ -1074,9 +1069,7 @@ def _grade_from_matrix(
             )
         if dropped_missing:
             reason = "no price history" if not snapshot.has_prices else "insufficient data"
-            warns.append(
-                f"pillar(s) skipped ({reason}): {', '.join(sorted(dropped_missing))}"
-            )
+            warns.append(f"pillar(s) skipped ({reason}): {', '.join(sorted(dropped_missing))}")
         if config.curve != "absolute" and percentiles is None:
             warns.insert(
                 0,
@@ -1091,7 +1084,9 @@ def _grade_from_matrix(
                 f"charged against every company"
             )
         if snapshot.synthetic_prices:
-            warns.insert(0, "price-derived metrics computed from SYNTHETIC prices, not market history")
+            warns.insert(
+                0, "price-derived metrics computed from SYNTHETIC prices, not market history"
+            )
         if metric_errors:
             warns.append(
                 f"{len(metric_errors)} metric implementation error(s) occurred "
@@ -1129,9 +1124,7 @@ def _grade_from_matrix(
             # up "no information" as a considered C.
             gates.append("gradeable_peer_universe_too_small")
         elif config.curve != "absolute" and 0 < n_ranked < config.min_letter_peers:
-            gates.append(
-                f"peer_count_below_letter_floor:{n_ranked}<{config.min_letter_peers}"
-            )
+            gates.append(f"peer_count_below_letter_floor:{n_ranked}<{config.min_letter_peers}")
             warns.append(
                 f"refusing a letter: only {n_ranked} peers passed the gates (floor "
                 f"{config.min_letter_peers}). With this few ranks a single peer moves the "
@@ -1145,9 +1138,7 @@ def _grade_from_matrix(
         # an analyst can see the intended lens and the evidence that actually drove the number.
         live = {p: float(nominal_pillar_weights.get(p, 0.0)) for p in objects}
         live_total = sum(live.values())
-        effective_weights = (
-            {p: w / live_total for p, w in live.items()} if live_total > 0 else {}
-        )
+        effective_weights = {p: w / live_total for p, w in live.items()} if live_total > 0 else {}
         lost_weight = float(max(0.0, 1.0 - live_total))
         if lost_weight > 0.02:
             warns.append(
@@ -1177,14 +1168,10 @@ def _grade_from_matrix(
                 # all-neutral baseline a CES/power mean's marginal pillar influence equals its
                 # effective weight, and the allocations still sum to the zero top contribution.
                 local_scale = float(
-                    effective_weights.get(
-                        pillar_name, nominal_pillar_weights.get(pillar_name, 0.0)
-                    )
+                    effective_weights.get(pillar_name, nominal_pillar_weights.get(pillar_name, 0.0))
                 )
                 for metric_name, within_contribution in within.items():
-                    metric_contributions[metric_name] = (
-                        local_scale * float(within_contribution)
-                    )
+                    metric_contributions[metric_name] = local_scale * float(within_contribution)
                 continue
             for metric_name, within_contribution in within.items():
                 metric_contributions[metric_name] = (
@@ -1220,9 +1207,7 @@ def _grade_from_matrix(
                     if pillar_object is not None
                     else 0.0
                 ),
-                "effective_pillar_weight": effective_weights.get(
-                    metric_result.pillar, 0.0
-                ),
+                "effective_pillar_weight": effective_weights.get(metric_result.pillar, 0.0),
                 "contribution": metric_contributions.get(metric_name, 0.0),
             }
         samples = uncertainty_interval(
@@ -1364,8 +1349,12 @@ def grade_one(
     report = reports.get(snapshot.ticker)
     if report is None:
         return GradeReport(
-            ticker=snapshot.ticker, asof=snapshot.asof, profile=config.name,
-            score=float("nan"), letter="N/A", warnings=["grading produced no result"],
+            ticker=snapshot.ticker,
+            asof=snapshot.asof,
+            profile=config.name,
+            score=float("nan"),
+            letter="N/A",
+            warnings=["grading produced no result"],
         )
     if not peers:
         report.warnings.append(

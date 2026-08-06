@@ -323,9 +323,7 @@ def _usable_pairs(
     return usable
 
 
-def gap_adjusted_range(
-    previous_close: float, high: float, low: float
-) -> tuple[float, float]:
+def gap_adjusted_range(previous_close: float, high: float, low: float) -> tuple[float, float]:
     """Corwin & Schultz's overnight-gap adjustment, on the second day's range.
 
     When the previous session's close sits outside the current session's

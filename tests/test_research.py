@@ -42,9 +42,7 @@ def test_research_bundle_contains_grade_peers_raw_evidence_and_provenance():
     assert {"raw_value", "normalized_score", "metric_weight", "contribution"} <= set(
         encoded["metrics"][0]
     )
-    assert encoded["valuation"]["assumptions"]["interpretation"].endswith(
-        "not_analyst_forecasts"
-    )
+    assert encoded["valuation"]["assumptions"]["interpretation"].endswith("not_analyst_forecasts")
 
 
 def test_research_markdown_is_complete_and_truthfully_labeled():
@@ -163,15 +161,14 @@ def test_driver_section_states_when_a_side_is_empty():
 def test_peer_percentiles_are_oriented_as_desirability():
     peers = pd.Series([10.0, 20.0, 30.0])
 
-    assert _desirability_percentile(
-        5.0, peers, direction=-1, ideal_band=None
-    ) > 80.0
-    assert _desirability_percentile(
-        35.0, peers, direction=1, ideal_band=None
-    ) > 80.0
-    assert _desirability_percentile(
-        0.5, pd.Series([0.1, 0.9, 1.2]), direction=0, ideal_band=(0.4, 0.6)
-    ) > 80.0
+    assert _desirability_percentile(5.0, peers, direction=-1, ideal_band=None) > 80.0
+    assert _desirability_percentile(35.0, peers, direction=1, ideal_band=None) > 80.0
+    assert (
+        _desirability_percentile(
+            0.5, pd.Series([0.1, 0.9, 1.2]), direction=0, ideal_band=(0.4, 0.6)
+        )
+        > 80.0
+    )
 
 
 def test_fmt_renders_dimensionless_as_a_multiple_not_a_percentage():
@@ -225,9 +222,9 @@ def test_metric_evidence_reconciles_exactly_with_the_grade_explain_payload():
     for row in report.metrics:
         detail = explained.get(row.name)
         assert detail is not None, f"{row.name} missing from the explain payload"
-        assert row.contribution == pytest.approx(
-            float(detail.get("contribution", 0.0) or 0.0)
-        ), f"{row.name} contribution diverges from the grade's own attribution"
+        assert row.contribution == pytest.approx(float(detail.get("contribution", 0.0) or 0.0)), (
+            f"{row.name} contribution diverges from the grade's own attribution"
+        )
         assert row.effective_pillar_weight == pytest.approx(
             float(detail.get("effective_pillar_weight", 0.0) or 0.0)
         )

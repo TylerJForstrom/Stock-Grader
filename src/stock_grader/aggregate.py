@@ -81,7 +81,9 @@ def weighted_mean(scores: pd.Series, weights: pd.Series | None = None, **_: obje
 
 
 @AGGREGATORS("weighted_median")
-def weighted_median(scores: pd.Series, weights: pd.Series | None = None, **_: object) -> float | None:
+def weighted_median(
+    scores: pd.Series, weights: pd.Series | None = None, **_: object
+) -> float | None:
     """Weighted median — ignores the magnitude of outliers entirely."""
     s, w = align_and_renormalize(scores, weights)
     if s.empty:
@@ -110,7 +112,9 @@ def trimmed_mean(
 
 
 @AGGREGATORS("geometric_mean")
-def geometric_mean(scores: pd.Series, weights: pd.Series | None = None, **_: object) -> float | None:
+def geometric_mean(
+    scores: pd.Series, weights: pd.Series | None = None, **_: object
+) -> float | None:
     """Weighted geometric mean.
 
     Scores are shifted off zero by a small epsilon before taking logs: a literal zero would make

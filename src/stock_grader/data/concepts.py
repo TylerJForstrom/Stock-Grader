@@ -93,7 +93,6 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
         "WeightedAverageNumberOfSharesOutstandingBasic",
     ),
     "shares_basic": ("WeightedAverageNumberOfSharesOutstandingBasic",),
-
     # ---- Balance sheet (instant) ----
     "assets": ("Assets",),
     "current_assets": ("AssetsCurrent",),
@@ -154,7 +153,6 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
         "PreferredStockLiquidationPreferenceValue",
     ),
     "minority_interest": ("MinorityInterest",),
-
     # ---- Cash flow (duration) ----
     "cfo": (
         "NetCashProvidedByUsedInOperatingActivities",
@@ -195,7 +193,6 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
         "ProceedsFromIssuanceOrSaleOfEquity",
     ),
     "share_based_comp": ("ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"),
-
     # ---- Bank-specific (verified present for JPM, WFC, BAC, C and USB) ----
     "net_interest_income": (
         "InterestIncomeExpenseNet",
@@ -225,7 +222,6 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
         "ProvisionForLoanLeaseAndOtherLosses",
         "ProvisionForLoanAndLeaseLosses",
     ),
-
     # ---- REIT-specific. NOTE: FundsFromOperations is tagged by NO major REIT (checked SPG, O,
     # PLD, AMT), so FFO is reconstructed from these rather than read directly.
     "real_estate_impairment": ("ImpairmentOfRealEstate",),
@@ -238,17 +234,35 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
 
 
 # Facts with only an `end` date (a stock, not a flow). Everything else is a duration.
-_INSTANT: frozenset[str] = frozenset({
-    "deposits", "loans", "loans_gross", "loan_loss_allowance",
-    "assets", "current_assets", "liabilities", "current_liabilities", "equity", "cash",
-    "short_term_investments", "inventory", "receivables", "payables", "long_term_debt",
-    "short_term_debt", "ppe_net", "goodwill", "intangibles", "retained_earnings",
-    "preferred_equity", "minority_interest",
-})
+_INSTANT: frozenset[str] = frozenset(
+    {
+        "deposits",
+        "loans",
+        "loans_gross",
+        "loan_loss_allowance",
+        "assets",
+        "current_assets",
+        "liabilities",
+        "current_liabilities",
+        "equity",
+        "cash",
+        "short_term_investments",
+        "inventory",
+        "receivables",
+        "payables",
+        "long_term_debt",
+        "short_term_debt",
+        "ppe_net",
+        "goodwill",
+        "intangibles",
+        "retained_earnings",
+        "preferred_equity",
+        "minority_interest",
+    }
+)
 
 PERIOD_TYPES: dict[str, PeriodType] = {
-    name: (PeriodType.INSTANT if name in _INSTANT else PeriodType.DURATION)
-    for name in CONCEPTS
+    name: (PeriodType.INSTANT if name in _INSTANT else PeriodType.DURATION) for name in CONCEPTS
 }
 
 # Per-share and share-count facts must never be summed across quarters the way a flow is.

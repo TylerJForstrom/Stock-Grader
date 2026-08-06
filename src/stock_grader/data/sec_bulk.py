@@ -401,10 +401,7 @@ class SECBulkFacts:
                 f"GET advertised {representation_bytes}, received {len(content)}"
             )
         destination = self.cache_dir / f"companyfacts_{representation_generation}.zip"
-        if (
-            representation_bytes != expected_bytes
-            or representation_last_modified != last_modified
-        ):
+        if representation_bytes != expected_bytes or representation_last_modified != last_modified:
             log.warning(
                 "SEC Companyfacts HEAD and GET described different generations; "
                 "validating and caching the GET representation"

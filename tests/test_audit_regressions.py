@@ -44,6 +44,7 @@ from stock_grader.signal_panel import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FORWARD_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "monthly-forward-backtest.yml"
 
+
 def _flat(text: str) -> str:
     """Console output with ALL whitespace removed.
 
@@ -139,9 +140,22 @@ def test_a_rebuild_that_prices_a_closed_date_to_zero_rows_is_refused(
         month_dir = vault_root / "data" / "market_eod" / day.strftime("%Y-%m")
         path = month_dir / f"{day.isoformat()}.jsonl.gz"
         if path.is_file():
-            path.write_bytes(_gz_jsonl([{"symbol": "ZZZZ", "close": 1.0, "open": 1.0,
-                                         "high": 1.0, "low": 1.0, "volume": 1.0,
-                                         "vwap": 1.0, "transactions": 1}]))
+            path.write_bytes(
+                _gz_jsonl(
+                    [
+                        {
+                            "symbol": "ZZZZ",
+                            "close": 1.0,
+                            "open": 1.0,
+                            "high": 1.0,
+                            "low": 1.0,
+                            "volume": 1.0,
+                            "vwap": 1.0,
+                            "transactions": 1,
+                        }
+                    ]
+                )
+            )
     from tests.test_vault import _manifest
 
     for day in DAYS:
@@ -150,9 +164,7 @@ def test_a_rebuild_that_prices_a_closed_date_to_zero_rows_is_refused(
             _manifest(month_dir, sorted(p.name for p in month_dir.glob("*.jsonl.gz")))
 
     vault = VaultDataSource(vault_root)
-    result, parts = build_signal_panel(
-        vault, "unit_signal", config=SignalPanelConfig(rebuild=True)
-    )
+    result, parts = build_signal_panel(vault, "unit_signal", config=SignalPanelConfig(rebuild=True))
     with pytest.raises(SignalPanelError, match="re-priced to zero kept rows"):
         write_signal_panel(vault, "unit_signal", result, parts)
     # The closed part is still there: refusing never destroys evidence.
@@ -169,13 +181,17 @@ def test_a_signal_date_whose_entry_day_is_unarchived_refuses(vault_root: Path) -
     other windows were covered.
     """
     later = [
-        _observation(name, float(i), float(i) / 10.0, signal=LATER_SIGNAL,
-                     entry=LATER_ENTRY, exit_=LATER_EXIT)
+        _observation(
+            name,
+            float(i),
+            float(i) / 10.0,
+            signal=LATER_SIGNAL,
+            entry=LATER_ENTRY,
+            exit_=LATER_EXIT,
+        )
         for i, name in enumerate(["ALPHA", "BETA", "GAMMA", "DELTA"], start=1)
     ]
-    _write_observations(
-        vault_root, "unit_signal", {SIGNAL: _hazard_rows(), LATER_SIGNAL: later}
-    )
+    _write_observations(vault_root, "unit_signal", {SIGNAL: _hazard_rows(), LATER_SIGNAL: later})
     # Drop exactly the later window's entry day.
     month_dir = vault_root / "data" / "market_eod" / LATER_ENTRY.strftime("%Y-%m")
     (month_dir / f"{LATER_ENTRY.isoformat()}.jsonl.gz").unlink()
@@ -248,9 +264,7 @@ def test_counts_json_survives_a_crash_between_it_and_the_parts(
         write_signal_panel(vault, "unit_signal", result, parts)
     monkeypatch.undo()
 
-    out_dir = (
-        vault_root / "data" / "signal_panels" / "unit_signal" / f"v{result.panel_version}"
-    )
+    out_dir = vault_root / "data" / "signal_panels" / "unit_signal" / f"v{result.panel_version}"
     counts = json.loads((out_dir / "counts.json").read_text())
     assert SIGNAL.isoformat() in counts  # accounting landed first
     assert not list(out_dir.glob("*.tmp"))  # and atomically
@@ -352,8 +366,13 @@ def test_a_foundry_split_the_price_contradicts_is_unresolved() -> None:
     """Applying it unconditionally would fabricate the return the other way."""
     bars = _bars([(ENTRY_D, 40.0), (SPLIT_D, 40.0), (EXIT_D, 40.0)])  # flat
     factor, source, unresolved = split_factor(
-        bars, ENTRY_D, EXIT_D, ticker="SUBSPLIT", cik="0000000042",
-        foundry_splits=_foundry(SPLIT_D, 1.25), tolerance=0.01,
+        bars,
+        ENTRY_D,
+        EXIT_D,
+        ticker="SUBSPLIT",
+        cik="0000000042",
+        foundry_splits=_foundry(SPLIT_D, 1.25),
+        tolerance=0.01,
     )
     assert unresolved is True
     assert (factor, source) == (1.0, "none")
@@ -366,8 +385,13 @@ def test_an_implausible_foundry_ratio_is_unresolved_never_ignored() -> None:
     """
     bars = _bars([(ENTRY_D, 40.0), (SPLIT_D, 32.0), (EXIT_D, 32.0)])
     _, _, unresolved = split_factor(
-        bars, ENTRY_D, EXIT_D, ticker="SUBSPLIT", cik="0000000042",
-        foundry_splits=_foundry(SPLIT_D, 1.09e8), tolerance=0.01,
+        bars,
+        ENTRY_D,
+        EXIT_D,
+        ticker="SUBSPLIT",
+        cik="0000000042",
+        foundry_splits=_foundry(SPLIT_D, 1.09e8),
+        tolerance=0.01,
     )
     assert unresolved is True
 
@@ -376,8 +400,13 @@ def test_a_split_outside_the_window_is_left_alone() -> None:
     """(entry, exit] is the window; a split before entry is already in the basis."""
     bars = _bars([(ENTRY_D, 40.0), (SPLIT_D, 40.0), (EXIT_D, 40.0)])
     factor, source, unresolved = split_factor(
-        bars, ENTRY_D, EXIT_D, ticker="SUBSPLIT", cik="0000000042",
-        foundry_splits=_foundry(dt.date(2026, 7, 1), 1.25), tolerance=0.01,
+        bars,
+        ENTRY_D,
+        EXIT_D,
+        ticker="SUBSPLIT",
+        cik="0000000042",
+        foundry_splits=_foundry(dt.date(2026, 7, 1), 1.25),
+        tolerance=0.01,
     )
     assert (factor, source, unresolved) == (1.0, "none", False)
 
@@ -412,8 +441,14 @@ def test_dividend_basis_is_unsafe_for_a_split_of_any_ratio(vault_root: Path) -> 
         close = 40.0 if day < dt.date(2026, 8, 5) else 32.0
         rows.append(
             {
-                "symbol": "SPLITDIV", "open": close, "high": close, "low": close,
-                "close": close, "volume": 1e5, "vwap": close, "transactions": 1000.0,
+                "symbol": "SPLITDIV",
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "volume": 1e5,
+                "vwap": close,
+                "transactions": 1000.0,
             }
         )
         path.write_bytes(_gz_jsonl(rows))
@@ -426,10 +461,20 @@ def test_dividend_basis_is_unsafe_for_a_split_of_any_ratio(vault_root: Path) -> 
     (dividends / "2026-08.jsonl.gz").write_bytes(
         _gz_jsonl(
             [
-                {"ticker": "DIVCO", "ex_dividend_date": "2026-08-06",
-                 "cash_amount": 2.0, "currency": "USD", "dividend_type": "CD"},
-                {"ticker": "SPLITDIV", "ex_dividend_date": "2026-08-06",
-                 "cash_amount": 1.0, "currency": "USD", "dividend_type": "CD"},
+                {
+                    "ticker": "DIVCO",
+                    "ex_dividend_date": "2026-08-06",
+                    "cash_amount": 2.0,
+                    "currency": "USD",
+                    "dividend_type": "CD",
+                },
+                {
+                    "ticker": "SPLITDIV",
+                    "ex_dividend_date": "2026-08-06",
+                    "cash_amount": 1.0,
+                    "currency": "USD",
+                    "dividend_type": "CD",
+                },
             ]
         )
     )
@@ -568,10 +613,7 @@ def test_promotion_stage_seeds_from_the_declared_ladder() -> None:
     from stock_grader.research_manifest import promotion_stage
 
     assert promotion_stage([], "cd" * 32) == "exploratory"
-    assert (
-        promotion_stage([], "cd" * 32, stages=["candidate", "declared_trial"])
-        == "candidate"
-    )
+    assert promotion_stage([], "cd" * 32, stages=["candidate", "declared_trial"]) == "candidate"
 
 
 # ============================================================= 3b. ledger CLI
@@ -587,9 +629,12 @@ def _declare_policy(tmp_path: Path, ledger: Path, doc: Path, version: str, *extr
     return cli.main(
         [
             "promotion-declare",
-            "--ledger", str(ledger),
-            "--policy-doc", str(doc),
-            "--policy-version", version,
+            "--ledger",
+            str(ledger),
+            "--policy-doc",
+            str(doc),
+            "--policy-version",
+            version,
             *extra,
         ]
     )
@@ -629,10 +674,7 @@ def test_a_new_version_cannot_be_bound_to_the_unchanged_document(tmp_path, capsy
     )
     assert _declare_policy(tmp_path, ledger, doc, "promotion-policy-v1") == 0
     assert (
-        _declare_policy(
-            tmp_path, ledger, doc, "promotion-policy-v2", "--live-money-reachable"
-        )
-        == 2
+        _declare_policy(tmp_path, ledger, doc, "promotion-policy-v2", "--live-money-reachable") == 2
     )
     assert _flat("is already declared as") in _flat(capsys.readouterr().out)
 
@@ -652,14 +694,22 @@ def test_retracting_a_promotion_record_is_refused(tmp_path, capsys) -> None:
         cli.main(
             [
                 "promotion-declare",
-                "--ledger", str(ledger),
-                "--policy-doc", str(doc),
-                "--policy-version", "promotion-policy-v1",
-                "--subject", subject,
-                "--from-stage", "exploratory",
-                "--to-stage", "declared_trial",
-                "--evidence", "cd" * 32,
-                "--reason", "unit",
+                "--ledger",
+                str(ledger),
+                "--policy-doc",
+                str(doc),
+                "--policy-version",
+                "promotion-policy-v1",
+                "--subject",
+                subject,
+                "--from-stage",
+                "exploratory",
+                "--to-stage",
+                "declared_trial",
+                "--evidence",
+                "cd" * 32,
+                "--reason",
+                "unit",
             ]
         )
         == 0
@@ -674,15 +724,15 @@ def test_retracting_a_promotion_record_is_refused(tmp_path, capsys) -> None:
             [
                 "ledger-retract",
                 transition_hash,
-                "--ledger", str(ledger),
-                "--reason", "changed my mind",
+                "--ledger",
+                str(ledger),
+                "--reason",
+                "changed my mind",
             ]
         )
         == 2
     )
-    assert _flat("refusing to retract a ledger:promotion record") in _flat(
-        capsys.readouterr().out
-    )
+    assert _flat("refusing to retract a ledger:promotion record") in _flat(capsys.readouterr().out)
     assert promotion_stage(load_manifest(ledger), subject) == "declared_trial"
 
 
@@ -724,10 +774,14 @@ def test_backtest_refuses_to_evaluate_against_a_broken_chain(tmp_path, capsys) -
     assert (
         cli.main(
             [
-                "backtest", str(panel),
-                "--ledger", str(ledger),
-                "--quantiles", "2",
-                "--min-cross-section", "10",
+                "backtest",
+                str(panel),
+                "--ledger",
+                str(ledger),
+                "--quantiles",
+                "2",
+                "--min-cross-section",
+                "10",
                 "--allow-unverified-panel",
                 "--allow-unmanifested-panel",
             ]

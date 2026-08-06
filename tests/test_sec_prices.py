@@ -88,15 +88,21 @@ class TestCalibration:
     def test_recovers_a_known_affiliate_fraction(self):
         """Walmart: 391.7B float / (98.02 * 8.016B shares) = ~49.9% non-affiliate."""
         fraction = calibrate_non_affiliate_fraction(
-            391.7e9, 8.016e9, 98.02,
-            float_date=date(2025, 7, 31), price_date=date(2025, 7, 30),
+            391.7e9,
+            8.016e9,
+            98.02,
+            float_date=date(2025, 7, 31),
+            price_date=date(2025, 7, 30),
         )
         assert fraction == pytest.approx(0.499, abs=0.01)
 
     def test_widely_held_company_is_near_one(self):
         fraction = calibrate_non_affiliate_fraction(
-            3253.4e9, 15.056e9, 216.09,
-            float_date=date(2025, 3, 28), price_date=date(2025, 3, 28),
+            3253.4e9,
+            15.056e9,
+            216.09,
+            float_date=date(2025, 3, 28),
+            price_date=date(2025, 3, 28),
         )
         assert fraction > 0.95
 
@@ -107,10 +113,16 @@ class TestCalibration:
         implied_price_from_float reproduces the input price exactly — so the pipeline looks
         calibrated while having learned nothing.
         """
-        assert calibrate_non_affiliate_fraction(
-            3253.4e9, 15.056e9, 250.12,
-            float_date=date(2025, 3, 28), price_date=date(2026, 3, 15),
-        ) is None
+        assert (
+            calibrate_non_affiliate_fraction(
+                3253.4e9,
+                15.056e9,
+                250.12,
+                float_date=date(2025, 3, 28),
+                price_date=date(2026, 3, 15),
+            )
+            is None
+        )
 
     def test_slightly_over_one_clamps_rather_than_rejects(self):
         fraction = calibrate_non_affiliate_fraction(
@@ -120,9 +132,7 @@ class TestCalibration:
 
     def test_calibrated_price_uses_the_newest_float(self):
         """Fraction from an old date-matched pair, applied to the latest float."""
-        floats = pd.Series(
-            {pd.Timestamp("2024-06-30"): 50e9, pd.Timestamp("2025-06-30"): 60e9}
-        )
+        floats = pd.Series({pd.Timestamp("2024-06-30"): 50e9, pd.Timestamp("2025-06-30"): 60e9})
         prices = pd.Series({pd.Timestamp("2024-07-01"): 100.0})
         result = calibrated_price_from_float(floats, 1e9, prices)
         assert result is not None
@@ -162,8 +172,12 @@ class TestResolvePrice:
         insider = _FakeInsider(pd.Series({pd.Timestamp("2026-03-15"): 250.0}))
         floats = pd.Series({pd.Timestamp("2025-03-28"): 3253.4e9})
         found = resolve_price(
-            "AAPL", asof=date(2026, 7, 24), insider=insider, public_float=3253.4e9,
-            float_history=floats, shares_outstanding=15.056e9,
+            "AAPL",
+            asof=date(2026, 7, 24),
+            insider=insider,
+            public_float=3253.4e9,
+            float_history=floats,
+            shares_outstanding=15.056e9,
         )
         assert found is not None
         assert found["source"] == "sec_insider"
@@ -173,34 +187,57 @@ class TestResolvePrice:
     def test_reports_age(self):
         insider = _FakeInsider(pd.Series({pd.Timestamp("2026-06-01"): 100.0}))
         found = resolve_price(
-            "X", asof=date(2026, 7, 24), insider=insider, public_float=None,
-            float_history=None, shares_outstanding=1e9,
+            "X",
+            asof=date(2026, 7, 24),
+            insider=insider,
+            public_float=None,
+            float_history=None,
+            shares_outstanding=1e9,
         )
         assert found["age_days"] == 53
 
     def test_refuses_everything_too_stale(self):
         insider = _FakeInsider(pd.Series({pd.Timestamp("2020-01-01"): 100.0}))
-        assert resolve_price(
-            "X", asof=date(2026, 7, 24), insider=insider, public_float=None,
-            float_history=None, shares_outstanding=1e9, max_age_days=400,
-        ) is None
+        assert (
+            resolve_price(
+                "X",
+                asof=date(2026, 7, 24),
+                insider=insider,
+                public_float=None,
+                float_history=None,
+                shares_outstanding=1e9,
+                max_age_days=400,
+            )
+            is None
+        )
 
     def test_falls_back_to_float_when_no_insider_data(self):
         insider = _FakeInsider(None)
         floats = pd.Series({pd.Timestamp("2026-06-30"): 50e9})
         found = resolve_price(
-            "X", asof=date(2026, 7, 24), insider=insider, public_float=50e9,
-            float_history=floats, shares_outstanding=1e9,
+            "X",
+            asof=date(2026, 7, 24),
+            insider=insider,
+            public_float=50e9,
+            float_history=floats,
+            shares_outstanding=1e9,
         )
         assert found is not None
         assert found["source"] == "public_float_lower_bound"
         assert found["valuation_eligible"] is False
 
     def test_returns_none_with_nothing_available(self):
-        assert resolve_price(
-            "X", asof=date(2026, 7, 24), insider=_FakeInsider(None), public_float=None,
-            float_history=None, shares_outstanding=1e9,
-        ) is None
+        assert (
+            resolve_price(
+                "X",
+                asof=date(2026, 7, 24),
+                insider=_FakeInsider(None),
+                public_float=None,
+                float_history=None,
+                shares_outstanding=1e9,
+            )
+            is None
+        )
 
 
 class TestPriceShareBasis:
@@ -250,8 +287,9 @@ class TestBenchmark:
         from stock_grader.data.prices import BenchmarkProvider
 
         provider = BenchmarkProvider(cache_dir="/tmp/sg-test-bench")
-        raw = pd.DataFrame({"close": [100.0, 101.0]},
-                           index=pd.to_datetime(["2026-01-01", "2026-01-02"]))
+        raw = pd.DataFrame(
+            {"close": [100.0, 101.0]}, index=pd.to_datetime(["2026-01-01", "2026-01-02"])
+        )
         raw.to_csv(provider.cache_dir / "bench_SP500.csv")
         frame = provider.get("SP500")
         assert frame is not None
@@ -272,7 +310,10 @@ class TestBenchmark:
         # capm_alpha also declares needs_risk_free: a 0% rate is a different, flattering statistic.
         risk_free = pd.Series(0.05, index=prices["X"].index)
         snapshot = SecuritySnapshot(
-            ticker="X", asof=_date(2026, 7, 24), prices=prices["X"], benchmark=benchmark,
+            ticker="X",
+            asof=_date(2026, 7, 24),
+            prices=prices["X"],
+            benchmark=benchmark,
             risk_free=risk_free,
         )
         for name in ("beta", "capm_alpha", "idiosyncratic_volatility"):
@@ -288,7 +329,8 @@ class TestBenchmark:
         from stock_grader.types import Coverage, SecuritySnapshot
 
         snapshot = SecuritySnapshot(
-            ticker="X", asof=_date(2026, 7, 24),
+            ticker="X",
+            asof=_date(2026, 7, 24),
             prices=generate_prices("X", n_days=700, seed=2, synthetic=True),
         )
         result = evaluate_one(METRICS.get("beta"), snapshot)
@@ -426,8 +468,9 @@ class TestPublicAPI:
             "import stock_grader as sg;"
             "print(len(sg.METRICS), len(sg.WEIGHTINGS), len(sg.NORMALIZERS), len(sg.AGGREGATORS))"
         )
-        out = subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True,
-                             check=True).stdout.split()
+        out = subprocess.run(
+            [sys.executable, "-c", snippet], capture_output=True, text=True, check=True
+        ).stdout.split()
         metrics, weightings = int(out[0]), int(out[1])
         assert metrics > 100, f"only {metrics} metrics registered on a plain import"
         assert weightings >= 23

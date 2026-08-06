@@ -85,12 +85,22 @@ class SectorClass(str, Enum):
     @property
     def has_classified_balance_sheet(self) -> bool:
         """False where current/non-current is not a meaningful split."""
-        return self not in (SectorClass.BANK, SectorClass.INSURANCE, SectorClass.REIT, SectorClass.HOLDING)
+        return self not in (
+            SectorClass.BANK,
+            SectorClass.INSURANCE,
+            SectorClass.REIT,
+            SectorClass.HOLDING,
+        )
 
     @property
     def has_cogs(self) -> bool:
         """False where 'cost of goods sold' and therefore gross margin are undefined."""
-        return self not in (SectorClass.BANK, SectorClass.INSURANCE, SectorClass.REIT, SectorClass.HOLDING)
+        return self not in (
+            SectorClass.BANK,
+            SectorClass.INSURANCE,
+            SectorClass.REIT,
+            SectorClass.HOLDING,
+        )
 
 
 @dataclass(slots=True)
@@ -413,9 +423,7 @@ class Fundamentals:
         if not components:
             return None
         reported = [c for c in components if c in frame.columns and frame[c].notna().any()]
-        parts = [
-            self._latest_direct(frame, c, asof, max_age_days) for c in reported
-        ]
+        parts = [self._latest_direct(frame, c, asof, max_age_days) for c in reported]
         # Every component the company reports must resolve. A partial sum here is exactly what
         # reported Lowe's $39.8B of debt as $380M, and the error runs one way: it understates
         # leverage, making a company look safer and cheaper than it is.
@@ -469,7 +477,9 @@ class Fundamentals:
         window = series.iloc[-n:]
         if annual and require_span and n > 1:
             try:
-                elapsed = (pd.Timestamp(window.index[-1]) - pd.Timestamp(window.index[0])).days / 365.25
+                elapsed = (
+                    pd.Timestamp(window.index[-1]) - pd.Timestamp(window.index[0])
+                ).days / 365.25
             except (TypeError, ValueError):
                 return window
             expected = n - 1

@@ -265,9 +265,7 @@ def summarize_cell(cell: dict, outcomes: list[SeedOutcome]) -> CellResult:
         / n,
         mean_dsr=_finite_mean([o.dsr for o in outcomes]),
         mean_realized_rank_ic=sum(o.mean_rank_ic for o in outcomes) / n,
-        insufficient_sample_verdicts=sum(
-            "INSUFFICIENT SAMPLE" in o.verdict for o in outcomes
-        ),
+        insufficient_sample_verdicts=sum("INSUFFICIENT SAMPLE" in o.verdict for o in outcomes),
         label=str(cell.get("label", "")),
         regime=str(cell.get("regime", "")),
         cadence=str(cell.get("cadence", "")),
@@ -350,9 +348,7 @@ def smallest_detectable_ic(
     """
 
     candidates = sorted(
-        r.planted_ic
-        for r in results
-        if r.planted_ic > 0 and r.gate_pass_rate >= threshold
+        r.planted_ic for r in results if r.planted_ic > 0 and r.gate_pass_rate >= threshold
     )
     return candidates[0] if candidates else None
 
@@ -457,8 +453,7 @@ def render_band_markdown(
         "the opposite way from the truth and this table's small-band power is "
         "an overstatement on that count.",
         "",
-        "So the regime axis is run as a decomposition rather than one "
-        "contrast:",
+        "So the regime axis is run as a decomposition rather than one contrast:",
         "",
         "1. **Volatility level** (`baseline-largecap` vs "
         "`smallcap-homogeneous`, identical in every other respect). Enters "
@@ -528,8 +523,7 @@ def render_band_markdown(
         "trial (E[max] benchmark 0, DSR == PSR). The real programme charges "
         "its full nominal trial count, so real deflation is strictly harsher "
         "and true power is <= every number below.",
-        "- Every input parquet was verified against the grid manifest's sha256 "
-        "before evaluation.",
+        "- Every input parquet was verified against the grid manifest's sha256 before evaluation.",
         "",
         "### Replication counts and how much noise they carry",
         "",
@@ -637,9 +631,7 @@ def _band_readings(
 
     lines: list[str] = []
     for band in bands:
-        cells = _select(
-            results, label=band, regime=primary_regime, periods=primary_periods
-        )
+        cells = _select(results, label=band, regime=primary_regime, periods=primary_periods)
         if not cells:
             continue
         mdi = smallest_detectable_ic(cells)
@@ -699,9 +691,7 @@ def _regime_pair_gap(
     ``other - base``, or ``None`` when the two regimes share no signal cell.
     """
 
-    keyed = {
-        (r.label, r.months, r.planted_ic, r.regime): r for r in results if r.regime
-    }
+    keyed = {(r.label, r.months, r.planted_ic, r.regime): r for r in results if r.regime}
     gaps = [
         keyed[(label, periods, ic, other)].gate_pass_rate - result.gate_pass_rate
         for (label, periods, ic, regime), result in keyed.items()
@@ -712,9 +702,7 @@ def _regime_pair_gap(
     return len(gaps), sum(gaps) / len(gaps), max(gaps, key=abs)
 
 
-def _regime_section(
-    results: Sequence[CellResult], regime_specs: dict
-) -> list[str]:
+def _regime_section(results: Sequence[CellResult], regime_specs: dict) -> list[str]:
     """Decompose the regime effect over every ordered pair the grid supports."""
 
     regimes = sorted({r.regime for r in results if r.regime})
@@ -844,8 +832,7 @@ def render_markdown(manifest: dict, results: list[CellResult], *, date_tag: str)
         "(E[max] benchmark 0, so DSR == PSR). The production ledger accumulates "
         "trials monthly, so production deflation is at least as harsh and true "
         "power is <= every number below.",
-        "- Every input parquet was verified against the grid manifest's sha256 "
-        "before evaluation.",
+        "- Every input parquet was verified against the grid manifest's sha256 before evaluation.",
         "- Sampling noise: most cells use 20 replications (100 for the 3/6-month "
         "null cells), so a tabulated rate carries a binomial standard error of "
         "up to ~0.11. Adjacent cells can invert — e.g. planted 0.02 vs 0.03 at "
@@ -855,8 +842,7 @@ def render_markdown(manifest: dict, results: list[CellResult], *, date_tag: str)
         "",
         "## False-positive rate at planted IC = 0",
         "",
-        "Fraction of null replications the gate passed "
-        f"(target: <= alpha = {GATE_ALPHA:.2f}).",
+        f"Fraction of null replications the gate passed (target: <= alpha = {GATE_ALPHA:.2f}).",
         "",
         "| months | " + " | ".join(f"universe {u}" for u in universes_axis) + " | seeds |",
         "|---|" + "---|" * (len(universes_axis) + 1),
@@ -917,7 +903,9 @@ def _honest_paragraph(results: list[CellResult]) -> str:
         candidates = sorted(
             r.planted_ic
             for r in results
-            if r.months == months and r.universe == universe and r.planted_ic > 0
+            if r.months == months
+            and r.universe == universe
+            and r.planted_ic > 0
             and r.gate_pass_rate >= threshold
         )
         return f"{candidates[0]:.2f}" if candidates else "none in the tested grid (max 0.05)"
@@ -993,9 +981,9 @@ def write_artifacts(
     else:
         body = render_markdown(manifest, results, date_tag=date_tag)
     payload = {
-        "schema_version": "stock_grader.power_table/2" if banded else (
-            "stock_grader.power_table/1"
-        ),
+        "schema_version": "stock_grader.power_table/2"
+        if banded
+        else ("stock_grader.power_table/1"),
         "date": date_tag,
         "evaluator": {
             "command": "stock-grader backtest",

@@ -255,9 +255,7 @@ def test_download_validates_the_get_generation_when_head_is_ahead(
                 "Last-Modified": _http_date(date(2026, 7, 31)),
             }
 
-        def get_bytes_with_headers(
-            self, _url: str
-        ) -> tuple[bytes, dict[str, str]]:
+        def get_bytes_with_headers(self, _url: str) -> tuple[bytes, dict[str, str]]:
             self.get_calls += 1
             return content, {
                 "Content-Length": str(len(content)),
@@ -569,9 +567,7 @@ def test_rank_observations_are_bounded_for_plausibility_and_recency() -> None:
         }
     }
 
-    build = build_sec_float_universe_with_drops(
-        FixtureSymbols(), facts, _spec(), date(2026, 7, 31)
-    )
+    build = build_sec_float_universe_with_drops(FixtureSymbols(), facts, _spec(), date(2026, 7, 31))
 
     seated = {item.ticker: item.public_float for item in build.candidates}
     assert seated["AAA"] == 100.0, "the quadrillion tag must not become the rank key"
@@ -582,9 +578,7 @@ def test_rank_observations_are_bounded_for_plausibility_and_recency() -> None:
     assert ("AAA", "float_exceeds_plausibility_ceiling") in {
         (d.ticker, d.reason) for d in build.notes
     }
-    assert ("BBB", "float_observation_too_stale") in {
-        (d.ticker, d.reason) for d in build.drops
-    }
+    assert ("BBB", "float_observation_too_stale") in {(d.ticker, d.reason) for d in build.drops}
     # Loud, not silent: every rejection carries the values that triggered it.
     assert all(d.detail for d in [*build.drops, *build.notes] if d.reason.startswith("float_"))
     # A seated ticker must never appear as an exclusion.
@@ -600,9 +594,7 @@ def test_dropped_and_substituted_listings_are_recorded_in_a_manifest() -> None:
     security that lost a one-per-CIK contest was never named anywhere.
     """
     facts = FixtureFacts()
-    build = build_sec_float_universe_with_drops(
-        FixtureSymbols(), facts, _spec(), date(2026, 7, 31)
-    )
+    build = build_sec_float_universe_with_drops(FixtureSymbols(), facts, _spec(), date(2026, 7, 31))
 
     by_reason = {d.reason for d in build.drops}
     assert "duplicate_cik" in by_reason, "the displaced sibling listing must be named"
@@ -638,7 +630,9 @@ def test_dropped_and_substituted_listings_are_recorded_in_a_manifest() -> None:
         for d in [*rendered["drops"], *rendered["notes"]]
     )
     # Exclusions are disjoint from the universe, so the pool is the complement.
-    assert not ({item.ticker for item in build.candidates} & {d["ticker"] for d in rendered["drops"]})
+    assert not (
+        {item.ticker for item in build.candidates} & {d["ticker"] for d in rendered["drops"]}
+    )
 
 
 def test_filer_cik_substitution_recovers_an_issuer_behind_a_registrant_shell() -> None:
@@ -747,7 +741,11 @@ def test_second_signal_rejections_are_opt_in_and_catch_scale_errors() -> None:
         {"end": f"202{i}-06-30", "filed": f"202{i}-07-15", "val": 4.0e9 + i * 1e8}
         for i in range(3, 6)
     ]
-    corrupt = {"end": "2026-06-30", "filed": "2026-07-15", "val": 4.4e12}  # UNDER the ceiling: only a second signal can catch it
+    corrupt = {
+        "end": "2026-06-30",
+        "filed": "2026-07-15",
+        "val": 4.4e12,
+    }  # UNDER the ceiling: only a second signal can catch it
     facts.rows["0000000001"] = {
         "facts": {
             "dei": {"EntityPublicFloat": {"units": {"USD": [*history, corrupt]}}},
@@ -773,9 +771,7 @@ def test_second_signal_rejections_are_opt_in_and_catch_scale_errors() -> None:
         "max_float_to_revenue": 500,
         "max_float_jump_vs_recent": 1000,
     }
-    build = build_sec_float_universe_with_drops(
-        FixtureSymbols(), facts, spec, date(2026, 7, 31)
-    )
+    build = build_sec_float_universe_with_drops(FixtureSymbols(), facts, spec, date(2026, 7, 31))
     seated = {c.ticker: c for c in build.candidates}
     assert seated["AAA"].public_float == pytest.approx(4.5e9), (
         "the corrupt observation must be rejected and the sane older one seated"
@@ -786,9 +782,7 @@ def test_second_signal_rejections_are_opt_in_and_catch_scale_errors() -> None:
     # Without the opt-in keys (the immutable v1 spec), behavior is unchanged:
     # the corrupt value wins because it passes the bare ceiling. That is the
     # documented v1 defect, preserved so v1 rebuilds stay reproducible.
-    v1 = build_sec_float_universe_with_drops(
-        FixtureSymbols(), facts, _spec(), date(2026, 7, 31)
-    )
+    v1 = build_sec_float_universe_with_drops(FixtureSymbols(), facts, _spec(), date(2026, 7, 31))
     assert {c.ticker: c.public_float for c in v1.candidates}["AAA"] == pytest.approx(4.4e12)
 
 
@@ -796,7 +790,5 @@ def test_missing_revenue_skips_the_cross_check_rather_than_failing() -> None:
     """Absence of the cross-check datum is not evidence of corruption."""
     facts = FixtureFacts()  # fixture issuers file no revenue at all
     spec = {**_spec(), "max_float_to_revenue": 500}
-    build = build_sec_float_universe_with_drops(
-        FixtureSymbols(), facts, spec, date(2026, 7, 31)
-    )
+    build = build_sec_float_universe_with_drops(FixtureSymbols(), facts, spec, date(2026, 7, 31))
     assert build.candidates, "no-revenue issuers must still seat on the ceiling alone"

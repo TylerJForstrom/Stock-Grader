@@ -299,17 +299,12 @@ def test_corwin_schultz_floors_the_window_mean_once_never_each_pair():
     # two-day span stays wide. Closes at the other end would let the shift
     # bring the ranges back on top of each other, and the tape would stop
     # producing the negative pair estimates this test is about.
-    gappy_close = [
-        gappy_high[index] if index % 2 == 0 else gappy_low[index]
-        for index in range(22)
-    ]
+    gappy_close = [gappy_high[index] if index % 2 == 0 else gappy_low[index] for index in range(22)]
 
     raw_estimates = _raw_pair_estimates(gappy_high, gappy_low, gappy_close)
     assert sum(1 for value in raw_estimates if value < 0) > len(raw_estimates) // 3
 
-    window_floored, _ = costs.corwin_schultz_spread_bps(
-        gappy_high, gappy_low, gappy_close
-    )
+    window_floored, _ = costs.corwin_schultz_spread_bps(gappy_high, gappy_low, gappy_close)
     per_pair = 1e4 * sum(max(value, 0.0) for value in raw_estimates) / len(raw_estimates)
     assert window_floored is not None and window_floored > 0.0
     assert per_pair > 2 * window_floored, (
@@ -329,13 +324,8 @@ def _raw_pair_estimates(highs, lows, closes) -> list[float]:
     denominator = 3.0 - 2.0 * math.sqrt(2.0)
     estimates = []
     for index in range(len(highs) - 1):
-        high_2, low_2 = costs.gap_adjusted_range(
-            closes[index], highs[index + 1], lows[index + 1]
-        )
-        beta = (
-            math.log(highs[index] / lows[index]) ** 2
-            + math.log(high_2 / low_2) ** 2
-        )
+        high_2, low_2 = costs.gap_adjusted_range(closes[index], highs[index + 1], lows[index + 1])
+        beta = math.log(highs[index] / lows[index]) ** 2 + math.log(high_2 / low_2) ** 2
         gamma = math.log(max(highs[index], high_2) / min(lows[index], low_2)) ** 2
         alpha = (math.sqrt(2 * beta) - math.sqrt(beta)) / denominator - math.sqrt(
             gamma / denominator
@@ -382,9 +372,7 @@ def test_the_overnight_gap_adjustment_is_applied_and_is_not_cosmetic():
     closes = [row[2] for row in _GAPPED_TAPE]
 
     adjusted, pairs = costs.corwin_schultz_spread_bps(highs, lows, closes)
-    unadjusted, _ = costs.corwin_schultz_spread_bps(
-        highs, lows, closes, gap_adjust=False
-    )
+    unadjusted, _ = costs.corwin_schultz_spread_bps(highs, lows, closes, gap_adjust=False)
     assert pairs == 11
     assert unadjusted == 0.0
     assert adjusted is not None and adjusted > 100.0
@@ -405,9 +393,7 @@ def test_closes_are_required_by_the_spread_estimator():
         costs.corwin_schultz_spread_bps(highs, lows)
 
 
-@pytest.mark.parametrize(
-    "vector", costs.BAR_GOLDEN_VECTORS, ids=lambda v: v["name"]
-)
+@pytest.mark.parametrize("vector", costs.BAR_GOLDEN_VECTORS, ids=lambda v: v["name"])
 def test_raw_bar_golden_vector_is_reproduced(vector: dict):
     """The pin, one level below the composition vectors.
 
@@ -445,9 +431,7 @@ def test_raw_bar_golden_vector_is_reproduced(vector: dict):
     assert pairs == expected["usable_pairs"]
     assert spread == pytest.approx(expected["cs_spread_bps"], rel=1e-9, abs=1e-12)
     assert sigma == pytest.approx(expected["sigma"], rel=1e-9, abs=1e-12)
-    assert lam == pytest.approx(
-        expected["amihud_lambda_bps_per_musd"], rel=1e-9, abs=1e-12
-    )
+    assert lam == pytest.approx(expected["amihud_lambda_bps_per_musd"], rel=1e-9, abs=1e-12)
 
     # The vector also records what the SAME tape produces without the gap
     # adjustment, so an implementation that omits it fails here rather than
@@ -459,9 +443,7 @@ def test_raw_bar_golden_vector_is_reproduced(vector: dict):
         excluded_pairs=excluded,
         gap_adjust=False,
     )
-    assert unadjusted == pytest.approx(
-        vector["unadjusted_cs_spread_bps"], rel=1e-9, abs=1e-12
-    )
+    assert unadjusted == pytest.approx(vector["unadjusted_cs_spread_bps"], rel=1e-9, abs=1e-12)
 
 
 def test_the_bar_vectors_cover_what_the_composition_vectors_cannot():
@@ -478,9 +460,7 @@ def test_the_bar_vectors_cover_what_the_composition_vectors_cannot():
         "the gapped vector must DISCRIMINATE: an implementation without the "
         "overnight-gap adjustment has to fail it"
     )
-    contained = next(
-        v for v in costs.BAR_GOLDEN_VECTORS if v["name"] == "contained-closes"
-    )
+    contained = next(v for v in costs.BAR_GOLDEN_VECTORS if v["name"] == "contained-closes")
     assert contained["unadjusted_cs_spread_bps"] == contained["expected"]["cs_spread_bps"]
 
 

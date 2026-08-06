@@ -335,9 +335,7 @@ def _latest_float(
     # selected. A superseded historical value is ordinary filing history, not a
     # defect, so it must not be reported; the value that WOULD have set this
     # issuer's rank is the one worth objecting to.
-    revenue = (
-        _latest_annual_revenue(facts, asof) if max_to_revenue is not None else None
-    )
+    revenue = _latest_annual_revenue(facts, asof) if max_to_revenue is not None else None
     ordered = sorted(eligible, key=lambda item: (item[1], item[0]), reverse=True)
     for index, (end, filed, value) in enumerate(ordered):
         if filed < oldest_filed:
@@ -390,11 +388,7 @@ def _latest_float(
             if len(history) >= 2:
                 history.sort()
                 mid = len(history) // 2
-                median = (
-                    history[mid]
-                    if len(history) % 2
-                    else (history[mid - 1] + history[mid]) / 2
-                )
+                median = history[mid] if len(history) % 2 else (history[mid - 1] + history[mid]) / 2
                 if median > 0 and value > max_jump_vs_recent * median:
                     if rejections is not None:
                         rejections.append(
@@ -410,7 +404,6 @@ def _latest_float(
                     continue
         return value, end, filed
     return None
-
 
 
 def _listing_flags(source: _SymbolSource, asof: date) -> dict[str, _ListingRow]:

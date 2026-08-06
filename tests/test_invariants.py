@@ -198,7 +198,9 @@ def test_ces_rho_controls_compensation():
 def test_weights_satisfy_contract(method, panel):
     """Every method: non-negative, finite, sums to one, indexed by the components."""
     ctx = wt.WeightingContext(
-        forward_returns=pd.Series(np.random.default_rng(2).standard_normal(len(panel)), index=panel.index)
+        forward_returns=pd.Series(
+            np.random.default_rng(2).standard_normal(len(panel)), index=panel.index
+        )
     )
     weights = wt.compute_weights(panel, method=method, ctx=ctx)
     assert list(weights.index) == list(panel.columns)
@@ -247,7 +249,9 @@ def test_supervised_methods_recover_a_planted_signal(panel):
     """
     returns = 2.0 * panel["roe"] + 0.25 * np.random.default_rng(3).standard_normal(len(panel))
     for method in ("ic", "regression", "shapley"):
-        weights = wt.compute_weights(panel, method=method, ctx=wt.WeightingContext(forward_returns=returns))
+        weights = wt.compute_weights(
+            panel, method=method, ctx=wt.WeightingContext(forward_returns=returns)
+        )
         assert weights["roe"] > weights["debt"], f"{method} failed to find the planted signal"
 
 
@@ -266,8 +270,9 @@ def test_ahp_flags_inconsistent_judgements():
         [[1.0, 5.0, 1 / 5], [1 / 5, 1.0, 5.0], [5.0, 1 / 5, 1.0]], index=columns, columns=columns
     )
     ctx = wt.WeightingContext(pairwise=matrix)
-    weights = wt.compute_weights(pd.DataFrame(columns=columns, data=[[1.0, 2.0, 3.0]]),
-                                 method="ahp", ctx=ctx)
+    weights = wt.compute_weights(
+        pd.DataFrame(columns=columns, data=[[1.0, 2.0, 3.0]]), method="ahp", ctx=ctx
+    )
     assert weights.sum() == pytest.approx(1.0)
     assert any("inconsistent" in w for w in ctx.warnings)
 
@@ -341,7 +346,8 @@ def test_accruals_undefined_for_loss_makers():
             index=quarters,
         )
         return SecuritySnapshot(
-            ticker="X", asof=_date(2026, 1, 31),
+            ticker="X",
+            asof=_date(2026, 1, 31),
             fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
         )
 
@@ -385,7 +391,9 @@ def test_hurst_is_unbiased_on_a_random_walk():
             {"close": level, "adj_close": level},
             index=pd.bdate_range(end="2026-07-24", periods=756),
         )
-        value = hurst_exponent.fn(SecuritySnapshot(ticker="X", asof=_date(2026, 7, 24), prices=prices))
+        value = hurst_exponent.fn(
+            SecuritySnapshot(ticker="X", asof=_date(2026, 7, 24), prices=prices)
+        )
         if value is not None:
             values.append(value)
     assert abs(float(np.mean(values)) - 0.5) < 0.04
@@ -429,28 +437,33 @@ def test_piotroski_requires_all_nine_published_components():
     def snapshot(columns: dict) -> SecuritySnapshot:
         frame = pd.DataFrame(columns, index=years)
         return SecuritySnapshot(
-            ticker="X", asof=_date(2026, 6, 30),
+            ticker="X",
+            asof=_date(2026, 6, 30),
             fundamentals=Fundamentals(frame, frame, pd.Series(dtype="object")),
         )
 
     # Only the four profitability tests are computable, and all four pass.
-    sparse = snapshot({
-        "assets": [1000.0, 1000.0, 1000.0],
-        "net_income": [float("nan"), 50.0, 100.0],
-        "cfo": [float("nan"), float("nan"), 150.0],
-    })
+    sparse = snapshot(
+        {
+            "assets": [1000.0, 1000.0, 1000.0],
+            "net_income": [float("nan"), 50.0, 100.0],
+            "cfo": [float("nan"), float("nan"), 150.0],
+        }
+    )
     # Every test computable, and all nine pass.
-    full = snapshot({
-        "assets": [1000.0, 1000.0, 1000.0],
-        "net_income": [float("nan"), 50.0, 100.0],
-        "cfo": [float("nan"), float("nan"), 150.0],
-        "long_term_debt": [float("nan"), 300.0, 200.0],
-        "current_assets": [float("nan"), 400.0, 500.0],
-        "current_liabilities": [float("nan"), 200.0, 180.0],
-        "shares_diluted": [float("nan"), 100.0, 99.0],
-        "gross_profit": [float("nan"), 300.0, 400.0],
-        "revenue": [float("nan"), 800.0, 900.0],
-    })
+    full = snapshot(
+        {
+            "assets": [1000.0, 1000.0, 1000.0],
+            "net_income": [float("nan"), 50.0, 100.0],
+            "cfo": [float("nan"), float("nan"), 150.0],
+            "long_term_debt": [float("nan"), 300.0, 200.0],
+            "current_assets": [float("nan"), 400.0, 500.0],
+            "current_liabilities": [float("nan"), 200.0, 180.0],
+            "shares_diluted": [float("nan"), 100.0, 99.0],
+            "gross_profit": [float("nan"), 300.0, 400.0],
+            "revenue": [float("nan"), 800.0, 900.0],
+        }
+    )
     sparse_score = piotroski_f_score.fn(sparse)
     full_score = piotroski_f_score.fn(full)
     assert sparse_score is None
@@ -503,8 +516,9 @@ def test_synthetic_prices_are_stable_across_processes():
         "print(round(float(generate_prices('AAPL',n_days=50,synthetic=True)['close'].iloc[-1]),6))"
     )
     runs = {
-        subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True,
-                       check=True).stdout.strip()
+        subprocess.run(
+            [sys.executable, "-c", snippet], capture_output=True, text=True, check=True
+        ).stdout.strip()
         for _ in range(3)
     }
     assert len(runs) == 1, f"non-deterministic across processes: {runs}"

@@ -298,9 +298,7 @@ class FoundryDataSource:
         before D's US market close. Any dated artifact built from it must
         treat D as the earliest usable signal date, never D-1.
         """
-        blob = self._read_dataset_file(
-            _SENTIMENT_DATASET_DIRS["ticker_trends"], f"{day}.jsonl"
-        )
+        blob = self._read_dataset_file(_SENTIMENT_DATASET_DIRS["ticker_trends"], f"{day}.jsonl")
         return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
 
     def sentiment_buckets(self, day: str) -> list[dict[str, Any]]:
@@ -309,9 +307,7 @@ class FoundryDataSource:
         Same producer and licensing as :meth:`sentiment_trends`; rows carry
         bucket_start (UTC) and bucket_minutes alongside the aggregate counts.
         """
-        blob = self._read_dataset_file(
-            _SENTIMENT_DATASET_DIRS["ticker_buckets"], f"{day}.jsonl"
-        )
+        blob = self._read_dataset_file(_SENTIMENT_DATASET_DIRS["ticker_buckets"], f"{day}.jsonl")
         return [json.loads(line) for line in blob.decode("utf-8").splitlines() if line.strip()]
 
     def dividends(self) -> pd.DataFrame:

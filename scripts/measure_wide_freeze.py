@@ -32,7 +32,6 @@ def _peak_rss_bytes() -> int:
         usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         return int(usage) * (1024 if sys.platform.startswith("linux") else 1)
 
-
     class ProcessMemoryCountersEx(ctypes.Structure):
         _fields_ = [
             ("cb", ctypes.c_ulong),
@@ -152,9 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     measurements["peak_rss_bytes"] = _peak_rss_bytes()
     panels = sorted(
-        path
-        for path in root.glob("*/*.parquet")
-        if path.resolve() not in preexisting_panels
+        path for path in root.glob("*/*.parquet") if path.resolve() not in preexisting_panels
     )
     measurements["panel_files"] = len(panels)
     measurements["panel_bytes"] = sum(path.stat().st_size for path in panels)

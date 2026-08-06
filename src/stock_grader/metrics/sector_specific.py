@@ -89,8 +89,9 @@ def efficiency_ratio(s: SecuritySnapshot) -> float | None:
     the 0.50-0.60 range; above ~0.70 is a franchise with a cost problem. This is the single most
     watched operating ratio in bank analysis and the closest thing a bank has to an operating margin.
     """
-    return safe_div(_ttm(s, "noninterest_expense"), _bank_revenue(s),
-                    positive_denominator=True, cap=3.0)
+    return safe_div(
+        _ttm(s, "noninterest_expense"), _bank_revenue(s), positive_denominator=True, cap=3.0
+    )
 
 
 @metric("net_interest_income_to_assets", pillar="profitability", direction=1, unit="ratio")
@@ -129,8 +130,14 @@ def deposits_to_assets(s: SecuritySnapshot) -> float | None:
     return safe_div(_latest(s, "deposits"), _latest(s, "assets"), positive_denominator=True)
 
 
-@metric("loans_to_deposits", pillar="health", direction=0, unit="ratio", ideal_band=(0.60, 0.90),
-        winsor=(0.0, 3.0))
+@metric(
+    "loans_to_deposits",
+    pillar="health",
+    direction=0,
+    unit="ratio",
+    ideal_band=(0.60, 0.90),
+    winsor=(0.0, 3.0),
+)
 def loans_to_deposits(s: SecuritySnapshot) -> float | None:
     """Loans over deposits — **non-monotonic**, with an ideal band around 60-90%.
 
@@ -139,15 +146,15 @@ def loans_to_deposits(s: SecuritySnapshot) -> float | None:
     below 0.6 the bank is sitting on deposits it cannot deploy, which is safe but unprofitable.
     Both ends are worse than the middle.
     """
-    return safe_div(_latest(s, "loans"), _latest(s, "deposits"),
-                    positive_denominator=True, cap=3.0)
+    return safe_div(_latest(s, "loans"), _latest(s, "deposits"), positive_denominator=True, cap=3.0)
 
 
 @metric("allowance_coverage", pillar="health", direction=1, unit="ratio", winsor=(0.0, 0.5))
 def allowance_coverage(s: SecuritySnapshot) -> float | None:
     """Loan-loss allowance over gross loans — the cushion already set aside against credit losses."""
-    return safe_div(_latest(s, "loan_loss_allowance"), _latest(s, "loans"),
-                    positive_denominator=True, cap=0.5)
+    return safe_div(
+        _latest(s, "loan_loss_allowance"), _latest(s, "loans"), positive_denominator=True, cap=0.5
+    )
 
 
 @metric("provision_burden", pillar="quality", direction=-1, unit="ratio", winsor=(-0.5, 1.0))
@@ -160,8 +167,9 @@ def provision_burden(s: SecuritySnapshot) -> float | None:
     return safe_div(_ttm(s, "loan_loss_provision"), _bank_revenue(s), cap=1.0)
 
 
-@metric("tangible_common_equity_ratio", pillar="health", direction=1, unit="ratio",
-        winsor=(-0.2, 0.5))
+@metric(
+    "tangible_common_equity_ratio", pillar="health", direction=1, unit="ratio", winsor=(-0.2, 0.5)
+)
 def tangible_common_equity_ratio(s: SecuritySnapshot) -> float | None:
     """Tangible common equity over tangible assets — a proxy for regulatory capital.
 
