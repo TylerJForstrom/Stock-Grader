@@ -267,7 +267,18 @@ annualized_net_spread, annualized_spread_sharpe
 max_drawdown, mean_turnover, quantile_monotonicity
 rank_ic_interval, net_spread_interval
 limitations
+adv_band
 ```
+
+`adv_band` is `null` for every panel that is not one band of a pre-registered ADV partition —
+frozen score panels, synthetic calibration grids, and any signal panel built from an unbanded
+observation dataset. When it is present it carries the band's identity (`band_id` and the
+dollar edges in `band`), the pre-registration it was cut under, the declared
+`min_evaluable_periods` floor, this panel's `evaluable_periods`, and a `reportable` verdict with
+`not_reportable_because` naming every leg that failed. `reportable: false` means the programme
+licenses no band statistic from the panel: `stock-grader backtest` exits 2 rather than printing
+one, and `--allow-unreportable-band` is required to get an explicitly caveated exploratory run
+whose report leads with a `NOT REPORTABLE` limitation and whose ledger line records it.
 
 `input_contract` has five booleans:
 

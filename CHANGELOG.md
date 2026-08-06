@@ -7,6 +7,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A band below the pre-registered evaluable-period floor is refused, not silently reported**
+  (`stock_grader/signal_panel.py`, `stock_grader/backtest.py`, `stock_grader/cli.py`,
+  `docs/REPORT-SCHEMA.md`). Stock-Vault computes a `reportable` verdict for every ADV band it
+  exports — a band with fewer than the declared number of evaluable periods is written but marked
+  NOT REPORTABLE — and stamps it on the observation dataset's manifest. Nothing consumed it. The
+  return join copied the spec keys and dropped `adv_band`, so the evaluable panel the evaluator
+  actually opens carried no band identity, no floor and no verdict; a band the programme refuses
+  was indistinguishable from one it permits, and its numbers would have been quoted as a band
+  result. `band_report` now composes the block from the vault's own verdict *and* this panel's
+  measured `periods_in_panel`, and `write_signal_panel` publishes it in both `build.json` and
+  `manifest.json`. The verdict is the AND of the two artifacts, so the thinner one binds; the
+  floor is read from the producer rather than hardcoded here; a manifest that declares no floor
+  yields `reportable: false` rather than a passing default. `stock-grader backtest` reads the
+  hash-verified sidecar *before* it evaluates anything, exits 2 on a refused band, and burns no
+  ledger trial doing so — a run that reports nothing must not charge the multiplicity budget.
+  `--allow-unreportable-band` runs it anyway as an explicitly caveated exploratory look: the
+  report leads with a `NOT REPORTABLE` limitation, the markdown heading says REFUSED, and the
+  ledger line records it permanently. `BacktestReport` gains `adv_band`. A panel with no band
+  metadata gains no key, no limitation and no new behaviour of any kind.
+
 - **The participation cap is applied to the position, not just to the price of it**
   (`stock_grader/backtest.py`, `docs/COST-MODEL.md`). `estimate_cost` caps an order at 1% of
   `ADV20$` and prices the *capped slice*, but nothing downstream reduced the position: a

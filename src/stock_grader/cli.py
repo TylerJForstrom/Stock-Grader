@@ -1093,6 +1093,50 @@ def _load_panel_frame(path: Path, *, strict: bool = True) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _load_adv_band(path: Path) -> dict | None:
+    """The panel's ADV-band verdict, from the sidecar beside it, or ``None``.
+
+    ``stock_grader.signal_panel.write_signal_panel`` writes the block into
+    ``build.json`` and mirrors it into the ``manifest.json`` that catalogs the
+    directory. ``build.json`` is preferred and is HASH-VERIFIED against that
+    catalog before it is read: a verdict that decides whether a result may be
+    quoted is exactly the file worth editing, and the manifest already proves
+    every other byte in the directory. Falling back to the catalog's own copy
+    keeps a directory whose sidecar predates this field readable.
+
+    ``None`` for every panel that is not a band — frozen score panels, the
+    synthetic calibration grids, and every v6 panel built from an unbanded
+    observation dataset. Those evaluate exactly as they always did.
+    """
+    from .frozen_manifest import verify_sibling_manifest
+
+    def read(candidate: Path) -> dict | None:
+        if not candidate.is_file():
+            return None
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            # A sidecar this function cannot parse says nothing about a band.
+            # It is not evidence of one either way, and inventing a refusal
+            # here would fire on every unrelated build.json in a panel
+            # directory this verb has always been able to read.
+            return None
+        band = payload.get("adv_band") if isinstance(payload, dict) else None
+        return band if isinstance(band, dict) and band else None
+
+    build_path = path.parent / "build.json"
+    band = read(build_path)
+    if band is not None:
+        # Verified only once a verdict is actually there to protect: a hash
+        # check is about THIS block, not about every file that happens to
+        # share the directory. strict=False because a directory with no
+        # catalog at all already warns through the panel read, and one
+        # missing manifest must not produce two differently-worded refusals.
+        verify_sibling_manifest(build_path, strict=False)
+        return band
+    return read(path.parent / "manifest.json")
+
+
 def _backtest_spec(panel: pd.DataFrame, args: argparse.Namespace) -> dict:
     """The hypothesis identity a backtest run observes, for pre-registration.
 
@@ -1148,6 +1192,36 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         panel_attested = (path.parent / "manifest.json").is_file() and verify_sibling_manifest(
             path
         )
+    # The band verdict is read and enforced BEFORE anything is evaluated or
+    # appended: a band the pre-registration refuses produces no statistic, so
+    # it must not burn a trial in the append-only ledger either. Silence here
+    # was the whole defect — the vault computed the flag and nothing on this
+    # side ever opened it.
+    try:
+        adv_band = _load_adv_band(path)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
+    allow_unreportable_band = bool(getattr(args, "allow_unreportable_band", False))
+    if adv_band is not None and not adv_band.get("reportable", False):
+        reasons = adv_band.get("not_reportable_because") or ["no reason recorded"]
+        if not allow_unreportable_band:
+            console.print(
+                f"[red]ADV band {adv_band.get('band_id') or '?'} is NOT REPORTABLE and "
+                f"this panel will not be evaluated: "
+                + "; ".join(str(item) for item in reasons)
+                + f". The pre-registration ({adv_band.get('preregistration') or 'see spec'}) "
+                "permits no band statistic below its evaluable-period floor, so a report "
+                "here would be a result the program does not license. Accumulate periods, "
+                "or pass --allow-unreportable-band for an explicitly caveated exploratory "
+                "run that says so on every line of its output.[/red]"
+            )
+            return 2
+        status_console.print(
+            f"[yellow]ADV band {adv_band.get('band_id') or '?'} is NOT REPORTABLE "
+            f"({'; '.join(str(item) for item in reasons)}); continuing under "
+            f"--allow-unreportable-band as an exploratory run[/yellow]"
+        )
     allow_mixed_universes = bool(getattr(args, "allow_mixed_universes", False))
     report = evaluate_walk_forward(
         panel,
@@ -1161,6 +1235,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             seed=args.seed,
         ),
         allow_mixed_universes=allow_mixed_universes,
+        adv_band=adv_band,
     )
     failed_contract = [
         name
@@ -1281,6 +1356,18 @@ def cmd_backtest(args: argparse.Namespace) -> int:
                 # for a panel nothing vouches for is byte-identical to one for a
                 # hash-verified panel.
                 + ("" if panel_attested else "; panel input UNATTESTED (no sibling manifest)")
+                # A permanent property of this result, like the unattested
+                # note above: without it the ledger line for a band the
+                # pre-registration refuses is byte-identical to one for a band
+                # it permits, and the deflation denominator would count both
+                # the same.
+                + (
+                    f"; ADV band {adv_band.get('band_id') or '?'} NOT REPORTABLE "
+                    f"(below the pre-registered evaluable-period floor) — exploratory "
+                    f"run under --allow-unreportable-band, not a band result"
+                    if adv_band is not None and not adv_band.get("reportable", False)
+                    else ""
+                )
                 + (
                     f"; primary re-evaluation of pre-registered declaration "
                     f"{declaration_sha[:12]} (spec {spec_hash[:12]}); schedule-declared "
@@ -1718,6 +1805,7 @@ def cmd_build_signal_panel(args: argparse.Namespace) -> int:
         SIGNAL_PANEL_VERSION,
         SignalPanelConfig,
         SignalPanelError,
+        band_report,
         build_signal_panel,
         write_signal_panel,
     )
@@ -1778,10 +1866,23 @@ def cmd_build_signal_panel(args: argparse.Namespace) -> int:
             console.print(f"[red]{signal}: {exc}[/red]")
             failed += 1
             continue
+        # Same block the artifact carries, recomputed from the same result —
+        # the builder's own output must say out loud when a band it just wrote
+        # is one the pre-registration refuses to have reported.
+        band = band_report(result)
+        if band is not None and not band.get("reportable", False):
+            console.print(
+                f"[yellow]{signal}: ADV band {band.get('band_id') or '?'} is NOT "
+                f"REPORTABLE — "
+                + "; ".join(str(item) for item in band.get("not_reportable_because") or [])
+                + ". The panel is written; no band statistic may be computed from "
+                "it.[/yellow]"
+            )
         summaries.append(
             {
                 "signal": signal,
                 "panel_version": result.panel_version,
+                **({} if band is None else {"adv_band": band}),
                 "periods": result.observation_periods,
                 "kept_rows": result.kept_rows,
                 "unresolved_rows": result.unresolved_rows,
@@ -1798,9 +1899,21 @@ def cmd_build_signal_panel(args: argparse.Namespace) -> int:
         print(to_json(summaries))
     else:
         for summary in summaries:
+            printed = summary.get("adv_band")
+            printed = printed if isinstance(printed, dict) else None
             console.print(
                 f"{summary['signal']} v{summary['panel_version']}: "
-                f"{summary['kept_rows']} row(s) over {summary['periods']} period(s), "
+                + (
+                    ""
+                    if printed is None
+                    else (
+                        f"band {printed.get('band_id') or '?'} "
+                        f"{'REPORTABLE' if printed.get('reportable') else 'NOT REPORTABLE'} "
+                        f"({printed.get('evaluable_periods')}/"
+                        f"{printed.get('min_evaluable_periods')} evaluable periods), "
+                    )
+                )
+                + f"{summary['kept_rows']} row(s) over {summary['periods']} period(s), "
                 f"wrote {summary['last_run']['parts_written']} part(s), "
                 f"unresolved={summary['unresolved_rows']}, "
                 f"dividend_coverage={summary['dividend_coverage']:.1%}, "
@@ -2471,6 +2584,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-mixed-universes",
         action="store_true",
         help="explicitly allow panels containing more than one universe_id",
+    )
+    p_backtest.add_argument(
+        "--allow-unreportable-band",
+        action="store_true",
+        help=(
+            "evaluate an ADV band whose sidecar says it is below the pre-registered "
+            "evaluable-period floor. Off by default: the program licenses no band "
+            "statistic from such a panel, so the verb refuses rather than printing "
+            "numbers that read like a result. With the flag the run proceeds, the "
+            "report leads with a NOT REPORTABLE limitation, and the ledger line "
+            "records it permanently."
+        ),
     )
     p_backtest.add_argument("--format", default="text", choices=["text", "json", "md"])
     p_backtest.set_defaults(func=cmd_backtest)
