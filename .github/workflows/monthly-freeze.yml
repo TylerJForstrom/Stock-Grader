@@ -65,10 +65,24 @@ jobs:
           fi
           # One SEC fetch, one snapshot build, a panel per profile: the extra
           # profiles are free in network terms and multiply the forward evidence.
-          stock-grader freeze --all-profiles --universe config/universe_default.txt --out frozen_scores "${FOUNDRY_ARGS[@]}"
+          # --once-per-month makes this step idempotent per month PER ROOT, which
+          # is what lets a re-dispatch backfill a root that missed the month
+          # without minting a redundant second snapshot in a root that did not.
+          # See the wide step's comment for the incident this closes.
+          stock-grader freeze --all-profiles --once-per-month --universe config/universe_default.txt --out frozen_scores "${FOUNDRY_ARGS[@]}"
       - name: Freeze wide SEC-float universe (fundamentals-first)
         # Runs even if the narrow freeze refused, so one profile's refusal on one
         # universe cannot cost the other universe a whole month of forward evidence.
+        #
+        # 2026-08 incident: this step reached main at 2026-08-02T00:47Z, eleven
+        # hours AFTER the 2026-08-01T13:19Z scheduled run, so that run froze
+        # frozen_scores and nothing else. frozen_scores_wide's newest part stayed
+        # 2026-07-31, the forward loop's cadence gate went red on every run, and
+        # a freeze is an immutable dated artifact — 2026-08-01 could never be
+        # reconstructed for the wide root. --once-per-month on BOTH steps is the
+        # structural fix: a dispatch now freezes only the roots that are actually
+        # missing the month, so recovering a missed root costs nothing and this
+        # class of gap cannot silently persist to the next tick.
         if: always()
         env:
           STOCK_GRADER_CONTACT: ${{ secrets.SEC_CONTACT_EMAIL }}
@@ -91,6 +105,7 @@ jobs:
           fi
           stock-grader freeze \
             --all-profiles \
+            --once-per-month \
             --universe "$WIDE" \
             --out frozen_scores_wide \
             --bulk-facts auto \
