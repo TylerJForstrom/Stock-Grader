@@ -34,6 +34,18 @@ that breaks on a checkout setting is not an agreement. `.gitattributes`
 separately keeps the stored bytes at LF; that is tidiness, the canonical hash
 is the guarantee.
 
+The file pins the model at **two** levels. `vectors` pins the composition —
+liquidity inputs in, one cost estimate out — and takes `cs_spread_bps` as a
+scalar *input*, so on its own it says nothing whatsoever about the four
+estimators that produce that input: two implementations could disagree about
+the overnight-gap adjustment, the flooring rule or the usable-pair definition
+and still reproduce every composition vector. `bar_vectors` pins the estimators
+themselves — raw highs/lows/closes/volumes in, spread/sigma/lambda out —
+including what the same tape produces *without* the gap adjustment, so an
+implementation that drops it fails the pin instead of agreeing on a narrower
+spread. That blind spot was not hypothetical: it hid exactly that divergence
+between the two repositories until 2026-08-05.
+
 ## Composition
 
 All quantities are in basis points of price. `Q$` is the position notional.
@@ -65,7 +77,19 @@ single volume spike should not reprice a name, and dollars rather than shares.
 ### The spread term
 
 Corwin & Schultz (2012), high-low, with their overnight-gap adjustment, over a
-21-session window. Two properties of the implementation are load-bearing:
+21-session window. Three properties of the implementation are load-bearing:
+
+**The overnight-gap adjustment is applied, and the estimator takes closes to
+apply it.** When the previous session's close sits outside the current
+session's range, the whole range is shifted so it just touches that close;
+otherwise an overnight move is read as intraday range, which is read in turn as
+spread. The omission is not neutral: a gap inflates the two-day span `gamma`
+far more than it inflates the sum of the one-day ranges `beta`, which shrinks
+`alpha` and shrinks the estimate — a one-sided *understatement* of spread,
+largest in exactly the gappy thin names this model exists to price. On the
+pinned `gapped-window` vector the adjusted estimate is 128.9 bps and the
+unadjusted one floors at zero. `corwin_schultz_spread_bps` therefore requires
+`closes`; there is no signature that silently returns the unadjusted number.
 
 **Negative estimates are floored once, on the window mean.** A large minority of
 two-day estimates come out negative on real data. Flooring each *pair* at zero
@@ -122,10 +146,33 @@ against the 10–20% participation-of-volume convention, deliberately: a capacit
 claim measured at an aggressive participation rate is a claim about the model,
 not about the market.
 
-Truncation is **counted and reported**, never applied silently
+Truncation is **counted, reported, and applied**
 (`capacity_truncated_rows`, `capacity_truncated_notional_fraction`). A tier
 whose orders are mostly refused has no edge to measure at that size, whatever
 its cost column says about the fraction that did fit.
+
+Applied matters, and for a while it was not. `estimate_cost` caps the notional
+at 1% of `ADV20$` and prices the **capped slice**, so the returned
+`round_trip_bps` is the cost of the notional that fit, not of the notional that
+was asked for. If the evaluator then holds the name at a full equal weight, the
+capacity constraint has been converted into a discount: the row is charged what
+$20k of a $2M-ADV name costs while contributing the return of $100k of it, and
+the thinnest band — the one the whole small-cap programme exists to
+interrogate — is flattered by construction. Worse, once the cap binds,
+participation is pinned at exactly `max_participation` for every name, so the
+ATHL term stops varying with ADV at all.
+
+The evaluator therefore weights every row by
+`cost_notional_allowed_usd / cost_notional_target_usd`: a name the cap could
+fill 21% of holds 21% of an equal-weight position and contributes 21% of the
+exposure, and its cost is charged on those dollars. Both the return and the
+cost of a leg are then per **deployed** dollar and describe the same position.
+`BacktestReport.mean_deployable_fraction` states how much of the intended book
+could actually be carried, the markdown prints it, and a run below 1.0 carries
+a limitation saying so — because a spread of X% on 21% of the intended capital
+is not the same claim as a spread of X%. Reading a band whose cap binds
+therefore needs either that weighting or a re-price at a smaller notional; the
+raw inputs ride along on the panel so the second is a recomputation.
 
 ## The flat model is a degenerate case, and that is a test
 
@@ -181,19 +228,35 @@ counts and the golden-vector sha256. A net number whose cost model and position
 size are not on the artifact is not reproducible: the same panel priced at two
 sizes is two different measurements wearing the same column name.
 
-The evaluator charges each quantile leg the equal-weight mean cost of the names
-actually in that leg, applied to that leg's turnover — the same shape the flat
-charge always had, with a per-leg rate instead of a global constant. When the
-panel carries no cost column, the original single-constant expression runs
-unchanged and the numbers are bit-identical to what they were before this
+The evaluator charges each quantile leg the mean cost of the names actually in
+that leg, applied to that leg's turnover — the same shape the flat charge
+always had, with a per-leg rate instead of a global constant. On a panel that
+carries the capacity columns the leg mean is weighted by deployable notional
+(above), so the rate is what the leg pays per dollar it could actually hold.
+When the panel carries no cost column, the original single-constant expression
+runs unchanged and the numbers are bit-identical to what they were before this
 existed; `tests/test_backtest.py` pins that against literals taken from the
 pre-change implementation.
 
 The report gains `per_row_costs_used`, `mean_round_trip_cost_bps`,
-`mean_rank_ic_net` and `no_cost_estimate_rows`. The cost-net rank IC is reported
-only when costs actually vary by name: subtracting one constant from every name
-is a monotone transform, so a flat-cost "net IC" is the gross IC wearing a
-different label.
+`mean_rank_ic_net_side_aware`, `no_cost_estimate_rows`, `capacity_weighted` and
+`mean_deployable_fraction`. The cost-net rank IC is reported only when costs
+actually vary by name: subtracting one constant from every name is a monotone
+transform, so a flat-cost "net IC" is the gross IC wearing a different label.
+
+**The cost-net rank IC is side-aware, and that is not a refinement.** A cost is
+a loss on whichever side you take it, so the long half is ranked against
+`r - c` and the short half against `r + c`; the middle buckets are held on
+neither side and pay nothing. Subtracting `c` from *every* name is the net
+return of a long-only book, and because expensive names cluster at low scores
+it pushes the short leg's ranked returns further down and mechanically RAISES
+the correlation. Measured on real banded panels the single-signed statistic
+came out larger than the *gross* IC on runs whose net spread was negative: two
+cost-net numbers in one report table pointing opposite ways, with the more
+flattering one carrying the more impressive name. The side-aware form can only
+attenuate. `mean_rank_ic_net` was renamed to `mean_rank_ic_net_side_aware` so
+that a consumer of the old, differently-defined statistic fails loudly instead
+of reading the new one as if nothing had changed.
 
 ## What this model does not capture
 

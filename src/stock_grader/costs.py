@@ -95,6 +95,7 @@ __all__ = [
     "ATHL_BETA",
     "ATHL_ETA",
     "ATHL_GAMMA",
+    "BAR_GOLDEN_VECTORS",
     "COST_MODEL_ID",
     "CS_WINDOW_SESSIONS",
     "FLAT_ONE_WAY_BPS",
@@ -110,6 +111,7 @@ __all__ = [
     "corwin_schultz_spread_bps",
     "cost_inputs_from_bars",
     "estimate_cost",
+    "gap_adjusted_range",
     "golden_vector_sha256",
     "spread_bps",
     "tick_floor_bps",
@@ -146,8 +148,15 @@ ATHL_BETA = 0.600
 #: No simulated order may exceed this fraction of the name's 20-session dollar
 #: ADV. Conservative against the 10-20% participation convention, deliberately:
 #: a capacity claim measured at an aggressive participation rate is a claim
-#: about the model rather than about the market. Truncation is counted and
-#: reported, never applied silently.
+#: about the model rather than about the market.
+#:
+#: :func:`estimate_cost` prices the CAPPED slice, so ``round_trip_bps`` is the
+#: cost of ``notional_allowed_usd`` and not of the notional that was asked for.
+#: Whoever holds the position must reduce it to match — the evaluator weights
+#: each row by ``allowed / target`` and the simulator reduces the filled
+#: quantity. Charging the capped cost against a full-size position converts the
+#: capacity constraint into a discount, and does it hardest in the thinnest
+#: band, where the cap binds on every row.
 ADV_PARTICIPATION_CAP = 0.01
 
 #: The historical flat charge, one way. Retained as the constant the degenerate
@@ -314,12 +323,43 @@ def _usable_pairs(
     return usable
 
 
+def gap_adjusted_range(
+    previous_close: float, high: float, low: float
+) -> tuple[float, float]:
+    """Corwin & Schultz's overnight-gap adjustment, on the second day's range.
+
+    When the previous session's close sits outside the current session's
+    high-low interval, the WHOLE interval is shifted so that it just touches
+    that close. Without the shift an overnight gap is read as intraday range,
+    which the estimator reads in turn as spread — and it reads it into
+    ``gamma`` (the two-day span) far more than into ``beta`` (the sum of the
+    one-day ranges), which drives ``alpha`` and therefore the estimate DOWN.
+    Omitting the adjustment is not neutral noise: it is a one-sided
+    understatement of spread, in the optimistic direction, largest in exactly
+    the gappy thin names the cost model exists to price.
+
+    Stock-Vault's ``costs._gap_adjust`` is the same arithmetic on its ``Bar``
+    type; the two implementations are pinned to each other by the raw-bar
+    golden vectors.
+    """
+
+    if previous_close < low:
+        shift = low - previous_close
+        return high - shift, low - shift
+    if previous_close > high:
+        shift = previous_close - high
+        return high + shift, low + shift
+    return high, low
+
+
 def corwin_schultz_spread_bps(
     highs: Sequence[float],
     lows: Sequence[float],
+    closes: Sequence[float],
     *,
     excluded_pairs: Sequence[bool] | None = None,
     min_pairs: int = MIN_USABLE_PAIRS,
+    gap_adjust: bool = True,
 ) -> tuple[float | None, int]:
     """Corwin & Schultz (2012) high-low spread over a window, in bps, plus the
     number of usable pairs.
@@ -330,20 +370,33 @@ def corwin_schultz_spread_bps(
     The window mean of the RAW pair estimates is floored at zero exactly once.
     See rule 1 in the module docstring for what per-pair flooring does to a
     real cross-section.
+
+    ``closes`` is required rather than optional because the paper's overnight-
+    gap adjustment (:func:`gap_adjusted_range`) needs the previous session's
+    close, and an estimator that silently skips the adjustment reports a
+    narrower spread than the model this module documents. ``gap_adjust=False``
+    exists only so a test can measure what the adjustment is worth; nothing in
+    the library calls it that way.
     """
 
-    pairs = _usable_pairs([highs, lows], excluded_pairs)
+    pairs = _usable_pairs([highs, lows, closes], excluded_pairs)
     if len(pairs) < min_pairs:
         return None, len(pairs)
     high = [float(value) for value in highs]
     low = [float(value) for value in lows]
+    close = [float(value) for value in closes]
     denominator = 3.0 - 2.0 * math.sqrt(2.0)
     estimates: list[float] = []
     for index in pairs:
+        high_2, low_2 = (
+            gap_adjusted_range(close[index], high[index + 1], low[index + 1])
+            if gap_adjust
+            else (high[index + 1], low[index + 1])
+        )
         first = math.log(high[index] / low[index]) ** 2
-        second = math.log(high[index + 1] / low[index + 1]) ** 2
+        second = math.log(high_2 / low_2) ** 2
         beta = first + second
-        span = math.log(max(high[index], high[index + 1]) / min(low[index], low[index + 1]))
+        span = math.log(max(high[index], high_2) / min(low[index], low_2))
         gamma = span**2
         alpha = (math.sqrt(2.0 * beta) - math.sqrt(beta)) / denominator - math.sqrt(
             gamma / denominator
@@ -430,7 +483,7 @@ def cost_inputs_from_bars(
     """
 
     spread, spread_pairs = corwin_schultz_spread_bps(
-        highs, lows, excluded_pairs=excluded_pairs, min_pairs=min_pairs
+        highs, lows, closes, excluded_pairs=excluded_pairs, min_pairs=min_pairs
     )
     sigma, sigma_pairs = close_to_close_sigma(
         closes, excluded_pairs=excluded_pairs, min_pairs=min_pairs
@@ -547,7 +600,20 @@ def _load_golden() -> tuple[dict, ...]:
     return tuple(_golden_payload()["vectors"])
 
 
+@lru_cache(maxsize=1)
+def _load_golden_bars() -> tuple[dict, ...]:
+    return tuple(_golden_payload().get("bar_vectors", ()))
+
+
 #: Synthetic worked examples every implementation of this model must reproduce.
 #: Inputs are round numbers chosen for arithmetic convenience and carry no
 #: archive content whatsoever (see the licensing note in the module docstring).
 GOLDEN_VECTORS: tuple[dict, ...] = _load_golden()
+
+#: The same pin, one level lower: raw daily bars in, spread/sigma/lambda out.
+#: :data:`GOLDEN_VECTORS` takes ``cs_spread_bps`` as a scalar INPUT, so it can
+#: say nothing at all about the four estimators that produce it — two
+#: implementations could disagree about the overnight-gap adjustment, the
+#: flooring rule or the usable-pair definition and still reproduce every
+#: composition vector. These cover that gap.
+BAR_GOLDEN_VECTORS: tuple[dict, ...] = _load_golden_bars()

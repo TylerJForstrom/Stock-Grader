@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from stock_grader.backtest import (
+    CAPACITY_ALLOWED_COLUMN,
+    CAPACITY_TARGET_COLUMN,
     COST_COLUMN,
     BacktestConfig,
+    _quantile_buckets,
     _validate_panel,
     backtest_to_markdown,
     evaluate_walk_forward,
@@ -225,7 +230,7 @@ def test_a_panel_without_a_cost_column_evaluates_exactly_as_it_always_did():
     assert COST_COLUMN not in panel.columns
     baseline = _flat_report(panel, transaction_cost_bps=10.0)
     assert baseline.per_row_costs_used is False
-    assert baseline.mean_rank_ic_net is None
+    assert baseline.mean_rank_ic_net_side_aware is None
     assert baseline.mean_round_trip_cost_bps is None
     assert baseline.no_cost_estimate_rows == 0
 
@@ -237,7 +242,7 @@ def test_a_panel_without_a_cost_column_evaluates_exactly_as_it_always_did():
         assert period.net_spread == pytest.approx(expected, rel=0, abs=1e-15)
         assert period.top_cost_bps == 10.0
         assert period.bottom_cost_bps == 10.0
-        assert period.rank_ic_net is None
+        assert period.rank_ic_net_side_aware is None
 
     # And nothing about the report moved when the cost machinery was added:
     # forcing the flat path explicitly must reproduce it field for field.
@@ -335,16 +340,213 @@ def test_cost_net_rank_ic_is_reported_only_when_costs_actually_vary_by_name():
     report = evaluate_walk_forward(
         varied, BacktestConfig(min_cross_section=30, bootstrap_samples=0)
     )
-    assert report.mean_rank_ic_net is not None
+    assert report.mean_rank_ic_net_side_aware is not None
     # Costs uncorrelated with score can only add noise to the ranking, so the
     # net IC must sit below the gross IC of the same planted signal.
-    assert report.mean_rank_ic_net < report.mean_rank_ic
+    assert report.mean_rank_ic_net_side_aware < report.mean_rank_ic
     for period in report.periods:
-        assert period.rank_ic_net is not None
+        assert period.rank_ic_net_side_aware is not None
 
     markdown = backtest_to_markdown(report)
     assert "Cost model" in markdown
-    assert "Mean cost-net rank IC" in markdown
+    assert "Mean side-aware cost-net rank IC" in markdown
+
+
+def test_the_cost_net_rank_ic_never_improves_when_the_expensive_names_score_low():
+    """The regression for the sign of the cost on the SHORT leg.
+
+    On a real small-cap panel the expensive names sit at the bottom of the
+    score, which is the leg you are short. Subtracting a strictly positive cost
+    from every name — the net return of a long — pushes those low-scoring names
+    further down the ranking and mechanically RAISES the correlation, so the
+    report says that charging honest costs improved the signal. Measured on the
+    banded panels the "net" IC came out 119% LARGER than the gross one on the
+    same run whose net spread was negative.
+
+    The planted panel here reproduces that configuration exactly: cost is a
+    decreasing function of score, corr(score, cost) is strongly negative, and
+    the pre-fix single-signed statistic exceeds the gross IC. It must not.
+    """
+    panel = _panel()
+    frames = []
+    for _signal, group in panel.groupby("signal_date", sort=True):
+        group = group.copy()
+        # Cheap where the score is high, expensive where it is low: the
+        # small-cap cost/score configuration, planted deterministically.
+        ranks = group["score"].rank(pct=True)
+        group[COST_COLUMN] = 400.0 - 390.0 * ranks
+        frames.append(group)
+    costed = pd.concat(frames, ignore_index=True)
+
+    correlation = costed["score"].corr(costed[COST_COLUMN], method="spearman")
+    assert correlation < -0.9, "the test panel must plant expensive names at low scores"
+
+    report = evaluate_walk_forward(
+        costed, BacktestConfig(min_cross_section=30, bootstrap_samples=0)
+    )
+    assert report.mean_rank_ic_net_side_aware is not None
+    assert report.mean_rank_ic_net_side_aware <= report.mean_rank_ic, (
+        "a cost-net ranking statistic that beats the gross one is reporting that "
+        "friction improved the signal"
+    )
+
+    # The two cost-net statistics in the same report must not point opposite
+    # ways: costs this large destroy the spread, so the ranking statistic they
+    # net out of cannot improve.
+    gross_only = evaluate_walk_forward(
+        costed, BacktestConfig(min_cross_section=30, bootstrap_samples=0, cost_column=None)
+    )
+    assert report.mean_net_spread < gross_only.mean_gross_spread
+
+    # And the arithmetic itself, spelled out: long half r - c, short half
+    # r + c, middle bucket untouched.
+    period = report.periods[0]
+    first = costed.loc[costed["signal_date"] == costed["signal_date"].min()].copy()
+    quintile = _quantile_buckets(first["score"], 5)
+    side = np.sign(quintile.to_numpy(dtype="float64") - 2.0)
+    expected = first["score"].corr(
+        first["forward_return"] - side * first[COST_COLUMN] / 10_000.0,
+        method="spearman",
+    )
+    assert period.rank_ic_net_side_aware == pytest.approx(float(expected), rel=1e-12)
+
+
+def _capacity_panel(
+    *, truncated_names: set[str], allowed_usd: float = 20_000.0, target_usd: float = 100_000.0
+) -> pd.DataFrame:
+    """The planted panel: some names the participation cap could barely fill."""
+    panel = _panel()
+    costed = panel.assign(**{COST_COLUMN: 20.0})
+    truncated = costed["ticker"].isin(truncated_names)
+    costed[CAPACITY_TARGET_COLUMN] = target_usd
+    costed[CAPACITY_ALLOWED_COLUMN] = np.where(truncated, allowed_usd, target_usd)
+    return costed
+
+
+def test_a_capped_name_contributes_only_the_exposure_it_could_hold():
+    """The regression for the capacity constraint being priced instead of applied.
+
+    Before this, `estimate_cost` capped the notional at 1% of ADV20$, priced
+    the CAPPED slice, and nothing downstream reduced the position: a name that
+    could absorb $20k of a $100k order stayed a full-weight member of its
+    quantile bucket while being charged what the $20k cost. On the banded
+    panels that was 100% of band A's rows, so the headline band-A-vs-band-D
+    comparison was measured between a name that was 79% unfilled and one that
+    was fully filled.
+
+    Here the top quintile's names are split: the ones the cap truncates carry a
+    return nobody could have earned at full size, and the leg return must move
+    away from it in proportion to the exposure that was actually available.
+    """
+    panel = _panel()
+    first_date = panel["signal_date"].min()
+    top_names = set(
+        panel.loc[panel["signal_date"] == first_date]
+        .sort_values("score")
+        .tail(10)["ticker"]
+    )
+    # Truncate half of the top leg on every date (the tickers are stable).
+    truncated = set(sorted(top_names)[:5])
+    costed = _capacity_panel(truncated_names=truncated)
+
+    config = BacktestConfig(min_cross_section=30, bootstrap_samples=0)
+    applied = evaluate_walk_forward(costed, config)
+    priced_away = evaluate_walk_forward(
+        costed,
+        BacktestConfig(min_cross_section=30, bootstrap_samples=0, capacity_weighted=False),
+    )
+
+    assert applied.capacity_weighted is True
+    assert priced_away.capacity_weighted is False
+    assert applied.mean_deployable_fraction is not None
+    assert applied.mean_deployable_fraction < 1.0
+    # The unweighted run still REPORTS the shortfall, and says plainly that it
+    # did not apply it.
+    assert priced_away.mean_deployable_fraction == pytest.approx(
+        applied.mean_deployable_fraction
+    )
+    assert any("priced away" in item or "switched off" in item for item in priced_away.limitations)
+    assert any("per DEPLOYED dollar" in item for item in applied.limitations)
+
+    # The weighted leg return is the exposure-weighted mean, not the equal
+    # weight one, and the two differ. Checked against the arithmetic directly.
+    period = applied.periods[0]
+    unapplied = priced_away.periods[0]
+    day = costed.loc[costed["signal_date"] == first_date].copy()
+    buckets = _quantile_buckets(day["score"], 5)
+    leg = day.loc[buckets == 4]
+    weights = leg[CAPACITY_ALLOWED_COLUMN] / leg[CAPACITY_TARGET_COLUMN]
+    expected = float((leg["forward_return"] * weights).sum() / weights.sum())
+    assert period.top_return == pytest.approx(expected, rel=1e-12)
+    assert period.top_return != pytest.approx(unapplied.top_return, rel=1e-9)
+    assert unapplied.top_return == pytest.approx(float(leg["forward_return"].mean()), rel=1e-12)
+    assert period.top_deployable_fraction == pytest.approx(float(weights.mean()), rel=1e-12)
+    assert period.capacity_truncated_names == 5
+
+    markdown = backtest_to_markdown(applied)
+    assert "Capacity-weighted exposure | yes" in markdown
+    assert "Mean deployable fraction of intended position" in markdown
+
+
+def test_a_leg_the_cap_refuses_entirely_is_not_a_zero_return_period():
+    """Nothing held earns no return, and "no return" is not "a return of zero"."""
+    panel = _panel()
+    first_date = panel["signal_date"].min()
+    top_names = set(
+        panel.loc[panel["signal_date"] == first_date]
+        .sort_values("score")
+        .tail(10)["ticker"]
+    )
+    costed = _capacity_panel(truncated_names=top_names, allowed_usd=0.0)
+    report = evaluate_walk_forward(
+        costed, BacktestConfig(min_cross_section=30, bootstrap_samples=0)
+    )
+    # Some periods lose their whole top leg (the planted scores move a little
+    # between dates), and those periods are rejected rather than booked at 0%.
+    assert report.rejected_periods > 0
+    for period in report.periods:
+        assert math.isfinite(period.top_return)
+
+
+def test_a_priced_row_without_a_position_size_refuses_rather_than_weighting_it_full():
+    costed = _capacity_panel(truncated_names=set())
+    costed.loc[0, CAPACITY_ALLOWED_COLUMN] = np.nan
+    with pytest.raises(ValueError, match="unusable"):
+        evaluate_walk_forward(costed, BacktestConfig(min_cross_section=30))
+
+
+def test_an_untruncated_panel_is_unmoved_by_capacity_weighting():
+    """Weighting by a column of ones must not perturb a single number.
+
+    If it does, every panel whose cap never binds would have moved for a reason
+    that has nothing to do with capacity.
+    """
+    costed = _capacity_panel(truncated_names=set())
+    weighted = evaluate_walk_forward(
+        costed, BacktestConfig(min_cross_section=30, bootstrap_samples=0)
+    )
+    plain = evaluate_walk_forward(
+        costed.drop(columns=[CAPACITY_TARGET_COLUMN, CAPACITY_ALLOWED_COLUMN]),
+        BacktestConfig(min_cross_section=30, bootstrap_samples=0),
+    )
+    assert weighted.capacity_weighted is True
+    assert weighted.mean_deployable_fraction == pytest.approx(1.0)
+    assert weighted.mean_gross_spread == pytest.approx(plain.mean_gross_spread, rel=1e-12)
+    assert weighted.mean_net_spread == pytest.approx(plain.mean_net_spread, rel=1e-12)
+    for a, b in zip(weighted.periods, plain.periods, strict=True):
+        assert a.top_return == pytest.approx(b.top_return, rel=1e-12)
+        assert a.bottom_return == pytest.approx(b.bottom_return, rel=1e-12)
+        assert a.top_cost_bps == pytest.approx(b.top_cost_bps, rel=1e-12)
+
+
+def test_a_cost_column_without_capacity_columns_says_the_cap_was_not_applied():
+    costed = _panel().assign(**{COST_COLUMN: 20.0})
+    report = evaluate_walk_forward(
+        costed, BacktestConfig(min_cross_section=30, bootstrap_samples=0)
+    )
+    assert report.capacity_weighted is False
+    assert report.mean_deployable_fraction is None
+    assert any("no cost_notional_target_usd" in item for item in report.limitations)
 
 
 def test_rows_with_no_cost_estimate_are_dropped_and_counted_not_back_filled():
