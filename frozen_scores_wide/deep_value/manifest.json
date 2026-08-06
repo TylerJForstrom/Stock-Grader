@@ -28,9 +28,35 @@
       "name": "2026-07-31.parquet",
       "rows": 1000,
       "sha256": "4ec0be5e0cac2c376c7ed43bb9894c1405682f01bef202fe47135da8177e3d69"
+    },
+    {
+      "bytes": 44405,
+      "columns": {
+        "cik": "str",
+        "code_commit": "str",
+        "config_fingerprint": "str",
+        "coverage": "float64",
+        "filed_through": "object",
+        "graded": "bool",
+        "letter": "str",
+        "percentile": "float64",
+        "profile": "str",
+        "schema_version": "str",
+        "score": "float64",
+        "signal_date": "str",
+        "ticker": "str",
+        "universe_fingerprint": "str",
+        "universe_id": "str",
+        "universe_spec_sha256": "str"
+      },
+      "content_schema_version": "1.0",
+      "hashed_at": "freeze",
+      "name": "2026-08-06.parquet",
+      "rows": 1000,
+      "sha256": "9487f6bf6a8c02ef7eb36b2b89bd2dc30019e00febc0940aa4c1d1e74a6f4426"
     }
   ],
-  "generated_at_utc": "2026-08-04T14:15:08Z",
+  "generated_at_utc": "2026-08-06T06:28:47Z",
   "license_note": "Grader-computed scores derived from US-government public-domain SEC EDGAR data (17 USC 105); freely redistributable.",
   "profile": "deep_value",
   "schema_version": "1.0",
