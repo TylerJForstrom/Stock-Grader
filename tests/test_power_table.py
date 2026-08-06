@@ -268,18 +268,50 @@ class TestHowReturnScaleReachesTheGate:
             assert other["mean_rank_ic"] == pytest.approx(base["mean_rank_ic"])
 
     def test_the_fixed_cost_makes_the_gate_scale_dependent(self, tmp_path):
-        """Bigger returns against an unchanged charge => a better net Sharpe."""
+        """Bigger returns against an unchanged charge => a better net Sharpe.
+
+        Measured on ``per_period_sharpe``, which is the statistic PSR and DSR
+        are computed FROM. DSR is a probability: on a strongly planted panel
+        it sits against 1.0, where a real effect compresses into the fourth
+        decimal and a magnitude assertion is really an assertion about how
+        saturated the fixture is. The Sharpe is unbounded, so it shows the
+        effect at its true size. DSR is still checked, for order only.
+        """
 
         panel = _planted_panel(n_names=80, n_months=14, rho=0.6, seed=7)
-        dsr = {}
+        sharpe: dict[float, float] = {}
+        dsr: dict[float, float] = {}
+        net: dict[float, float] = {}
         for factor in (0.25, 1.0, 4.0):
             scaled = panel.copy()
             scaled["forward_return"] = scaled["forward_return"] * factor
             payload = evaluate_seed_panel(scaled, tmp_path / "cost", f"x{factor}")
+            sharpe[factor] = payload["significance"]["per_period_sharpe"]
             dsr[factor] = payload["significance"]["deflated_sharpe"]
+            net[factor] = payload["mean_net_spread"]
+        assert sharpe[0.25] < sharpe[1.0] < sharpe[4.0], sharpe
         assert dsr[0.25] < dsr[1.0] < dsr[4.0], dsr
-        # The effect is real, not float noise.
-        assert dsr[4.0] - dsr[0.25] > 1e-4
+        # Well clear of float noise: the charge is a real fraction of the
+        # spread at 0.25x and nearly irrelevant at 4x.
+        assert sharpe[4.0] - sharpe[0.25] > 0.05, sharpe
+        # And the mechanism, recovered exactly. If net = k * gross - cost,
+        # then net is affine in k with one slope and one positive intercept,
+        # so the gross spread implied by any two scales must agree and the
+        # implied cost must be positive. That is the whole claim, arithmetic
+        # rather than asserted.
+        gross_from_low = (net[1.0] - net[0.25]) / 0.75
+        gross_from_high = (net[4.0] - net[1.0]) / 3.0
+        assert gross_from_low == pytest.approx(gross_from_high, rel=1e-9)
+        implied_cost = gross_from_low - net[1.0]
+        # Positive, and consistent with the charge the CLI actually applied:
+        # cost_rate * (top_turnover + bottom_turnover) at the 10 bps default,
+        # where each leg's turnover is at most 1.
+        assert 0.0 < implied_cost <= 2.0 * (10.0 / 10_000.0), (implied_cost, net)
+        # Which is a far larger slice of the 0.25x spread than of the 4x one:
+        # 16 times larger, and that ratio is the whole scale dependence.
+        assert implied_cost / (0.25 * gross_from_low) == pytest.approx(
+            16.0 * implied_cost / (4.0 * gross_from_low)
+        )
 
     def test_without_a_cost_the_gate_is_scale_invariant(self, tmp_path):
         """The other half: the dependence comes from the charge, nothing else.
