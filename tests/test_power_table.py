@@ -18,7 +18,6 @@ import math
 import numpy as np
 import pandas as pd
 import pytest
-
 from scripts.power_table import (
     PRODUCTION_BACKTEST_FLAGS,
     REPO_ROOT,
@@ -32,6 +31,7 @@ from scripts.power_table import (
     summarize_cell,
     write_artifacts,
 )
+
 from stock_grader.data.synthetic import generate_prices
 from stock_grader.significance import norm_ppf
 

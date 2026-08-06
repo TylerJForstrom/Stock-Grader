@@ -402,83 +402,107 @@ def render_band_markdown(
     lines: list[str] = [
         f"# Banded detection-power table — {date_tag}",
         "",
-        "Recalibration of the forward-backtest significance gate "
-        "(`stock-grader backtest`: PSR/DSR + block-bootstrap Sharpe CI, "
-        "`significant` = DSR >= 0.95 AND CI low > 0) for a cross-section split "
-        "into liquidity bands, against fully synthetic panels with a KNOWN "
-        "planted cross-sectional rank IC.",
+        (
+            "Recalibration of the forward-backtest significance gate "
+            "(`stock-grader backtest`: PSR/DSR + block-bootstrap Sharpe CI, "
+            "`significant` = DSR >= 0.95 AND CI low > 0) for a cross-section split "
+            "into liquidity bands, against fully synthetic panels with a KNOWN "
+            "planted cross-sectional rank IC."
+        ),
         "",
-        "This is a NEW dated artifact. It does not replace, amend or correct "
-        "`power_table_2026-08-03.{md,json}`, which stands unchanged and still "
-        "describes the monthly, single-regime, 250/1000-name grid it was built "
-        "from. Neither table's numbers transfer to the other's shape.",
+        (
+            "This is a NEW dated artifact. It does not replace, amend or correct "
+            "`power_table_2026-08-03.{md,json}`, which stands unchanged and still "
+            "describes the monthly, single-regime, 250/1000-name grid it was built "
+            "from. Neither table's numbers transfer to the other's shape."
+        ),
         "",
         "## Why the earlier table does not describe these bands",
         "",
-        "The 2026-08-03 grid is monthly, homogeneous in volatility, and sized "
-        "250 or 1000. The bands here differ on all three: a twice-monthly "
-        "settlement cadence, per-band cross-sections that are neither of those "
-        "sizes, and a return process with volatility that varies ACROSS names. "
-        "Reading a band's power off the old table would mean assuming those "
-        "three differences cancel, and nothing establishes that.",
+        (
+            "The 2026-08-03 grid is monthly, homogeneous in volatility, and sized "
+            "250 or 1000. The bands here differ on all three: a twice-monthly "
+            "settlement cadence, per-band cross-sections that are neither of those "
+            "sizes, and a return process with volatility that varies ACROSS names. "
+            "Reading a band's power off the old table would mean assuming those "
+            "three differences cancel, and nothing establishes that."
+        ),
         "",
         "## How cross-sectional dispersion enters, which is not the obvious way",
         "",
-        "The instinct is that raising dispersion is what makes a small-cap "
-        "grid a small-cap grid. Half of that is wrong, and the half that is "
-        "right is not right for the reason it looks like.",
+        (
+            "The instinct is that raising dispersion is what makes a small-cap "
+            "grid a small-cap grid. Half of that is wrong, and the half that is "
+            "right is not right for the reason it looks like."
+        ),
         "",
-        "Start from what the gate reads. `significant` is `DSR >= 0.95 AND "
-        "sharpe_ci_low > 0`, computed on the quintile spread portfolio's "
-        "per-period NET returns. The cross-sectional rank IC is computed on "
-        "ranks and is therefore **exactly** invariant to any positive "
-        "rescaling of returns. `per_period_sharpe` is mean/sd, the PSR's skew "
-        "and kurtosis corrections are scale-free, and the bootstrap resamples "
-        "the same series — so a GROSS Sharpe is scale-invariant too.",
+        (
+            "Start from what the gate reads. `significant` is `DSR >= 0.95 AND "
+            "sharpe_ci_low > 0`, computed on the quintile spread portfolio's "
+            "per-period NET returns. The cross-sectional rank IC is computed on "
+            "ranks and is therefore **exactly** invariant to any positive "
+            "rescaling of returns. `per_period_sharpe` is mean/sd, the PSR's skew "
+            "and kurtosis corrections are scale-free, and the bootstrap resamples "
+            "the same series — so a GROSS Sharpe is scale-invariant too."
+        ),
         "",
-        "**But the returns are not gross.** `evaluate_walk_forward` computes "
-        "`net_spread = gross_spread - cost_rate * turnover`, and that "
-        "deduction is in return units: it does NOT scale when the returns do. "
-        "Multiply every forward return by `k` and the net series becomes "
-        "`k * gross - cost`, whose Sharpe is not the original one. Raising the "
-        "volatility level alone therefore shrinks the cost as a fraction of "
-        "the spread and **mechanically helps detection**. The level is not a "
-        "no-op, and a table that assumed it was would be quietly wrong.",
+        (
+            "**But the returns are not gross.** `evaluate_walk_forward` computes "
+            "`net_spread = gross_spread - cost_rate * turnover`, and that "
+            "deduction is in return units: it does NOT scale when the returns do. "
+            "Multiply every forward return by `k` and the net series becomes "
+            "`k * gross - cost`, whose Sharpe is not the original one. Raising the "
+            "volatility level alone therefore shrinks the cost as a fraction of "
+            "the spread and **mechanically helps detection**. The level is not a "
+            "no-op, and a table that assumed it was would be quietly wrong."
+        ),
         "",
-        "That matters here in the specific direction that flatters a "
-        "small-cap result. If a band is modelled as more volatile while the "
-        "charge stays fixed, its measured power rises for a reason that has "
-        "nothing to do with signal. In reality the smaller bands carry LARGER "
-        "costs, not the same ones, so the level effect measured below points "
-        "the opposite way from the truth and this table's small-band power is "
-        "an overstatement on that count.",
+        (
+            "That matters here in the specific direction that flatters a "
+            "small-cap result. If a band is modelled as more volatile while the "
+            "charge stays fixed, its measured power rises for a reason that has "
+            "nothing to do with signal. In reality the smaller bands carry LARGER "
+            "costs, not the same ones, so the level effect measured below points "
+            "the opposite way from the truth and this table's small-band power is "
+            "an overstatement on that count."
+        ),
         "",
         "So the regime axis is run as a decomposition rather than one contrast:",
         "",
-        "1. **Volatility level** (`baseline-largecap` vs "
-        "`smallcap-homogeneous`, identical in every other respect). Enters "
-        "only through the cost-to-dispersion ratio, as above.",
-        "2. **Volatility dispersion across names** (`smallcap-homogeneous` vs "
-        "`smallcap-heterogeneous`, at an identical level). When names differ "
-        "in volatility, an equal-weighted quintile portfolio's period return "
-        "is dominated by its most volatile members, whose membership is driven "
-        "by volatility rather than by the score. That weakens the map from a "
-        "given rank IC to a portfolio Sharpe, which is what the gate reads. "
-        "Scale-free, and it works against detection.",
-        "3. **Tail index** (varied alongside dispersion in the same pair). "
-        "Fatter per-name tails feed the PSR's skew/kurtosis correction "
-        "directly and inflate the sd in the Sharpe denominator. Also "
-        "scale-free.",
-        "4. **Cross-section size**, which sets the per-period rank-IC standard "
-        "error at roughly `1/sqrt(n-1)` and the quintile bucket size at `n/5`. "
-        "This is the axis the bands differ on by construction.",
+        (
+            "1. **Volatility level** (`baseline-largecap` vs "
+            "`smallcap-homogeneous`, identical in every other respect). Enters "
+            "only through the cost-to-dispersion ratio, as above."
+        ),
+        (
+            "2. **Volatility dispersion across names** (`smallcap-homogeneous` vs "
+            "`smallcap-heterogeneous`, at an identical level). When names differ "
+            "in volatility, an equal-weighted quintile portfolio's period return "
+            "is dominated by its most volatile members, whose membership is driven "
+            "by volatility rather than by the score. That weakens the map from a "
+            "given rank IC to a portfolio Sharpe, which is what the gate reads. "
+            "Scale-free, and it works against detection."
+        ),
+        (
+            "3. **Tail index** (varied alongside dispersion in the same pair). "
+            "Fatter per-name tails feed the PSR's skew/kurtosis correction "
+            "directly and inflate the sd in the Sharpe denominator. Also "
+            "scale-free."
+        ),
+        (
+            "4. **Cross-section size**, which sets the per-period rank-IC standard "
+            "error at roughly `1/sqrt(n-1)` and the quintile bucket size at `n/5`. "
+            "This is the axis the bands differ on by construction."
+        ),
         "",
-        "The cost charged in this grid is the evaluator's flat default, "
-        "because these synthetic panels carry no per-row cost column. Real "
-        "banded panels do carry one, and its per-band values are what actually "
-        "sets the ratio above. This table cannot speak to that; it prices "
-        "every band identically on purpose, so that what varies between bands "
-        "here is cross-section size and nothing else.",
+        (
+            "The cost charged in this grid is the evaluator's flat default, "
+            "because these synthetic panels carry no per-row cost column. Real "
+            "banded panels do carry one, and its per-band values are what actually "
+            "sets the ratio above. This table cannot speak to that; it prices "
+            "every band identically on purpose, so that what varies between bands "
+            "here is cross-section size and nothing else."
+        ),
         "",
         "| regime | median annual vol | across-name log-sd | Student-t df |",
         "|---|---:|---:|---:|",
@@ -492,37 +516,49 @@ def render_band_markdown(
         )
     lines += [
         "",
-        "**These are declared brackets, not estimates.** Their direction and "
-        "rough magnitude come from public stylised facts (Campbell, Lettau, "
-        "Malkiel & Xu 2001 on idiosyncratic firm-level volatility and its "
-        "spread; Cont 2001 on daily return tail indices of roughly 3-5 degrees "
-        "of freedom). They are fitted to no archive, and no attempt is made to "
-        f"claim they ARE the small-cap process. `{primary_regime}` is the "
-        "primary; the others are run at the same cells so the regime's own "
-        "contribution is measured below rather than assumed, and so a reader "
-        "who thinks a different bracket is right can see how much the answer "
-        "would move.",
+        (
+            "**These are declared brackets, not estimates.** Their direction and "
+            "rough magnitude come from public stylised facts (Campbell, Lettau, "
+            "Malkiel & Xu 2001 on idiosyncratic firm-level volatility and its "
+            "spread; Cont 2001 on daily return tail indices of roughly 3-5 degrees "
+            "of freedom). They are fitted to no archive, and no attempt is made to "
+            f"claim they ARE the small-cap process. `{primary_regime}` is the "
+            "primary; the others are run at the same cells so the regime's own "
+            "contribution is measured below rather than assumed, and so a reader "
+            "who thinks a different bracket is right can see how much the answer "
+            "would move."
+        ),
         "",
         "## Provenance",
         "",
-        f"- Grid: `{manifest['artifact']}` generated {manifest['created_utc']} "
-        f"(generator commit `{manifest['code_commit']}`), 100% synthetic — no "
-        "real, licensed or third-party market data. `synthetic_only` = "
-        f"{manifest.get('synthetic_only')}.",
-        f"- Grid request: `{grid_spec.get('kind', 'unknown')}`, spec sha256 "
-        f"`{grid_spec.get('spec_sha256', 'n/a')}`, {grid_spec.get('n_cells', len(results))} "
-        "cells.",
-        f"- Evaluator: `stock-grader backtest` at Stock-Grader commit "
-        f"`{current_commit()}` with `{' '.join(backtest_flags(periods_per_year))}`.",
-        f"- `--periods-per-year {periods_per_year}` matches this grid's cadence. "
-        "It cannot change a verdict: DSR runs on the unannualised per-period "
-        "Sharpe, and the bootstrap scales every resampled Sharpe by a positive "
-        "constant that cannot move the sign of the interval's lower bound. It "
-        "is set correctly so the reported annualised Sharpes mean what they say.",
-        "- One FRESH scratch ledger per replication, so DSR deflates a single "
-        "trial (E[max] benchmark 0, DSR == PSR). The real programme charges "
-        "its full nominal trial count, so real deflation is strictly harsher "
-        "and true power is <= every number below.",
+        (
+            f"- Grid: `{manifest['artifact']}` generated {manifest['created_utc']} "
+            f"(generator commit `{manifest['code_commit']}`), 100% synthetic — no "
+            "real, licensed or third-party market data. `synthetic_only` = "
+            f"{manifest.get('synthetic_only')}."
+        ),
+        (
+            f"- Grid request: `{grid_spec.get('kind', 'unknown')}`, spec sha256 "
+            f"`{grid_spec.get('spec_sha256', 'n/a')}`, {grid_spec.get('n_cells', len(results))} "
+            "cells."
+        ),
+        (
+            f"- Evaluator: `stock-grader backtest` at Stock-Grader commit "
+            f"`{current_commit()}` with `{' '.join(backtest_flags(periods_per_year))}`."
+        ),
+        (
+            f"- `--periods-per-year {periods_per_year}` matches this grid's cadence. "
+            "It cannot change a verdict: DSR runs on the unannualised per-period "
+            "Sharpe, and the bootstrap scales every resampled Sharpe by a positive "
+            "constant that cannot move the sign of the interval's lower bound. It "
+            "is set correctly so the reported annualised Sharpes mean what they say."
+        ),
+        (
+            "- One FRESH scratch ledger per replication, so DSR deflates a single "
+            "trial (E[max] benchmark 0, DSR == PSR). The real programme charges "
+            "its full nominal trial count, so real deflation is strictly harsher "
+            "and true power is <= every number below."
+        ),
         "- Every input parquet was verified against the grid manifest's sha256 before evaluation.",
         "",
         "### Replication counts and how much noise they carry",
@@ -540,8 +576,10 @@ def render_band_markdown(
             )
     lines += [
         "",
-        "A single cell is therefore worth roughly +/- 0.1 at mid rates. Read "
-        "trends across a row, not one number.",
+        (
+            "A single cell is therefore worth roughly +/- 0.1 at mid rates. Read "
+            "trends across a row, not one number."
+        ),
         "",
         "## False-positive rate at planted IC = 0",
         "",
@@ -593,8 +631,10 @@ def render_band_markdown(
         "",
         "`significant` requires BOTH DSR >= 0.95 AND bootstrap CI low > 0.",
         "",
-        "| band | regime | periods | universe | planted IC | seeds | mean realized IC "
-        "| DSR >= 0.95 | CI low > 0 | gate |",
+        (
+            "| band | regime | periods | universe | planted IC | seeds | mean realized IC "
+            "| DSR >= 0.95 | CI low > 0 | gate |"
+        ),
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for r in sorted(results, key=lambda r: (r.label, r.regime, -r.months, r.planted_ic)):
@@ -640,16 +680,20 @@ def _band_readings(
         undetected = [c.planted_ic for c in signal if c.gate_pass_rate < DETECTION_THRESHOLD]
         largest_missed = max(undetected) if undetected else None
         lines += [
-            f"### Band {band} — {universe_of(band)} names per period, "
-            f"{primary_periods} periods, `{primary_regime}`",
+            (
+                f"### Band {band} — {universe_of(band)} names per period, "
+                f"{primary_periods} periods, `{primary_regime}`"
+            ),
             "",
             f"- False-positive rate at planted IC = 0: "
             f"**{null.gate_pass_rate:.2f}** over {null.n_seeds} replications"
             if null
             else "- No null cell in this grid for this band.",
-            f"- Smallest detectable planted rank IC (>= "
-            f"{DETECTION_THRESHOLD:.0%} of replications passing the gate): "
-            f"**{_mdi_text(mdi)}**.",
+            (
+                f"- Smallest detectable planted rank IC (>= "
+                f"{DETECTION_THRESHOLD:.0%} of replications passing the gate): "
+                f"**{_mdi_text(mdi)}**."
+            ),
         ]
         if mdi is None:
             lines.append(
@@ -674,9 +718,11 @@ def _band_readings(
                 )
             )
         lines += [
-            f"- Because these replications are single-trial deflated and the "
-            f"real programme charges its full nominal trial count, band {band}'s "
-            "true detectable IC is LARGER than the number above, not smaller.",
+            (
+                f"- Because these replications are single-trial deflated and the "
+                f"real programme charges its full nominal trial count, band {band}'s "
+                "true detectable IC is LARGER than the number above, not smaller."
+            ),
             "",
         ]
     return lines[:-1] if lines and lines[-1] == "" else lines
@@ -708,9 +754,11 @@ def _regime_section(results: Sequence[CellResult], regime_specs: dict) -> list[s
     regimes = sorted({r.regime for r in results if r.regime})
     if len(regimes) < 2:
         return [
-            "Only one regime was run, so this grid cannot say how much of its "
-            "answer comes from the return process. Read every number as "
-            "conditional on that single declared bracket."
+            (
+                "Only one regime was run, so this grid cannot say how much of its "
+                "answer comes from the return process. Read every number as "
+                "conditional on that single declared bracket."
+            )
         ]
 
     def axis(base: str, other: str) -> str:
@@ -728,11 +776,13 @@ def _regime_section(results: Sequence[CellResult], regime_specs: dict) -> list[s
         return " + ".join(moved) if moved else "nothing"
 
     lines = [
-        "The regimes are compared pairwise so the volatility LEVEL (which "
-        "enters only through the fixed-cost ratio described above) is "
-        "separated from the scale-free shape terms. A gap is the second "
-        "regime's gate-pass rate minus the first's, averaged over every "
-        "planted-signal cell the two share.",
+        (
+            "The regimes are compared pairwise so the volatility LEVEL (which "
+            "enters only through the fixed-cost ratio described above) is "
+            "separated from the scale-free shape terms. A gap is the second "
+            "regime's gate-pass rate minus the first's, averaged over every "
+            "planted-signal cell the two share."
+        ),
         "",
         "| from | to | axes that move | shared cells | mean gap | largest gap |",
         "|---|---|---|---:|---:|---:|",
@@ -751,20 +801,24 @@ def _regime_section(results: Sequence[CellResult], regime_specs: dict) -> list[s
             reported.append((base, other, mean_gap))
     if not reported:
         lines = [
-            "The grid's regimes share no planted-signal cell, so no pairwise "
-            "comparison is possible and the regime's contribution cannot be "
-            "quantified from this artifact."
+            (
+                "The grid's regimes share no planted-signal cell, so no pairwise "
+                "comparison is possible and the regime's contribution cannot be "
+                "quantified from this artifact."
+            )
         ]
         return lines
     biggest = max(reported, key=lambda row: abs(row[2]))
     lines += [
         "",
-        f"The largest single effect is `{biggest[0]}` to `{biggest[1]}` at "
-        f"{biggest[2]:+.2f} mean gate-pass rate. A gap that size is the price "
-        "of the regime assumption, and it is why the regime is declared in "
-        "advance and reported rather than chosen after the fact. Gaps under "
-        "about 0.1 are inside the replication noise quoted above and are not "
-        "evidence of a regime effect.",
+        (
+            f"The largest single effect is `{biggest[0]}` to `{biggest[1]}` at "
+            f"{biggest[2]:+.2f} mean gate-pass rate. A gap that size is the price "
+            "of the regime assumption, and it is why the regime is declared in "
+            "advance and reported rather than chosen after the fact. Gaps under "
+            "about 0.1 are inside the replication noise quoted above and are not "
+            "evidence of a regime effect."
+        ),
     ]
     return lines
 
@@ -772,36 +826,48 @@ def _regime_section(results: Sequence[CellResult], regime_specs: dict) -> list[s
 def _band_caveats(primary_periods: int) -> str:
     return "\n".join(
         [
-            f"- Every number here is an UPPER bound on real power at "
-            f"{primary_periods} periods, for three independent reasons: "
-            "single-trial deflation (above); a synthetic world with no "
-            "delistings, no missing rows and a cross-section whose membership "
-            "never changes; and a flat cost charge that is the same in every "
-            "band when the real charge is not.",
-            "- The cost point is the one most likely to be misread, so once "
-            "more: the gate's returns are net of a deduction in return units, "
-            "so a band modelled as more volatile at a fixed charge looks "
-            "EASIER to detect in than it is. Real smaller-cap bands carry "
-            "larger costs, which pushes the other way. This table holds the "
-            "charge flat across bands deliberately, so the only thing varying "
-            "between bands here is cross-section size — but that means it "
-            "understates how much harder the small bands really are.",
-            "- The planted signal is STATIONARY: the same rank IC in every "
-            "period. A real signal that decays, or works only in some regimes, "
-            "is harder to detect than anything tabulated here.",
-            "- Cross-sections are independent draws across bands. Real bands "
-            "are disjoint slices of the same dates and share a market factor, "
-            "which this grid does not model; band-to-band comparisons of power "
-            "are therefore cleaner here than they will be in practice.",
-            "- The gate's structural floor still applies: "
-            "`block_bootstrap_sharpe_ci` returns (0, 0) below 11 periods, so "
-            "`significant` cannot be true there at any signal strength, and "
-            "`assess_edge` reports INSUFFICIENT SAMPLE below 30. That was "
-            "established by `power_table_2026-08-03` and is not re-derived "
-            "here.",
-            "- A band's power depends on its cross-section size, which drifts "
-            "as the archive grows. These numbers describe the sizes named in "
-            "each row and no others.",
+            (
+                f"- Every number here is an UPPER bound on real power at "
+                f"{primary_periods} periods, for three independent reasons: "
+                "single-trial deflation (above); a synthetic world with no "
+                "delistings, no missing rows and a cross-section whose membership "
+                "never changes; and a flat cost charge that is the same in every "
+                "band when the real charge is not."
+            ),
+            (
+                "- The cost point is the one most likely to be misread, so once "
+                "more: the gate's returns are net of a deduction in return units, "
+                "so a band modelled as more volatile at a fixed charge looks "
+                "EASIER to detect in than it is. Real smaller-cap bands carry "
+                "larger costs, which pushes the other way. This table holds the "
+                "charge flat across bands deliberately, so the only thing varying "
+                "between bands here is cross-section size — but that means it "
+                "understates how much harder the small bands really are."
+            ),
+            (
+                "- The planted signal is STATIONARY: the same rank IC in every "
+                "period. A real signal that decays, or works only in some regimes, "
+                "is harder to detect than anything tabulated here."
+            ),
+            (
+                "- Cross-sections are independent draws across bands. Real bands "
+                "are disjoint slices of the same dates and share a market factor, "
+                "which this grid does not model; band-to-band comparisons of power "
+                "are therefore cleaner here than they will be in practice."
+            ),
+            (
+                "- The gate's structural floor still applies: "
+                "`block_bootstrap_sharpe_ci` returns (0, 0) below 11 periods, so "
+                "`significant` cannot be true there at any signal strength, and "
+                "`assess_edge` reports INSUFFICIENT SAMPLE below 30. That was "
+                "established by `power_table_2026-08-03` and is not re-derived "
+                "here."
+            ),
+            (
+                "- A band's power depends on its cross-section size, which drifts "
+                "as the archive grows. These numbers describe the sizes named in "
+                "each row and no others."
+            ),
         ]
     )
 
@@ -815,30 +881,40 @@ def render_markdown(manifest: dict, results: list[CellResult], *, date_tag: str)
     lines: list[str] = [
         f"# Planted-IC power table — {date_tag}",
         "",
-        "Calibration of the monthly forward-backtest significance gate "
-        "(`stock-grader backtest`: PSR/DSR + bootstrap Sharpe CI, "
-        "`significant` = DSR >= 0.95 AND CI low > 0) against fully synthetic "
-        "panels with a KNOWN planted cross-sectional rank IC.",
+        (
+            "Calibration of the monthly forward-backtest significance gate "
+            "(`stock-grader backtest`: PSR/DSR + bootstrap Sharpe CI, "
+            "`significant` = DSR >= 0.95 AND CI low > 0) against fully synthetic "
+            "panels with a KNOWN planted cross-sectional rank IC."
+        ),
         "",
         "## Provenance",
         "",
-        f"- Grid: `{manifest['artifact']}` generated {manifest['created_utc']} "
-        f"(generator commit `{manifest['code_commit']}`), 100% synthetic "
-        "(no real or licensed market data; the raw grid stays in its source repo).",
-        f"- Evaluator: `stock-grader backtest` at Stock-Grader commit `{current_commit()}` "
-        "with the exact monthly-forward-backtest.yml flags: "
-        f"`{' '.join(PRODUCTION_BACKTEST_FLAGS)}`.",
-        "- One fresh scratch ledger per replication: DSR deflates a single trial "
-        "(E[max] benchmark 0, so DSR == PSR). The production ledger accumulates "
-        "trials monthly, so production deflation is at least as harsh and true "
-        "power is <= every number below.",
+        (
+            f"- Grid: `{manifest['artifact']}` generated {manifest['created_utc']} "
+            f"(generator commit `{manifest['code_commit']}`), 100% synthetic "
+            "(no real or licensed market data; the raw grid stays in its source repo)."
+        ),
+        (
+            f"- Evaluator: `stock-grader backtest` at Stock-Grader commit `{current_commit()}` "
+            "with the exact monthly-forward-backtest.yml flags: "
+            f"`{' '.join(PRODUCTION_BACKTEST_FLAGS)}`."
+        ),
+        (
+            "- One fresh scratch ledger per replication: DSR deflates a single trial "
+            "(E[max] benchmark 0, so DSR == PSR). The production ledger accumulates "
+            "trials monthly, so production deflation is at least as harsh and true "
+            "power is <= every number below."
+        ),
         "- Every input parquet was verified against the grid manifest's sha256 before evaluation.",
-        "- Sampling noise: most cells use 20 replications (100 for the 3/6-month "
-        "null cells), so a tabulated rate carries a binomial standard error of "
-        "up to ~0.11. Adjacent cells can invert — e.g. planted 0.02 vs 0.03 at "
-        "12 months / 250 names, where the grid's realized mean rank ICs "
-        "themselves inverted (0.026 vs 0.024 per its manifest). Read trends, "
-        "not single cells.",
+        (
+            "- Sampling noise: most cells use 20 replications (100 for the 3/6-month "
+            "null cells), so a tabulated rate carries a binomial standard error of "
+            "up to ~0.11. Adjacent cells can invert — e.g. planted 0.02 vs 0.03 at "
+            "12 months / 250 names, where the grid's realized mean rank ICs "
+            "themselves inverted (0.026 vs 0.024 per its manifest). Read trends, "
+            "not single cells."
+        ),
         "",
         "## False-positive rate at planted IC = 0",
         "",
@@ -873,12 +949,14 @@ def render_markdown(manifest: dict, results: list[CellResult], *, date_tag: str)
         "",
         "## Gate anatomy",
         "",
-        "`significant` requires BOTH DSR >= 0.95 AND bootstrap CI low > 0. "
-        "The bootstrap CI (`block_bootstrap_sharpe_ci`, block = 10) returns "
-        "(0, 0) whenever there are fewer than 11 periods, so at 3 and 6 months "
-        "the CI-low condition can NEVER hold and the gate is structurally "
-        "closed regardless of signal strength. Below 30 periods the verdict "
-        "string additionally reads INSUFFICIENT SAMPLE.",
+        (
+            "`significant` requires BOTH DSR >= 0.95 AND bootstrap CI low > 0. "
+            "The bootstrap CI (`block_bootstrap_sharpe_ci`, block = 10) returns "
+            "(0, 0) whenever there are fewer than 11 periods, so at 3 and 6 months "
+            "the CI-low condition can NEVER hold and the gate is structurally "
+            "closed regardless of signal strength. Below 30 periods the verdict "
+            "string additionally reads INSUFFICIENT SAMPLE."
+        ),
         "",
         "| months | universe | planted IC | DSR >= 0.95 rate | CI low > 0 rate | gate rate |",
         "|---|---|---|---|---|---|",
@@ -896,8 +974,6 @@ def render_markdown(manifest: dict, results: list[CellResult], *, date_tag: str)
 
 def _honest_paragraph(results: list[CellResult]) -> str:
     """One paragraph, computed from the actual numbers, on what the gate can see."""
-
-    by_key = {(r.planted_ic, r.months, r.universe): r for r in results}
 
     def smallest_detectable(months: int, universe: int, threshold: float = 0.5) -> str:
         candidates = sorted(
