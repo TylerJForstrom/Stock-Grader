@@ -28,9 +28,9 @@ Scope, and what the gate still cannot see. It was ``docs/**/*.md`` only, which
 is how a *test docstring* published a measured capacity fraction from the
 private archive to public main. ``src/`` and ``tests/`` are now scanned on the
 same terms: a comment is published exactly as loudly as a document. What
-remains invisible is a bare percentage — "roughly 79% unfilled" matches no shape
-here, because ``1% of ADV20$`` and ``a 99% coverage bar`` are specification
-parameters that look identical to a regex. That gap is deliberate and is the
+remains invisible is a bare percentage — a measured fraction written as prose
+matches no shape here, because ``1% of ADV20$`` and ``a 99% coverage bar`` are
+specification parameters that look identical to a regex. That gap is the
 reason this gate is a floor and not a substitute for review: it catches the
 shapes only a vendor file produces, and it does not catch a measurement stated
 in prose. Widening the shapes to cover percentages would fire on the spec far
