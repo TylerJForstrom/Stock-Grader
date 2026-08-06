@@ -13,3 +13,12 @@ config/universe_liq*.txt -text
 # hash in costs.py is taken over canonical JSON, not raw bytes, so a stray CRLF
 # cannot fail the pin — this keeps the bytes tidy, it is not the guarantee.
 src/stock_grader/config/cost_golden_vectors.json text eol=lf
+
+# Dated calibration artifacts are hash-pinned: each trio's .sha256 file
+# records the sha256 of the .json and .md BYTES as written. A platform that
+# translates their line endings changes those bytes and breaks the pin, which
+# is exactly what a Windows checkout did before this line existed. Same rule
+# as the universe inputs above, for the same reason.
+docs/calibration/*.json -text
+docs/calibration/*.md -text
+docs/calibration/*.sha256 -text

@@ -619,10 +619,27 @@ class TestExistingArtifactIsUntouched:
     """The 2026-08-03 trio is immutable; this branch may not have moved it."""
 
     def test_recorded_hashes_still_match_the_files(self):
+        """A BYTE comparison, which is what a .sha256 manifest means.
+
+        This is deliberately not normalised. A dated artifact's hash is over
+        the bytes as written, so anything that rewrites them — including a
+        platform's line-ending translation on checkout — has broken the pin
+        and must be caught here rather than papered over in the assertion.
+        `.gitattributes` marks `docs/calibration/*` as `-text` for exactly
+        that reason; before it did, this test failed on Windows.
+        """
+
         directory = REPO_ROOT / "docs" / "calibration"
-        manifest = (directory / "power_table_2026-08-03.sha256").read_text()
-        for line in manifest.splitlines():
+        manifest = (directory / "power_table_2026-08-03.sha256").read_bytes()
+        for line in manifest.decode().splitlines():
             digest, name = line.split("  ")
             assert (
                 hashlib.sha256((directory / name).read_bytes()).hexdigest() == digest
             ), name
+
+    def test_calibration_artifacts_are_protected_from_eol_translation(self):
+        """The .gitattributes rule the hash pin depends on, asserted."""
+
+        rules = (REPO_ROOT / ".gitattributes").read_text()
+        for pattern in ("*.json", "*.md", "*.sha256"):
+            assert f"docs/calibration/{pattern} -text" in rules, pattern
