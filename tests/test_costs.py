@@ -23,15 +23,24 @@ import pytest
 from stock_grader import costs
 
 #: sha256 of the golden-vector file's CANONICAL content, as a literal.
-#: Stock-Vault asserts the same constant against its own copy. Changing the
-#: file without changing this line fails here; changing both without landing
-#: the same content in the vault fails there. That is the whole mechanism.
+#: Stock-Vault asserts the same constant against its own copy.
+#:
+#: What that does and does not buy, stated at the strength it actually holds.
+#: It catches an edit to this copy that does not update this line. It does NOT
+#: catch an edit landed here and never landed in the vault: this repository has
+#: no way to see the other file, so each side can update its literal in lockstep
+#: with its own copy and stay green while the two files diverge. That is exactly
+#: what happened — ``bar_vectors`` was added on this side in #35 and never
+#: landed in the vault, and both suites passed for a day with a broken pin.
+#: The check that closes it runs in Stock-Vault's CI, which fetches THIS file
+#: from public main and refuses to build on any difference. The reverse
+#: direction is not checkable and this comment does not pretend it is.
 #:
 #: Canonical content, not raw bytes: git rewrites line endings on checkout, so
 #: a byte hash of a text file makes the pin fail on a Windows runner for a
 #: reason that has nothing to do with the cost model. See
 #: :func:`stock_grader.costs.golden_vector_sha256`.
-GOLDEN_SHA256 = "53684bf6e2e2823b0ad82d8ebf9be051cb72f976cdd6ffedaa8347a44e198416"
+GOLDEN_SHA256 = "de8b55651b1943f96541f6ba1fcf41fab366e4dbaf40fb26172c5656b4df5be1"
 
 
 def test_golden_vector_content_is_pinned():
@@ -473,6 +482,63 @@ def test_the_bar_vectors_cover_what_the_composition_vectors_cannot():
         v for v in costs.BAR_GOLDEN_VECTORS if v["name"] == "contained-closes"
     )
     assert contained["unadjusted_cs_spread_bps"] == contained["expected"]["cs_spread_bps"]
+
+
+def test_every_bar_vector_field_declares_the_units_a_porting_repo_must_convert_to():
+    """The reason ``bar_vectors`` sat on this side of the wall for a day.
+
+    The block was added here in #35 and never landed in Stock-Vault, and a
+    literal port would not have worked if it had: the vault's Amihud estimator
+    returns |r| / $volume as a fraction per dollar, this file's field is bps of
+    price per $1M traded, and the 1e10 between them was written down nowhere.
+    A pin the other repository cannot implement without guessing is not a pin.
+    """
+    contract = costs._golden_payload()["estimator_contract"]
+    declared = set(contract["units"])
+    for vector in costs.BAR_GOLDEN_VECTORS:
+        fields = set(vector["expected"] or ()) | {"unadjusted_cs_spread_bps"}
+        missing = fields - declared
+        assert not missing, f"{vector['name']} publishes undeclared field(s) {sorted(missing)}"
+    # And the conversion itself is stated, not left as folklore.
+    assert "1e10" in contract["units"]["amihud_lambda_bps_per_musd"]
+    # And the third convention, which is not a unit but is just as unguessable:
+    # a per-PAIR mask is not a per-DATE exclusion, and reading it as one moves
+    # usable_pairs by a whole pair.
+    assert "BOTH pairs touching it" in contract["excluded_pairs"]
+
+
+def test_the_contract_says_which_layer_owns_the_refusal():
+    """The second thing a porting repo cannot guess.
+
+    ``MIN_USABLE_PAIRS`` is enforced inside ``corwin_schultz_spread_bps`` here
+    and one level up, in ``estimate()``, in Stock-Vault. Driving the refusal
+    vector through the bare estimator on that side returns a NUMBER, so an
+    implementer following the vector literally would conclude the two repos
+    disagree when they do not.
+    """
+    contract = costs._golden_payload()["estimator_contract"]
+    assert "MIN_USABLE_PAIRS" in contract["refusal_layer"]
+    assert "composed" in contract["refusal_layer"].lower()
+    refusals = [v for v in costs.BAR_GOLDEN_VECTORS if v["expected"] is None]
+    assert refusals, "the contract describes a refusal layer; a vector must exercise it"
+
+
+def test_the_pin_note_states_its_mechanism_at_the_strength_it_actually_holds():
+    """The false attestation, as a regression.
+
+    The note asserted, as fact, that "both repositories carry a byte-identical
+    copy" — while they did not, and while nothing in either suite could have
+    told. Under attestations-computed-never-asserted that sentence is the
+    failure mode the pin exists to prevent, published in a public repository.
+    The note must describe the check that runs, and must not claim an identity
+    neither side can verify from where it stands.
+    """
+    note = costs._golden_payload()["note"]
+    assert "byte-identical copy and both assert its sha256" not in note
+    # It has to say where the cross-repository comparison actually happens, and
+    # that it only runs in one direction.
+    assert "Stock-Vault's CI" in note
+    assert "one-directional" in note
 
 
 def test_estimators_refuse_a_short_window_rather_than_reporting_a_thin_number():

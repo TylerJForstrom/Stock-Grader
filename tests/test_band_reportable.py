@@ -35,7 +35,7 @@ from tests.test_signal_panel import (
 
 from stock_grader import cli
 from stock_grader.backtest import BacktestConfig, backtest_to_markdown, evaluate_walk_forward
-from stock_grader.signal_panel import band_report
+from stock_grader.signal_panel import SignalPanelError, band_report
 
 SIGNAL_2 = dt.date(2026, 8, 10)
 ENTRY_2 = dt.date(2026, 8, 11)
@@ -64,12 +64,18 @@ def _band_block(
     this side reads. ``floor`` is deliberately a fixture parameter: the floor is
     the PRODUCER's declaration, and the grader must adopt it rather than
     hardcode 30 — a program that re-cut its floor and a grader that did not
-    would disagree silently."""
+    would disagree silently.
+
+    The dollar edges are INVENTED, and deliberately are not any band's real
+    ones: the pre-registered bands were cut at the archive's measured dollar-
+    volume quartiles, so a real edge is an archive measurement and this is a
+    public repository. Nothing here needs the true numbers — the tests are about
+    whether the edges travel, not what they are."""
     block = {
         "band": {
             "band_id": band_id,
-            "adv_floor": 1_000_000.0,
-            "adv_cap": 4_000_000.0,
+            "adv_floor": 3_000_000.0,
+            "adv_cap": 9_000_000.0,
             "label": "illiquid",
             "is_control": False,
         },
@@ -123,8 +129,8 @@ def test_band_identity_and_verdict_reach_both_evaluable_sidecars(vault_root):
     # Identity: which band, and the dollar edges that define it. Without these
     # the panel cannot even be attributed to a band after the fact.
     assert band["band_id"] == "A"
-    assert band["band"]["adv_floor"] == 1_000_000.0
-    assert band["band"]["adv_cap"] == 4_000_000.0
+    assert band["band"]["adv_floor"] == 3_000_000.0
+    assert band["band"]["adv_cap"] == 9_000_000.0
     assert band["band"]["label"] == "illiquid"
     assert band["band"]["is_control"] is False
     # The floor, the count, and the verdict.
@@ -274,7 +280,7 @@ def test_a_refused_band_leads_the_report_and_changes_no_number():
 
     markdown = backtest_to_markdown(refused)
     assert "## ADV band A — NOT REPORTABLE — REFUSED" in markdown
-    assert "$1,000,000 to $4,000,000" in markdown
+    assert "$3,000,000 to $9,000,000" in markdown
     assert "not a band result" in markdown
 
 
@@ -424,3 +430,110 @@ def test_a_tampered_sidecar_is_refused_rather_than_believed(vault_root, tmp_path
 
     with pytest.raises(ValueError, match="sha256 mismatch"):
         cli._load_adv_band(panel_path)
+
+
+# -- the gate that never fired: an ABSENT block on a band ----------------------
+#
+# Everything above tests a block that is PRESENT. Both gates short-circuit on
+# presence — cli.py's `if adv_band is not None and not adv_band.get(...)` and
+# backtest.py's `if isinstance(adv_band, dict) and adv_band and not ...` — so a
+# band whose sidecars carry no block at all was a silent pass, and the panels
+# the small-cap program was measured on are in exactly that state: they were
+# built before write_signal_panel forwarded the verdict, so their build.json
+# has no `adv_band` key and `band_report` had nothing to publish. The evaluator
+# imported the tree that added the gate and the gate could not fire. These are
+# the two halves of failing closed instead.
+
+
+def _banded(vault_root: Path, *, block: dict | None, signal: str = "unit_signal__advA"):
+    _write_observations(
+        vault_root,
+        signal,
+        _two_period_rows(),
+        extra={} if block is None else {"adv_band": block},
+    )
+    return _build(vault_root, signal)
+
+
+def test_a_banded_namespace_whose_manifest_declares_no_band_refuses_to_build(vault_root):
+    """Missing evidence is not a passing default, at the point of manufacture.
+
+    An unbanded panel legitimately carries no key. A panel whose NAME says it
+    is band A and whose manifest says nothing is not unbanded — it is a band
+    with a missing verdict, and writing it produces an artifact that evaluates
+    with no floor at all.
+    """
+    with pytest.raises(SignalPanelError, match="banded namespace"):
+        _banded(vault_root, block=None)
+
+
+def test_a_banded_namespace_builds_normally_once_the_verdict_is_there(vault_root):
+    result, panel_path = _banded(vault_root, block=_band_block(floor=1))
+    assert _sidecars(panel_path)[0]["adv_band"]["reportable"] is True
+    assert result.periods_in_panel == 2
+
+
+def test_an_unbanded_namespace_is_untouched_by_the_new_refusal(vault_root):
+    """The regression guard: the check keys on the NAMESPACE, not on absence."""
+    _write_observations(vault_root, "unit_signal", _two_period_rows())
+    _, panel_path = _build(vault_root)
+    assert "adv_band" not in _sidecars(panel_path)[0]
+
+
+def _strip_verdict(panel_path: Path) -> None:
+    """Put the panel directory back into the state the measured panels are in:
+    a build.json and a catalog written before the verdict existed."""
+    for name in ("build.json", "manifest.json"):
+        path = panel_path.parent / name
+        payload = json.loads(path.read_text())
+        payload.pop("adv_band", None)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def test_a_pre_gate_sidecar_has_its_verdict_recomposed_from_the_observations(vault_root):
+    """The eight measured panels, reproduced: the verdict is recoverable.
+
+    The producer's block never went anywhere — it is on the observation
+    manifest, where the builder read it from. Recomposing it here through the
+    SAME `band_verdict` the builder uses makes the gate load-bearing on a panel
+    built before the gate existed, without rebuilding anything.
+    """
+    _, panel_path = _banded(vault_root, block=_band_block(floor=1))
+    _strip_verdict(panel_path)
+
+    band = cli._load_adv_band(panel_path)
+    assert band is not None
+    assert band["band_id"] == "A"
+    assert band["min_evaluable_periods"] == 1
+    assert band["evaluable_periods"] == 2  # this panel's own counts.json leg
+    assert band["reportable"] is True
+    assert "RECOMPOSED at evaluation time" in band["observations_source"]
+
+
+def test_a_recomposed_verdict_still_refuses_a_sub_floor_band(vault_root, tmp_path, capsys):
+    """The latency, closed: the case that was a silent full band result."""
+    _, panel_path = _banded(vault_root, block=_band_block(floor=30))
+    _strip_verdict(panel_path)
+    ledger = tmp_path / "ledger.jsonl"
+
+    assert cli.cmd_backtest(_backtest_args(panel_path, ledger)) == 2
+    assert "NOT REPORTABLE" in capsys.readouterr().out
+    assert not ledger.exists()
+
+
+def test_a_band_with_no_verdict_anywhere_refuses_rather_than_evaluating(
+    vault_root, tmp_path, capsys
+):
+    """Both sidecars silent AND the observation manifest gone: exit 2, not a report."""
+    _, panel_path = _banded(vault_root, block=_band_block(floor=1))
+    _strip_verdict(panel_path)
+    observations = panel_path.parent / "observations" / "manifest.json"
+    payload = json.loads(observations.read_text())
+    payload.pop("adv_band", None)
+    observations.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="banded panel namespace"):
+        cli._load_adv_band(panel_path)
+    ledger = tmp_path / "ledger.jsonl"
+    assert cli.cmd_backtest(_backtest_args(panel_path, ledger)) == 2
+    assert not ledger.exists()

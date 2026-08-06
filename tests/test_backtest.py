@@ -429,10 +429,14 @@ def test_a_capped_name_contributes_only_the_exposure_it_could_hold():
     Before this, `estimate_cost` capped the notional at 1% of ADV20$, priced
     the CAPPED slice, and nothing downstream reduced the position: a name that
     could absorb $20k of a $100k order stayed a full-weight member of its
-    quantile bucket while being charged what the $20k cost. On the banded
-    panels that was 100% of band A's rows, so the headline band-A-vs-band-D
-    comparison was measured between a name that was 79% unfilled and one that
-    was fully filled.
+    quantile bucket while being charged what the $20k cost. Wherever the cap
+    binds below the per-name order size — which, for a participation cap and a
+    fixed order size, is a property of the band's own ceiling — a truncated
+    name stayed full-weight while being charged the capped cost, so a
+    cross-liquidity comparison was measured between a name that was largely
+    unfilled and one that was fully filled. The magnitudes are archive
+    measurements and live in Stock-Vault; the fixture below carries the
+    arithmetic.
 
     Here the top quintile's names are split: the ones the cap truncates carry a
     return nobody could have earned at full size, and the leg return must move

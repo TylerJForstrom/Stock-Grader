@@ -1107,8 +1107,24 @@ def _load_adv_band(path: Path) -> dict | None:
     ``None`` for every panel that is not a band — frozen score panels, the
     synthetic calibration grids, and every v6 panel built from an unbanded
     observation dataset. Those evaluate exactly as they always did.
+
+    Two things an earlier version got wrong, both of them the same mistake in
+    different places. The gate that reads this block short-circuits on presence
+    (``if adv_band is not None and not adv_band.get("reportable")``), so a panel
+    whose sidecars carry NO block was waved through as though it had passed —
+    and every one of the small-cap program's eight banded panels was built
+    before the block existed, so that is exactly the state they are in. So:
+
+    * a banded panel directory whose ``build.json`` and ``manifest.json`` are
+      silent falls back to the observation manifest the vault wrote, and the
+      verdict is RECOMPOSED there through :func:`band_verdict` — the same
+      function the builder uses, over this panel's own ``counts.json``. The
+      gate is then load-bearing on a panel built before the gate existed.
+    * if even that is missing, a banded namespace RAISES. Missing evidence
+      cannot be a passing default for an artifact that names itself a band.
     """
     from .frozen_manifest import verify_sibling_manifest
+    from .signal_panel import band_verdict, evaluable_periods_from_counts, is_band_namespace
 
     def read(candidate: Path) -> dict | None:
         if not candidate.is_file():
@@ -1134,7 +1150,61 @@ def _load_adv_band(path: Path) -> dict | None:
         # missing manifest must not produce two differently-worded refusals.
         verify_sibling_manifest(build_path, strict=False)
         return band
-    return read(path.parent / "manifest.json")
+    band = read(path.parent / "manifest.json")
+    if band is not None:
+        return band
+
+    # Neither artifact this repo writes carries a verdict. Before concluding
+    # "not a band", ask the producer: the vault's observation manifest is where
+    # the block originates, and it is present on every banded panel including
+    # the ones built before write_signal_panel forwarded it.
+    observed = read(path.parent / "observations" / "manifest.json")
+    if observed is not None:
+        counts_path = path.parent / "counts.json"
+        try:
+            counts = json.loads(counts_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            counts = None
+        if not isinstance(counts, dict):
+            raise ValueError(
+                f"{path.parent} carries an observation-manifest ADV band block but no "
+                f"readable counts.json, so this panel's own evaluable-period count "
+                "cannot be established and the §1.3 verdict cannot be recomposed. "
+                "Rebuild the panel so build.json carries the verdict."
+            )
+        recomposed = band_verdict(observed, evaluable_periods_from_counts(counts.values()))
+        if recomposed is None:  # pragma: no cover - read() already rejects empties
+            raise ValueError(f"{path.parent}: unusable adv_band block in the observation manifest")
+        # Say where it came from. A verdict recomposed at evaluate time is not
+        # the same evidence as one the builder stamped, and a reader of the
+        # output is entitled to know which one they are looking at.
+        recomposed["observations_source"] = (
+            "Stock-Vault observation manifest (adv_band), RECOMPOSED at evaluation time "
+            "because this panel's build.json predates the verdict"
+        )
+        return recomposed
+
+    if is_band_namespace(_panel_namespace(path)):
+        raise ValueError(
+            f"{path.parent} is a banded panel namespace but no adv_band block was found "
+            "in build.json, manifest.json or observations/manifest.json, so nothing here "
+            "can say whether the band clears its pre-registered evaluable-period floor. "
+            "Refusing to evaluate: an absent verdict is not a passing one. Re-export the "
+            "observation dataset from Stock-Vault and rebuild the panel."
+        )
+    return None
+
+
+def _panel_namespace(path: Path) -> str:
+    """The signal namespace a panel path declares — ``.../<signal>/v<N>/panel``.
+
+    Read from the path rather than from a sidecar on purpose: this is the check
+    that runs when the sidecars are the thing that went missing.
+    """
+    parent = path.parent
+    if re.fullmatch(r"v\d+", parent.name):
+        return parent.parent.name
+    return parent.name
 
 
 def _backtest_spec(panel: pd.DataFrame, args: argparse.Namespace) -> dict:

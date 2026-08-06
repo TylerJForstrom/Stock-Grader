@@ -34,6 +34,7 @@ import datetime as dt
 import json
 import math
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -62,9 +63,32 @@ __all__ = [
     "SignalPanelResult",
     "SignalPeriodAccounting",
     "band_report",
+    "band_verdict",
     "build_signal_panel",
+    "evaluable_periods_from_counts",
+    "is_band_namespace",
     "write_signal_panel",
 ]
+
+#: A banded observation dataset is exported under its own namespace —
+#: ``<signal>__adv<BAND ID>`` — so a band panel is identifiable from its name
+#: alone, before any sidecar is opened. That matters because the §1.3 verdict
+#: lives in a sidecar: if the sidecar is missing the block, the NAME is the only
+#: remaining evidence that a verdict was owed, and something has to notice.
+BAND_NAMESPACE = re.compile(r"__adv[A-Z][A-Za-z0-9]*$")
+
+
+def is_band_namespace(signal: str) -> bool:
+    """True for a signal name that declares itself an ADV band panel.
+
+    The predicate exists so that an ABSENT ``adv_band`` block can be told apart
+    from a panel that was never banded. Both look identical in the artifacts —
+    no key — and only the namespace distinguishes "not a band" from "a band
+    whose verdict went missing". Without it a stale or pre-gate sidecar is a
+    silent pass, which is the exact inversion of "missing evidence is never a
+    passing default".
+    """
+    return bool(BAND_NAMESPACE.search(str(signal)))
 
 #: Row schema of the EVALUABLE panel this module writes.
 SIGNAL_PANEL_SCHEMA_VERSION = "1.0"
@@ -385,6 +409,22 @@ def build_signal_panel(
     # run, exactly like the attestations beside it.
     band = manifest.get("adv_band")
     result.adv_band = dict(band) if isinstance(band, dict) and band else None
+    # Fail CLOSED on the one case the presence check cannot cover. Everywhere
+    # downstream, an absent block means "not a band" and evaluates unqualified;
+    # that reading is only safe while an absent block cannot happen to a band.
+    # It can: the eight banded panels of the small-cap program were built before
+    # this verdict existed, and their sidecars carry no block at all. Building a
+    # band panel from a manifest that declares no band would mint another one.
+    if result.adv_band is None and is_band_namespace(signal):
+        raise SignalPanelError(
+            f"{signal} is a banded namespace but its observation manifest carries no "
+            "adv_band block, so no §1.3 evaluable-period verdict can be computed for "
+            "it. A panel written from here would be indistinguishable from an "
+            "unbanded one and would evaluate with no floor at all — a band below the "
+            "pre-registered floor would be reported as a band result. Re-export the "
+            "observation dataset from Stock-Vault with its adv_band block, or build "
+            "this panel under a namespace that does not claim to be a band."
+        )
     observations = vault.signal_panel_observations(signal, version)
     result.observation_periods = len(observations)
     result.observations = int(sum(len(frame) for frame in observations.values()))
@@ -857,9 +897,7 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
         )
     )
     result.periods_accounted = len(counts_by_date)
-    result.periods_in_panel = sum(
-        1 for entry in counts_by_date.values() if int(entry.get("kept", 0)) > 0
-    )
+    result.periods_in_panel = evaluable_periods_from_counts(counts_by_date.values())
     # Offender identities are whole-panel too, or the label lies: they are
     # unioned from the SAME persisted accounting as every number beside them.
     identities: set[str] = set()
@@ -920,7 +958,43 @@ def band_report(result: SignalPanelResult) -> dict[str, Any] | None:
     failed. A missing floor is not treated as a passing one — an observation
     manifest that declares no floor cannot license a report.
     """
-    observed = result.adv_band
+    return band_verdict(result.adv_band, result.periods_in_panel)
+
+
+def evaluable_periods_from_counts(entries: Any) -> int:
+    """Periods of a built panel carrying at least one kept row, from ``counts.json``.
+
+    The single definition of the §1.3 denominator. ``_aggregate`` calls it while
+    a build is in flight; the evaluator calls it against a persisted
+    ``counts.json`` when it has to recompose a verdict a stale ``build.json``
+    never carried. A second inline ``sum(... kept > 0)`` anywhere would be a
+    second definition of "evaluable", which is the number the whole gate turns
+    on.
+    """
+    total = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            kept = int(entry.get("kept", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if kept > 0:
+            total += 1
+    return total
+
+
+def band_verdict(
+    observed: dict[str, Any] | None, evaluable_periods: int
+) -> dict[str, Any] | None:
+    """:func:`band_report`'s arithmetic, over the two inputs it actually reads.
+
+    Split out because the verdict has a second reader. ``band_report`` composes
+    it at BUILD time from a live ``SignalPanelResult``; the evaluator has to be
+    able to recompose it at EVALUATE time from a panel directory whose
+    ``build.json`` predates the verdict, and the one thing it must not do is
+    reimplement the AND. One function, two callers, no second opinion.
+    """
     if not isinstance(observed, dict) or not observed:
         return None
     raw_band = observed.get("band")
@@ -930,7 +1004,7 @@ def band_report(result: SignalPanelResult) -> dict[str, Any] | None:
         floor = None if floor_raw is None else int(floor_raw)
     except (TypeError, ValueError):
         floor = None
-    evaluable = int(result.periods_in_panel)
+    evaluable = int(evaluable_periods)
     upstream_periods = observed.get("evaluable_periods")
     upstream_reportable = bool(observed.get("reportable", False))
 

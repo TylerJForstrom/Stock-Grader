@@ -23,6 +23,18 @@ figure — on a line that also names a licensed source or a vault data path.
 
 Adding a genuinely public number that trips this gate is possible; the fix is to
 put the number in Stock-Vault, not to widen the pattern.
+
+Scope, and what the gate still cannot see. It was ``docs/**/*.md`` only, which
+is how a *test docstring* published a measured capacity fraction from the
+private archive to public main. ``src/`` and ``tests/`` are now scanned on the
+same terms: a comment is published exactly as loudly as a document. What
+remains invisible is a bare percentage — "roughly 79% unfilled" matches no shape
+here, because ``1% of ADV20$`` and ``a 99% coverage bar`` are specification
+parameters that look identical to a regex. That gap is deliberate and is the
+reason this gate is a floor and not a substitute for review: it catches the
+shapes only a vendor file produces, and it does not catch a measurement stated
+in prose. Widening the shapes to cover percentages would fire on the spec far
+more often than on a leak, and a gate that cries wolf gets suppressed.
 """
 
 from __future__ import annotations
@@ -80,9 +92,30 @@ def _doc_files() -> list[Path]:
     )
 
 
-def test_public_docs_carry_no_licensed_measured_values() -> None:
+def _source_files() -> list[Path]:
+    """``src/`` and ``tests/`` — the trees the gate could not see.
+
+    The wall was breached a second time, and this time not by prose: a test
+    docstring in this very directory restated a band's measured capacity
+    truncation from the private archive. The gate never looked, because it
+    globbed ``docs/**/*.md`` and nothing else. Comments and docstrings are
+    published exactly as loudly as documentation is, so they are scanned on the
+    same terms and by the same patterns.
+
+    This file is excluded from its own scan: it quotes the breaches it exists
+    to catch, as fixtures.
+    """
+    return sorted(
+        path
+        for tree in ("src", "tests")
+        for path in (REPO_ROOT / tree).rglob("*.py")
+        if path.resolve() != Path(__file__).resolve()
+    )
+
+
+def _scan(paths: list[Path]) -> list[str]:
     offenders: list[str] = []
-    for path in _doc_files():
+    for path in paths:
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not LICENSED_CONTEXT.search(line):
                 continue
@@ -93,13 +126,61 @@ def test_public_docs_carry_no_licensed_measured_values() -> None:
                 if any(allowed in match.group(0) for allowed in ALLOWED_SUBSTRINGS):
                     continue
                 offenders.append(
-                    f"{path.relative_to(REPO_ROOT)}:{lineno}: {label} "
+                    f"{_label(path)}:{lineno}: {label} "
                     f"{match.group(0)!r} on a line naming a licensed source"
                 )
+    return offenders
+
+
+def _label(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:  # a planted fixture outside the tree
+        return str(path)
+
+
+def _assert_clean(offenders: list[str]) -> None:
     assert not offenders, (
         "vault-derived measured values must not be published in this PUBLIC repo "
         "(move them into Stock-Vault's private notes):\n  " + "\n  ".join(offenders)
     )
+
+
+def test_public_docs_carry_no_licensed_measured_values() -> None:
+    _assert_clean(_scan(_doc_files()))
+
+
+def test_source_and_test_comments_carry_no_licensed_measured_values() -> None:
+    """The second breach: a docstring is publication too.
+
+    ``tests/test_backtest.py`` restated a band's measured capacity truncation
+    from the private archive in a docstring, and shipped it to public main. The
+    docs-only gate above could not have caught it — it never opened the file.
+    """
+    _assert_clean(_scan(_source_files()))
+
+
+def test_the_scanner_reads_a_python_docstring_the_same_way_it_reads_a_document(
+    tmp_path: Path,
+) -> None:
+    """Scope, proven rather than assumed.
+
+    ``_source_files`` is the whole fix for the second breach, so it needs a
+    fixture that fails if the globs are narrowed back to markdown or if a
+    Python file is opened as anything other than text.
+    """
+    planted = tmp_path / "module_with_a_leak.py"
+    planted.write_text(
+        '"""A docstring, which is published exactly as loudly as a document.\n\n'
+        "On the FINRA cross-section the panel carried 12,482 rows.\n"
+        '"""\n',
+        encoding="utf-8",
+    )
+    offenders = _scan([planted])
+    assert len(offenders) == 1
+    assert "thousands-separated count" in offenders[0]
+    with pytest.raises(AssertionError, match="PUBLIC repo"):
+        _assert_clean(offenders)
 
 
 def test_the_gate_would_catch_the_breach_it_was_written_for() -> None:
