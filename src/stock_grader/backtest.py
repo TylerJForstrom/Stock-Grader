@@ -191,6 +191,13 @@ class BacktestReport:
     #: on, and the shortfall is the capacity constraint, not a rounding
     #: detail.
     mean_deployable_fraction: float | None = None
+    #: The ADV-band block carried by the panel's own sidecar, or ``None`` for a
+    #: panel that is not a band of a pre-registered partition. When it is
+    #: present and says ``reportable: false``, the band sits below the
+    #: program's declared evaluable-period floor and NOTHING in this report may
+    #: be quoted as a band statistic — the limitation says so in words, and the
+    #: caller had to pass an explicit override to get here at all.
+    adv_band: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -384,8 +391,16 @@ def evaluate_walk_forward(
     config: BacktestConfig | None = None,
     *,
     allow_mixed_universes: bool = False,
+    adv_band: dict | None = None,
 ) -> BacktestReport:
-    """Evaluate frozen point-in-time scores against strictly later total returns."""
+    """Evaluate frozen point-in-time scores against strictly later total returns.
+
+    ``adv_band`` is the band block from the panel's sidecar (see
+    :func:`stock_grader.signal_panel.band_report`). It changes no number here —
+    a band's arithmetic is the same arithmetic — but a band the pre-registered
+    floor refuses must not produce a report that reads like any other, so it is
+    carried onto the report and stated as the first limitation.
+    """
 
     config = config or BacktestConfig()
     contract = _input_contract(panel)
@@ -692,6 +707,23 @@ def evaluate_walk_forward(
                 "overcharges liquid ones, which biases any cross-liquidity comparison "
                 "in favour of the thin side."
             )
+    # First in the list, and unconditional on anything else: a band below the
+    # floor is not a caveat on a result, it is the absence of one.
+    if isinstance(adv_band, dict) and adv_band and not adv_band.get("reportable", False):
+        because = adv_band.get("not_reportable_because") or []
+        limitations.insert(
+            0,
+            (
+                f"NOT REPORTABLE: ADV band {adv_band.get('band_id') or '?'} is below the "
+                f"pre-registered evaluable-period floor of "
+                f"{adv_band.get('min_evaluable_periods')} "
+                f"({'; '.join(str(item) for item in because) or 'no reason recorded'}). "
+                "The pre-registration permits no band statistic from this panel: every "
+                "number below is an exploratory diagnostic on an under-powered sample "
+                "and must not be quoted as a band result, compared against another "
+                "band, or counted as a trial of the declared hypothesis."
+            ),
+        )
     if refused_rows:
         limitations.append(
             f"{refused_rows} row(s) carried no cost estimate and were dropped from "
@@ -774,6 +806,7 @@ def evaluate_walk_forward(
         no_cost_estimate_rows=refused_rows,
         capacity_weighted=capacity_weighted,
         mean_deployable_fraction=deployable,
+        adv_band=(dict(adv_band) if isinstance(adv_band, dict) and adv_band else None),
     )
 
 
@@ -824,6 +857,59 @@ def backtest_to_markdown(report: BacktestReport) -> str:
             return f"[{value[0]:.2%}, {value[1]:.2%}]"
         return f"[{value[0]:.3f}, {value[1]:.3f}]"
 
+    def dollars(value: object) -> str:
+        if not isinstance(value, (int, float)):
+            return "none" if value is None else str(value)
+        return f"${float(value):,.0f}"
+
+    band = report.adv_band if isinstance(report.adv_band, dict) else None
+    band_lines: list[str] = []
+    if band:
+        raw_edges = band.get("band")
+        edges: dict = raw_edges if isinstance(raw_edges, dict) else {}
+        raw_observations = band.get("observations")
+        observations: dict = raw_observations if isinstance(raw_observations, dict) else {}
+        verdict = "REPORTABLE" if band.get("reportable") else "NOT REPORTABLE — REFUSED"
+        band_lines = [
+            f"## ADV band {band.get('band_id') or '?'} — {verdict}",
+            "",
+            "| band property | value |",
+            "|---|---|",
+            f"| Band | {edges.get('band_id') or '?'} ({edges.get('label') or '—'}) |",
+            (
+                "| Trailing-20-session median dollar volume | "
+                f"{dollars(edges.get('adv_floor'))} to "
+                f"{dollars(edges.get('adv_cap')) if edges.get('adv_cap') is not None else 'no cap'}"
+                " |"
+            ),
+            f"| Control band | {'yes' if edges.get('is_control') else 'no'} |",
+            (
+                "| Evaluable periods (this panel / floor) | "
+                f"{band.get('evaluable_periods')} / {band.get('min_evaluable_periods')} |"
+            ),
+            # The upstream count too: the verdict is the AND of both artifacts,
+            # so a table showing only this panel's periods would look like it
+            # cleared a floor the observation panel failed.
+            (
+                "| Evaluable periods (observation panel) | "
+                f"{observations.get('evaluable_periods') if observations else '—'} |"
+            ),
+            f"| Pre-registration | {band.get('preregistration') or '—'} |",
+            f"| Pre-registration sha256 | {band.get('preregistration_sha256') or '—'} |",
+            "",
+            *(
+                []
+                if band.get("reportable")
+                else [
+                    (
+                        "> The pre-registered floor refuses this band. The diagnostics "
+                        "below are exploratory only and are not a band result."
+                    ),
+                    "",
+                ]
+            ),
+        ]
+
     lines = [
         "# Walk-forward score validation",
         "",
@@ -832,6 +918,7 @@ def backtest_to_markdown(report: BacktestReport) -> str:
             f"{report.rejected_periods} rejected periods."
         ),
         "",
+        *band_lines,
         "## Input contract",
         "",
         "| requirement | verified by panel |",

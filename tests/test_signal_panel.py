@@ -175,6 +175,7 @@ def _write_observations(
     *,
     corrupt: str | None = None,
     version: int = SIGNAL_PANEL_VERSION,
+    extra: dict | None = None,
 ) -> Path:
     directory = root / "data" / "signal_panels" / signal_name / f"v{version}" / "observations"
     directory.mkdir(parents=True, exist_ok=True)
@@ -195,6 +196,10 @@ def _write_observations(
             "license_note": "unit fixture; private",
         }
     )
+    # Dataset-specific keys the vault writes beside the contract five —
+    # ``adv_band`` above all, which is how a banded observation dataset
+    # declares its §1.3 verdict to the return join.
+    manifest.update(extra or {})
     (directory / "manifest.json").write_text(json.dumps(manifest))
     return directory
 

@@ -61,6 +61,7 @@ __all__ = [
     "SignalPanelError",
     "SignalPanelResult",
     "SignalPeriodAccounting",
+    "band_report",
     "build_signal_panel",
     "write_signal_panel",
 ]
@@ -239,6 +240,13 @@ class SignalPanelResult:
     pit_membership_coverage: float = 0.0
     attestations: dict[str, bool] = field(default_factory=dict)
     spec: dict[str, Any] = field(default_factory=dict)
+    #: The observation panel's ``adv_band`` block, VERBATIM from Stock-Vault's
+    #: manifest, or ``None`` for an unbanded panel. It carries the band's
+    #: identity (id, dollar edges, label, control flag), the pre-registration
+    #: it was cut under, and the vault's own §1.3 verdict — including the
+    #: ``reportable`` flag that had no consumer on this side of the wall until
+    #: :func:`band_report` gave it one.
+    adv_band: dict[str, Any] | None = None
     refusal: str | None = None
 
 
@@ -371,6 +379,12 @@ def build_signal_panel(
             "observation_schema_version",
         )
     }
+    # The ADV band this observation dataset was cut for, if any. Read here with
+    # the rest of the manifest so an incremental run that prices nothing still
+    # republishes it — the band verdict is a property of the panel, not of the
+    # run, exactly like the attestations beside it.
+    band = manifest.get("adv_band")
+    result.adv_band = dict(band) if isinstance(band, dict) and band else None
     observations = vault.signal_panel_observations(signal, version)
     result.observation_periods = len(observations)
     result.observations = int(sum(len(frame) for frame in observations.values()))
@@ -879,6 +893,81 @@ def _aggregate(counts_by_date: dict[str, dict], result: SignalPanelResult) -> No
     }
 
 
+def band_report(result: SignalPanelResult) -> dict[str, Any] | None:
+    """The band block the EVALUABLE panel publishes, or ``None`` if unbanded.
+
+    Stock-Vault computes a §1.3 verdict for every ADV band it exports and
+    writes it onto the observation manifest. Nothing on this side read it: the
+    return join copied the spec keys and dropped ``adv_band``, so the evaluable
+    panel — the artifact the evaluator actually opens — carried no band
+    identity and no floor at all. A band below the pre-registered
+    30-evaluable-period floor was therefore indistinguishable from a band above
+    it, and its statistics would have been reported as if the program permitted
+    them.
+
+    Two facts are published side by side rather than merged, because they are
+    measurements of two different artifacts:
+
+    * ``observations`` — the vault's block, VERBATIM. Its ``evaluable_periods``
+      counts signal dates that cleared the 200-name floor and were exported.
+    * ``evaluable_periods`` — periods of THIS panel that carry at least one
+      priced row, from the persisted ``counts.json`` like every other
+      whole-panel number here. It can only be smaller: the return join drops a
+      period whose entry bars the archive does not have.
+
+    ``reportable`` is the AND of both, so the binding constraint is whichever
+    artifact is thinner, and ``not_reportable_because`` names the leg(s) that
+    failed. A missing floor is not treated as a passing one — an observation
+    manifest that declares no floor cannot license a report.
+    """
+    observed = result.adv_band
+    if not isinstance(observed, dict) or not observed:
+        return None
+    raw_band = observed.get("band")
+    band: dict[str, Any] = dict(raw_band) if isinstance(raw_band, dict) else {}
+    floor_raw = observed.get("min_evaluable_periods")
+    try:
+        floor = None if floor_raw is None else int(floor_raw)
+    except (TypeError, ValueError):
+        floor = None
+    evaluable = int(result.periods_in_panel)
+    upstream_periods = observed.get("evaluable_periods")
+    upstream_reportable = bool(observed.get("reportable", False))
+
+    reasons: list[str] = []
+    if floor is None:
+        reasons.append(
+            "the observation manifest declares no min_evaluable_periods floor, so "
+            "nothing here can say whether this band clears the pre-registered one"
+        )
+    else:
+        if not upstream_reportable:
+            reasons.append(
+                f"the observation panel is NOT REPORTABLE: {upstream_periods} "
+                f"evaluable period(s) against a floor of {floor}"
+            )
+        if evaluable < floor:
+            reasons.append(
+                f"the evaluable panel has {evaluable} period(s) with at least one "
+                f"priced row, against a floor of {floor}"
+            )
+    return {
+        "band_id": band.get("band_id"),
+        "band": band,
+        "min_evaluable_periods": floor,
+        "evaluable_periods": evaluable,
+        "reportable": not reasons,
+        "not_reportable_because": reasons,
+        "preregistration": observed.get("preregistration"),
+        "preregistration_sha256": observed.get("preregistration_sha256"),
+        # The producer's own block, unedited. Copied rather than re-derived:
+        # only the vault can see the trailing bars its screen ran on, and a
+        # re-derivation here would be a second, silently divergent measurement.
+        "observations": observed,
+        "observations_source": "Stock-Vault observation manifest (adv_band)",
+    }
+
+
 def write_signal_panel(
     vault: Any,
     signal: str,
@@ -1004,8 +1093,14 @@ def write_signal_panel(
     elif panel_path.is_file():
         panel_path.unlink()
 
+    # Composed once and reused for the catalog below, so the sidecar and the
+    # manifest cannot drift into two different verdicts over one panel. Built
+    # AFTER _aggregate: the band's evaluable-period count is a whole-panel
+    # number read back from counts.json like every other one here.
+    payload = build_payload(result)
+    band = payload.get("adv_band")
     (out_dir / "build.json").write_text(
-        json.dumps(build_payload(result), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     manifest = vault.signal_panel_manifest(signal, version)
     write_vault_manifest(
@@ -1059,6 +1154,11 @@ def write_signal_panel(
             "capacity_truncated_notional_fraction": round(
                 result.capacity_truncated_notional_fraction, 6
             ),
+            # Same block as build.json, and present only when the observation
+            # dataset was banded. The evaluator opens whichever of the two it
+            # can verify, so the §1.3 verdict must reach both or a reader of
+            # the catalog alone would see an unqualified panel.
+            **({} if band is None else {"adv_band": band}),
             "attestations": result.attestations,
         },
     )
@@ -1084,7 +1184,12 @@ def build_payload(result: SignalPanelResult) -> dict:
     """Flat sidecar JSON — additive keys only, never an envelope."""
     from .research_manifest import package_commit
 
+    band = band_report(result)
     return {
+        # Present ONLY on a banded panel. An unbanded panel's build.json is
+        # byte-for-byte the shape it always was, so nothing downstream can read
+        # an absent key as a passing verdict.
+        **({} if band is None else {"adv_band": band}),
         "schema_version": SIGNAL_PANEL_SCHEMA_VERSION,
         "signal": result.signal,
         "panel_version": result.panel_version,
