@@ -1,0 +1,12 @@
+{
+  "_comment": "Low-severity bandit findings per rule. CI fails if any count rises. Lower these as findings are resolved; never raise one to make CI pass.",
+  "total": 19,
+  "per_rule": {
+    "B101": 12,
+    "B105": 1,
+    "B311": 1,
+    "B404": 2,
+    "B603": 2,
+    "B607": 1
+  }
+}
